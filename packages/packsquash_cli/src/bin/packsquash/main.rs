@@ -297,7 +297,9 @@ fn squash(
 									error_description
 								),
 								None => {
-									if pack_file_status.skipped() {
+									// Files that the options ask to leave out are expected to be skipped, so they
+									// should not be reported like the ones that may signal a problem
+									if pack_file_status.skipped() && !pack_file_status.intentionally_skipped() {
 										warn!(
 											"{}: {}",
 											pack_file_status.path().as_str(),

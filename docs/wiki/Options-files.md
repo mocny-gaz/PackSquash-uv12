@@ -26,6 +26,8 @@
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
+  - [`baseline_pack_path`](#baseline_pack_path)
+  - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
@@ -477,6 +479,76 @@ Example:
 
 ```toml
 ignore_system_and_hidden_files = false
+```
+
+### `baseline_pack_path`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: not set
+
+Most packs customize a few files of the vanilla game and leave the rest as they
+were, but are often built from a full copy of the vanilla assets. This option
+tells PackSquash where to find a baseline pack, usually the vanilla assets of
+the game version the pack targets, to leave out of the result ZIP file every
+pack file that is identical to the file with the same path in the baseline. The
+game loads those files from the baseline anyway, so the result ZIP file is
+smaller and behaves the same.
+
+The path can point to a directory with the extracted contents of the baseline,
+or to a ZIP file, such as the `.jar` file of a game version client. Pack
+files are compared like this:
+
+- Textures are compared by their size and pixels, so it does not matter how they
+  were encoded. The color of fully transparent pixels is ignored, as it cannot
+  be seen.
+- JSON files are compared by their contents, so it does not matter how they are
+  formatted or in which order their keys are written.
+- Any other file is compared byte by byte.
+- A texture and its animation metadata file (`.png.mcmeta`) are left out
+  together, or kept together. Minecraft reads the animation metadata from the
+  same pack that provides the texture, so leaving out only one of them would
+  change how the texture looks.
+- The `pack.mcmeta` and `pack.png` files are never left out.
+
+Please note that:
+
+- The baseline must be the same game version the pack is used with. Otherwise,
+  the pack may lose files that differ between versions.
+- If your pack will be used together with other packs that sit below it,
+  leaving out a file that is identical to the vanilla one lets the file of the
+  other pack show through, instead of restoring the vanilla look.
+- Files in pack overlay directories are never compared with the baseline.
+- Files that are left out are reported as skipped. The command-line interface
+  only prints them in the trace log level.
+
+Example:
+
+```toml
+baseline_pack_path = 'C:\path\to\1.8.9.jar'
+```
+
+### `skip_unused_optifine_sky_images`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+OptiFine custom sky entries are `.properties` files in `optifine/sky` that name
+the image they use. Packs often ship sky images that no entry names, because
+they are leftovers or because the entries that used them were removed. If
+`true`, PackSquash leaves those unused images out of the result ZIP file. An
+image counts as used if any sky entry mentions its file name. If the pack has no
+sky entries at all, no image is considered unused.
+
+This option has no effect unless [`allow_mods`](#allow_mods) contains
+`'OptiFine'`.
+
+Example:
+
+```toml
+allow_mods = ['OptiFine']
+skip_unused_optifine_sky_images = true
 ```
 
 ### `zip_spec_conformance_level`
@@ -1799,6 +1871,8 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 skip_pack_icon = true
 validate_pack_metadata_file = true
 ignore_system_and_hidden_files = false
+baseline_pack_path = 'C:\path\to\1.8.9.jar'
+skip_unused_optifine_sky_images = true
 zip_spec_conformance_level = 'high'
 # These two are actually ignored due to the ZIP spec conformance level
 size_increasing_zip_obfuscation = true

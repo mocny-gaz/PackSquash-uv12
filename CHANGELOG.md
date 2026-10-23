@@ -52,6 +52,21 @@ the `pack.mcmeta` file is no longer needed.
 - When automatically detecting the mask of asset types to process, only asset
 types belonging to the specific pack type being processed are now considered.
 This means that resource packs now skip data- pack-only files, and vice versa.
+- The new `baseline_pack_path` global option lets you specify a baseline pack,
+such as the vanilla game assets of the targeted game version, as a directory or
+a ZIP file like a client `.jar`. Pack files that are identical to the file with
+the same path in the baseline pack are left out of the result ZIP file, which
+makes packs that only change a few vanilla files much smaller. Textures are
+compared by their pixels, JSON files by their contents, and other files byte by
+byte. Textures and their animation metadata are only left out together. For more
+details, please see
+[#402](https://github.com/ComunidadAylas/PackSquash/issues/402).
+- The new `skip_unused_optifine_sky_images` global option leaves OptiFine
+custom sky images that no sky entry names out of the result ZIP file. It only
+has an effect when OptiFine support is enabled in `allow_mods`.
+- `PackFileStatus` has a new `intentionally_skipped` method that tells apart the
+files that the options ask to leave out from the ones that PackSquash skips on
+its own. The command-line interface no longer warns about the former.
 
 ### Changed
 

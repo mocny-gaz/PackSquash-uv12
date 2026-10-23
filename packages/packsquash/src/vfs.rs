@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use std::{fs::FileType, io, path::Path};
 
 use crate::RelativePath;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub mod os_fs;
 
@@ -79,4 +79,21 @@ pub struct VfsPackFileMetadata {
 	/// The time when this file was last modified. Creating a file usually sets its modification
 	/// time to the creation time.
 	pub modification_time: Option<SystemTime>
+}
+
+/// Reads everything that `reader` yields, using `size_hint` to preallocate the buffer.
+pub(crate) async fn read_to_end(
+	mut reader: impl AsyncRead + Unpin,
+	size_hint: u64
+) -> io::Result<Vec<u8>> {
+	let mut data = Vec::with_capacity(usize::try_from(size_hint).unwrap_or(0));
+	reader.read_to_end(&mut data).await?;
+	Ok(data)
+}
+
+/// Reads the whole file at the given path of a virtual filesystem, returning `None` if
+/// it does not exist or any I/O error happens.
+pub(crate) async fn read_file<V: VirtualFileSystem>(vfs: &V, path: &Path) -> Option<Vec<u8>> {
+	let file = vfs.open(path).ok()?;
+	read_to_end(file.file_read, file.file_size_hint).await.ok()
 }

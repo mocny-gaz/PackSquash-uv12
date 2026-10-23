@@ -1,0 +1,1742 @@
+From e1ba92f0530543c073d00429da2c6bf14e40132e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 22 Oct 2026 20:29:38 +0000
+Subject: [PATCH] feat: skip pack files identical to a baseline pack and unused
+ OptiFine sky images
+
+Add the baseline_pack_path global option (PackSquash #402). Pack files that
+are identical to the file with the same path in a baseline pack, a directory
+or a ZIP such as a vanilla client JAR, are left out of the result ZIP.
+Textures are compared by pixels, JSON by contents, other files byte by byte,
+and a texture is only left out together with its animation metadata.
+
+Add the skip_unused_optifine_sky_images global option, which leaves out
+OptiFine custom sky images that no sky entry names.
+
+Add PackFileStatus::intentionally_skipped so the CLI does not warn about
+files that the options ask to leave out.
+---
+ CHANGELOG.md                                  |  15 +
+ docs/wiki/Options-files.md                    |  74 +++
+ packages/packsquash/src/baseline_pack.rs      | 256 ++++++++
+ .../packsquash/src/baseline_pack/tests.rs     | 566 ++++++++++++++++++
+ .../src/baseline_pack/zip_reader.rs           | 198 ++++++
+ packages/packsquash/src/config/mod.rs         |  34 ++
+ packages/packsquash/src/lib.rs                | 122 +++-
+ packages/packsquash/src/optifine_sky.rs       |  73 +++
+ packages/packsquash/src/optifine_sky/tests.rs | 142 +++++
+ packages/packsquash/src/vfs.rs                |  19 +-
+ .../packsquash_cli/src/bin/packsquash/main.rs |   4 +-
+ 11 files changed, 1495 insertions(+), 8 deletions(-)
+ create mode 100644 packages/packsquash/src/baseline_pack.rs
+ create mode 100644 packages/packsquash/src/baseline_pack/tests.rs
+ create mode 100644 packages/packsquash/src/baseline_pack/zip_reader.rs
+ create mode 100644 packages/packsquash/src/optifine_sky.rs
+ create mode 100644 packages/packsquash/src/optifine_sky/tests.rs
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ef74c89..8fd590e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -52,6 +52,21 @@ the `pack.mcmeta` file is no longer needed.
+ - When automatically detecting the mask of asset types to process, only asset
+ types belonging to the specific pack type being processed are now considered.
+ This means that resource packs now skip data- pack-only files, and vice versa.
++- The new `baseline_pack_path` global option lets you specify a baseline pack,
++such as the vanilla game assets of the targeted game version, as a directory or
++a ZIP file like a client `.jar`. Pack files that are identical to the file with
++the same path in the baseline pack are left out of the result ZIP file, which
++makes packs that only change a few vanilla files much smaller. Textures are
++compared by their pixels, JSON files by their contents, and other files byte by
++byte. Textures and their animation metadata are only left out together. For more
++details, please see
++[#402](https://github.com/ComunidadAylas/PackSquash/issues/402).
++- The new `skip_unused_optifine_sky_images` global option leaves OptiFine
++custom sky images that no sky entry names out of the result ZIP file. It only
++has an effect when OptiFine support is enabled in `allow_mods`.
++- `PackFileStatus` has a new `intentionally_skipped` method that tells apart the
++files that the options ask to leave out from the ones that PackSquash skips on
++its own. The command-line interface no longer warns about the former.
+ 
+ ### Changed
+ 
+diff --git a/docs/wiki/Options-files.md b/docs/wiki/Options-files.md
+index 71c832e..80f4b0a 100644
+--- a/docs/wiki/Options-files.md
++++ b/docs/wiki/Options-files.md
+@@ -26,6 +26,8 @@
+   - [`skip_pack_icon`](#skip_pack_icon)
+   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
+   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
++  - [`baseline_pack_path`](#baseline_pack_path)
++  - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
+   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
+   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
+@@ -479,6 +481,76 @@ Example:
+ ignore_system_and_hidden_files = false
+ ```
+ 
++### `baseline_pack_path`
++
++**Type**: [String](https://toml.io/en/v1.0.0#string)
++
++**Default value**: not set
++
++Most packs customize a few files of the vanilla game and leave the rest as they
++were, but are often built from a full copy of the vanilla assets. This option
++tells PackSquash where to find a baseline pack, usually the vanilla assets of
++the game version the pack targets, to leave out of the result ZIP file every
++pack file that is identical to the file with the same path in the baseline. The
++game loads those files from the baseline anyway, so the result ZIP file is
++smaller and behaves the same.
++
++The path can point to a directory with the extracted contents of the baseline,
++or to a ZIP file, such as the `.jar` file of a game version client. Pack
++files are compared like this:
++
++- Textures are compared by their size and pixels, so it does not matter how they
++  were encoded. The color of fully transparent pixels is ignored, as it cannot
++  be seen.
++- JSON files are compared by their contents, so it does not matter how they are
++  formatted or in which order their keys are written.
++- Any other file is compared byte by byte.
++- A texture and its animation metadata file (`.png.mcmeta`) are left out
++  together, or kept together. Minecraft reads the animation metadata from the
++  same pack that provides the texture, so leaving out only one of them would
++  change how the texture looks.
++- The `pack.mcmeta` and `pack.png` files are never left out.
++
++Please note that:
++
++- The baseline must be the same game version the pack is used with. Otherwise,
++  the pack may lose files that differ between versions.
++- If your pack will be used together with other packs that sit below it,
++  leaving out a file that is identical to the vanilla one lets the file of the
++  other pack show through, instead of restoring the vanilla look.
++- Files in pack overlay directories are never compared with the baseline.
++- Files that are left out are reported as skipped. The command-line interface
++  only prints them in the trace log level.
++
++Example:
++
++```toml
++baseline_pack_path = 'C:\path\to\1.8.9.jar'
++```
++
++### `skip_unused_optifine_sky_images`
++
++**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
++
++**Default value**: `false`
++
++OptiFine custom sky entries are `.properties` files in `optifine/sky` that name
++the image they use. Packs often ship sky images that no entry names, because
++they are leftovers or because the entries that used them were removed. If
++`true`, PackSquash leaves those unused images out of the result ZIP file. An
++image counts as used if any sky entry mentions its file name. If the pack has no
++sky entries at all, no image is considered unused.
++
++This option has no effect unless [`allow_mods`](#allow_mods) contains
++`'OptiFine'`.
++
++Example:
++
++```toml
++allow_mods = ['OptiFine']
++skip_unused_optifine_sky_images = true
++```
++
+ ### `zip_spec_conformance_level`
+ 
+ **Type**: [String](https://toml.io/en/v1.0.0#string)
+@@ -1799,6 +1871,8 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
+ skip_pack_icon = true
+ validate_pack_metadata_file = true
+ ignore_system_and_hidden_files = false
++baseline_pack_path = 'C:\path\to\1.8.9.jar'
++skip_unused_optifine_sky_images = true
+ zip_spec_conformance_level = 'high'
+ # These two are actually ignored due to the ZIP spec conformance level
+ size_increasing_zip_obfuscation = true
+diff --git a/packages/packsquash/src/baseline_pack.rs b/packages/packsquash/src/baseline_pack.rs
+new file mode 100644
+index 0000000..b0a8731
+--- /dev/null
++++ b/packages/packsquash/src/baseline_pack.rs
+@@ -0,0 +1,256 @@
++//! Support for baseline packs: packs, usually the vanilla game assets, that the pack being
++//! processed is layered on top of. Pack files that do not change anything relative to the
++//! baseline are redundant, so they can be left out of the result ZIP file to make it smaller.
++
++use std::ffi::OsString;
++use std::io;
++use std::path::{Path, PathBuf};
++
++use spng::{ContextFlags, DecodeFlags, Format};
++use thiserror::Error;
++
++use crate::vfs::{VfsPackFileIterEntry, VirtualFileSystem, read_file, read_to_end};
++
++pub(crate) use zip_reader::ZipArchive;
++use zip_reader::ZipReadError;
++
++mod zip_reader;
++
++#[cfg(test)]
++pub(crate) mod tests;
++
++/// The PNG file signature, followed by the length and type of the IHDR chunk, which
++/// always is the first chunk of a PNG file.
++const PNG_HEADER: [u8; 16] = [
++	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R'
++];
++
++/// Images with more pixels than this are only compared byte by byte, to bound the
++/// memory needed to decode them.
++const MAX_PIXEL_COMPARISON_PIXELS: u64 = 4096 * 4096;
++
++/// An error that may occur while loading a baseline pack.
++#[derive(Error, Debug)]
++#[non_exhaustive]
++pub enum BaselinePackError {
++	/// Thrown when an I/O error occurs while reading the baseline pack.
++	#[error("I/O error: {0}")]
++	IoError(#[from] io::Error),
++	/// Thrown when the baseline pack is a file, but not a valid ZIP archive.
++	#[error("the baseline pack is neither a directory nor a valid ZIP file: {0}")]
++	InvalidArchive(#[from] ZipReadError)
++}
++
++enum BaselineSource {
++	/// A directory in the virtual filesystem that holds the baseline pack files.
++	Directory(PathBuf),
++	/// A ZIP archive (e.g. a vanilla client JAR) that was loaded in memory.
++	Archive(ZipArchive)
++}
++
++/// A loaded baseline pack, ready to be used to find redundant pack files.
++pub(crate) struct BaselinePack {
++	source: BaselineSource
++}
++
++impl BaselinePack {
++	/// Loads the baseline pack at the given path, which can be either a directory or a
++	/// ZIP archive such as a vanilla client JAR.
++	pub(crate) async fn open<V: VirtualFileSystem>(
++		vfs: &V,
++		path: &Path
++	) -> Result<Self, BaselinePackError> {
++		if vfs.file_type(path)?.is_dir() {
++			return Ok(Self {
++				source: BaselineSource::Directory(path.to_path_buf())
++			});
++		}
++
++		let file = vfs.open(path)?;
++		let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
++
++		Ok(Self {
++			source: BaselineSource::Archive(ZipArchive::parse(archive_data)?)
++		})
++	}
++
++	/// Reads the contents of the baseline pack file with the given relative path, if it
++	/// exists and can be read.
++	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
++		match &self.source {
++			BaselineSource::Directory(directory) => {
++				read_file(vfs, &directory.join(relative_path)).await
++			}
++			BaselineSource::Archive(archive) => archive.read(relative_path)
++		}
++	}
++
++	/// Checks whether including the given pack file in the result ZIP file is redundant
++	/// because the baseline pack already provides the same data under the same path.
++	///
++	/// Every doubt is resolved by considering the file not redundant, so files are
++	/// never wrongly dropped: files that cannot be read, or that differ in any way
++	/// that may be observable in the game, are not redundant.
++	pub(crate) async fn is_redundant<V: VirtualFileSystem>(
++		&self,
++		vfs: &V,
++		pack_file: &VfsPackFileIterEntry
++	) -> bool {
++		let relative_path = pack_file.relative_path.as_str();
++
++		// The pack metadata and icon identify the pack itself, and must always be kept
++		if matches!(relative_path, "pack.mcmeta" | "pack.png") {
++			return false;
++		}
++
++		// Minecraft reads the animation metadata of a texture from the same pack that
++		// provides the texture. Therefore, textures and their metadata can only be
++		// dropped as a whole: dropping just one of them would change the result
++		if let Some(texture_relative_path) = relative_path
++			.strip_suffix(".mcmeta")
++			.filter(|texture_path| texture_path.ends_with(".png"))
++		{
++			return match pack_file
++				.file_path
++				.to_str()
++				.and_then(|path| path.strip_suffix(".mcmeta"))
++			{
++				Some(texture_file_path) => {
++					self.is_texture_redundant(
++						vfs,
++						texture_relative_path,
++						Path::new(texture_file_path)
++					)
++					.await
++				}
++				None => false
++			};
++		}
++
++		if relative_path.ends_with(".png") {
++			return self
++				.is_texture_redundant(vfs, relative_path, &pack_file.file_path)
++				.await;
++		}
++
++		let (Some(pack_data), Some(baseline_data)) = (
++			read_file(vfs, &pack_file.file_path).await,
++			self.read(vfs, relative_path).await
++		) else {
++			return false;
++		};
++
++		if relative_path.ends_with(".json") {
++			json_is_identical(&pack_data, &baseline_data)
++		} else {
++			pack_data == baseline_data
++		}
++	}
++
++	/// Checks whether a texture, along with its animation metadata, is the same as the
++	/// baseline one.
++	async fn is_texture_redundant<V: VirtualFileSystem>(
++		&self,
++		vfs: &V,
++		texture_relative_path: &str,
++		texture_file_path: &Path
++	) -> bool {
++		let (Some(pack_texture), Some(baseline_texture)) = (
++			read_file(vfs, texture_file_path).await,
++			self.read(vfs, texture_relative_path).await
++		) else {
++			return false;
++		};
++
++		if !png_is_identical(&pack_texture, &baseline_texture) {
++			return false;
++		}
++
++		let mut metadata_file_path = OsString::from(texture_file_path);
++		metadata_file_path.push(".mcmeta");
++
++		match (
++			read_file(vfs, Path::new(&metadata_file_path)).await,
++			self.read(vfs, &format!("{texture_relative_path}.mcmeta"))
++				.await
++		) {
++			(None, None) => true,
++			(Some(pack_metadata), Some(baseline_metadata)) => {
++				json_is_identical(&pack_metadata, &baseline_metadata)
++			}
++			_ => false
++		}
++	}
++}
++
++/// Checks whether two JSON documents have the same contents, regardless of how they are
++/// formatted or the order of their object keys. If any of them is not valid JSON, they
++/// are compared byte by byte.
++fn json_is_identical(a: &[u8], b: &[u8]) -> bool {
++	if a == b {
++		return true;
++	}
++
++	let parse = |data: &[u8]| {
++		serde_json::from_slice::<serde_json::Value>(
++			data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data)
++		)
++		.ok()
++	};
++
++	matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
++}
++
++/// Checks whether two PNG images look the same in the game: they have the same size and
++/// pixels, regardless of how they were encoded. The color of fully transparent pixels is
++/// ignored, as it can't be seen. If either image can't be decoded, or it is too big to
++/// decode cheaply, they are compared byte by byte.
++fn png_is_identical(a: &[u8], b: &[u8]) -> bool {
++	if a == b {
++		return true;
++	}
++
++	// Compare the sizes in the IHDR chunk before doing any costly decoding
++	let (Some(size_a), Some(size_b)) = (png_size(a), png_size(b)) else {
++		return false;
++	};
++
++	if size_a != size_b || u64::from(size_a.0) * u64::from(size_a.1) > MAX_PIXEL_COMPARISON_PIXELS {
++		return false;
++	}
++
++	matches!((decode_png(a), decode_png(b)), (Some(a), Some(b)) if a == b)
++}
++
++/// Reads the width and height of a PNG image from its header, without decoding it.
++fn png_size(png: &[u8]) -> Option<(u32, u32)> {
++	if png.get(..PNG_HEADER.len())? != PNG_HEADER {
++		return None;
++	}
++
++	Some((
++		u32::from_be_bytes(png.get(16..20)?.try_into().ok()?),
++		u32::from_be_bytes(png.get(20..24)?.try_into().ok()?)
++	))
++}
++
++/// Decodes a PNG image to RGBA8 pixels, zeroing the color of fully transparent ones.
++fn decode_png(png: &[u8]) -> Option<Vec<u8>> {
++	let mut reader = spng::Decoder::new(png)
++		.with_decode_flags(DecodeFlags::TRANSPARENCY)
++		.with_context_flags(ContextFlags::IGNORE_ADLER32)
++		.with_output_format(Format::Rgba8)
++		.read_info()
++		.ok()?;
++
++	let mut pixels = vec![0; reader.output_buffer_size()];
++	reader.next_frame(&mut pixels).ok()?;
++
++	for pixel in pixels.chunks_exact_mut(4) {
++		if pixel[3] == 0 {
++			pixel[..3].fill(0);
++		}
++	}
++
++	Some(pixels)
++}
+diff --git a/packages/packsquash/src/baseline_pack/tests.rs b/packages/packsquash/src/baseline_pack/tests.rs
+new file mode 100644
+index 0000000..b7830a9
+--- /dev/null
++++ b/packages/packsquash/src/baseline_pack/tests.rs
+@@ -0,0 +1,566 @@
++use std::fs;
++use std::io::Write;
++use std::path::Path;
++
++use flate2::Compression;
++use flate2::write::{DeflateEncoder, ZlibEncoder};
++use tempfile::{Builder, TempDir};
++
++use super::*;
++use crate::config::{GlobalOptions, SquashOptions};
++use crate::vfs::os_fs::OsFilesystem;
++use crate::{PackSquasher, PackSquasherStatus, RelativePath};
++
++pub(crate) fn temp_dir() -> TempDir {
++	Builder::new()
++		.prefix("ps-baseline-test")
++		.tempdir()
++		.expect("I/O operations are assumed not to fail during tests")
++}
++
++pub(crate) fn write_file(root: &Path, relative_path: &str, data: &[u8]) {
++	let path = root.join(relative_path);
++	fs::create_dir_all(path.parent().unwrap())
++		.expect("I/O operations are assumed not to fail during tests");
++	fs::write(path, data).expect("I/O operations are assumed not to fail during tests");
++}
++
++fn pack_file(root: &Path, relative_path: &str) -> VfsPackFileIterEntry {
++	let file_path = root.join(relative_path);
++
++	VfsPackFileIterEntry {
++		relative_path: RelativePath::new(root, &file_path).unwrap().into_owned(),
++		file_path
++	}
++}
++
++/// Encodes an RGBA8 image as a PNG file, so tests can control how it is encoded.
++pub(crate) fn png(width: u32, height: u32, rgba: &[u8], compression: Compression) -> Vec<u8> {
++	fn chunk(out: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
++		let mut chunk_body = chunk_type.to_vec();
++		chunk_body.extend_from_slice(data);
++
++		out.extend_from_slice(&(data.len() as u32).to_be_bytes());
++		out.extend_from_slice(&chunk_body);
++		out.extend_from_slice(&crc32fast::hash(&chunk_body).to_be_bytes());
++	}
++
++	let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
++
++	let mut header = Vec::new();
++	header.extend_from_slice(&width.to_be_bytes());
++	header.extend_from_slice(&height.to_be_bytes());
++	header.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlacing
++	chunk(&mut out, b"IHDR", &header);
++
++	let mut scanlines = Vec::new();
++	for row in rgba.chunks(width as usize * 4) {
++		scanlines.push(0); // No filter
++		scanlines.extend_from_slice(row);
++	}
++
++	let mut encoder = ZlibEncoder::new(Vec::new(), compression);
++	encoder.write_all(&scanlines).unwrap();
++	chunk(&mut out, b"IDAT", &encoder.finish().unwrap());
++	chunk(&mut out, b"IEND", &[]);
++
++	out
++}
++
++/// Builds a ZIP archive, whose entries are stored or deflated depending on their flag.
++fn zip(entries: &[(&str, &[u8], bool)], comment: &[u8]) -> Vec<u8> {
++	let mut archive = Vec::new();
++	let mut central_directory = Vec::new();
++
++	for (name, data, deflate) in entries {
++		let (method, body) = if *deflate {
++			let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
++			encoder.write_all(data).unwrap();
++			(8_u16, encoder.finish().unwrap())
++		} else {
++			(0_u16, data.to_vec())
++		};
++
++		let crc32 = crc32fast::hash(data);
++		let local_header_offset = archive.len() as u32;
++
++		archive.extend_from_slice(&0x0403_4B50_u32.to_le_bytes());
++		archive.extend_from_slice(&[20, 0, 0, 0]); // Version needed, flags
++		archive.extend_from_slice(&method.to_le_bytes());
++		archive.extend_from_slice(&[0; 4]); // Modification time and date
++		archive.extend_from_slice(&crc32.to_le_bytes());
++		archive.extend_from_slice(&(body.len() as u32).to_le_bytes());
++		archive.extend_from_slice(&(data.len() as u32).to_le_bytes());
++		archive.extend_from_slice(&(name.len() as u16).to_le_bytes());
++		archive.extend_from_slice(&[0, 0]); // Extra field length
++		archive.extend_from_slice(name.as_bytes());
++		archive.extend_from_slice(&body);
++
++		central_directory.extend_from_slice(&0x0201_4B50_u32.to_le_bytes());
++		central_directory.extend_from_slice(&[20, 0, 20, 0, 0, 0]); // Versions, flags
++		central_directory.extend_from_slice(&method.to_le_bytes());
++		central_directory.extend_from_slice(&[0; 4]); // Modification time and date
++		central_directory.extend_from_slice(&crc32.to_le_bytes());
++		central_directory.extend_from_slice(&(body.len() as u32).to_le_bytes());
++		central_directory.extend_from_slice(&(data.len() as u32).to_le_bytes());
++		central_directory.extend_from_slice(&(name.len() as u16).to_le_bytes());
++		central_directory.extend_from_slice(&[0; 6]); // Extra field, comment and disk number
++		central_directory.extend_from_slice(&[0; 6]); // Internal and external attributes
++		central_directory.extend_from_slice(&local_header_offset.to_le_bytes());
++		central_directory.extend_from_slice(name.as_bytes());
++	}
++
++	let central_directory_offset = archive.len() as u32;
++	archive.extend_from_slice(&central_directory);
++
++	archive.extend_from_slice(&0x0605_4B50_u32.to_le_bytes());
++	archive.extend_from_slice(&[0; 4]); // Disk numbers
++	archive.extend_from_slice(&(entries.len() as u16).to_le_bytes());
++	archive.extend_from_slice(&(entries.len() as u16).to_le_bytes());
++	archive.extend_from_slice(&(central_directory.len() as u32).to_le_bytes());
++	archive.extend_from_slice(&central_directory_offset.to_le_bytes());
++	archive.extend_from_slice(&(comment.len() as u16).to_le_bytes());
++	archive.extend_from_slice(comment);
++
++	archive
++}
++
++async fn baseline_directory(directory: &TempDir) -> BaselinePack {
++	BaselinePack::open(&OsFilesystem, directory.path())
++		.await
++		.unwrap()
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn identical_files_are_redundant() {
++	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let file = "assets/minecraft/lang/en_us.lang";
++
++	write_file(baseline_dir.path(), file, b"a=b\n");
++	write_file(pack_dir.path(), file, b"a=b\n");
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/lang/es_es.lang",
++		b"a=b\n"
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/lang/es_es.lang",
++		b"a=c\n"
++	);
++	write_file(pack_dir.path(), "assets/minecraft/lang/new.lang", b"a=b\n");
++
++	let baseline = baseline_directory(&baseline_dir).await;
++	let is_redundant = |file: &str| {
++		let pack_file = pack_file(pack_dir.path(), file);
++		let baseline = &baseline;
++		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
++	};
++
++	assert!(is_redundant(file).await);
++	assert!(!is_redundant("assets/minecraft/lang/es_es.lang").await);
++	assert!(!is_redundant("assets/minecraft/lang/new.lang").await);
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn pack_metadata_is_never_redundant() {
++	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++
++	for file in ["pack.mcmeta", "pack.png"] {
++		write_file(baseline_dir.path(), file, b"same");
++		write_file(pack_dir.path(), file, b"same");
++	}
++
++	let baseline = baseline_directory(&baseline_dir).await;
++
++	for file in ["pack.mcmeta", "pack.png"] {
++		assert!(
++			!baseline
++				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
++				.await
++		);
++	}
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn json_files_are_compared_by_contents() {
++	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/models/item/a.json",
++		br#"{"parent": "item/generated", "textures": {"layer0": "items/a"}}"#
++	);
++	// Same contents, but minified, with another key order, and with a BOM
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/models/item/a.json",
++		b"\xEF\xBB\xBF{\"textures\":{\"layer0\":\"items/a\"},\"parent\":\"item/generated\"}"
++	);
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/models/item/b.json",
++		br#"{"parent": "item/generated"}"#
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/models/item/b.json",
++		br#"{"parent": "item/handheld"}"#
++	);
++
++	let baseline = baseline_directory(&baseline_dir).await;
++
++	assert!(
++		baseline
++			.is_redundant(
++				&OsFilesystem,
++				&pack_file(pack_dir.path(), "assets/minecraft/models/item/a.json")
++			)
++			.await
++	);
++	assert!(
++		!baseline
++			.is_redundant(
++				&OsFilesystem,
++				&pack_file(pack_dir.path(), "assets/minecraft/models/item/b.json")
++			)
++			.await
++	);
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn textures_are_compared_by_pixels() {
++	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++
++	let baseline_pixels = [
++		1, 2, 3, 255, 0, 0, 0, 0, //
++		9, 8, 7, 255, 4, 5, 6, 128
++	];
++	// The color of the fully transparent pixel is not visible
++	let mut same_pixels = baseline_pixels;
++	same_pixels[4..7].copy_from_slice(&[10, 20, 30]);
++	let mut other_pixels = baseline_pixels;
++	other_pixels[0] = 200;
++
++	let baseline_png = png(2, 2, &baseline_pixels, Compression::best());
++	let reencoded_png = png(2, 2, &same_pixels, Compression::none());
++	assert_ne!(baseline_png, reencoded_png);
++
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/a.png",
++		&baseline_png
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/a.png",
++		&reencoded_png
++	);
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/b.png",
++		&baseline_png
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/b.png",
++		&png(2, 2, &other_pixels, Compression::best())
++	);
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/c.png",
++		&baseline_png
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/c.png",
++		&png(4, 1, &baseline_pixels, Compression::best())
++	);
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/d.png",
++		&baseline_png
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/d.png",
++		b"not a PNG"
++	);
++
++	let baseline = baseline_directory(&baseline_dir).await;
++	let is_redundant = |name: &str| {
++		let pack_file = pack_file(
++			pack_dir.path(),
++			&format!("assets/minecraft/textures/{name}.png")
++		);
++		let baseline = &baseline;
++		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
++	};
++
++	assert!(is_redundant("a").await, "re-encoded texture");
++	assert!(!is_redundant("b").await, "different pixels");
++	assert!(!is_redundant("c").await, "different size");
++	assert!(!is_redundant("d").await, "invalid PNG");
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn textures_and_their_animation_metadata_are_only_dropped_together() {
++	let texture = png(1, 1, &[1, 2, 3, 255], Compression::best());
++	let other_texture = png(1, 1, &[9, 9, 9, 255], Compression::best());
++	let metadata = br#"{"animation": {"frametime": 2}}"#;
++	let reformatted_metadata = b"{\"animation\":{\"frametime\":2}}";
++	let other_metadata = br#"{"animation": {"frametime": 5}}"#;
++
++	// (pack texture, pack metadata, baseline metadata, are the texture and metadata redundant)
++	let cases: [(&[u8], Option<&[u8]>, Option<&[u8]>, bool); 6] = [
++		(&texture, Some(reformatted_metadata), Some(metadata), true),
++		(&texture, None, None, true),
++		(&texture, Some(other_metadata), Some(metadata), false),
++		(&other_texture, Some(metadata), Some(metadata), false),
++		(&texture, None, Some(metadata), false),
++		(&texture, Some(metadata), None, false)
++	];
++
++	for (case, (pack_texture, pack_metadata, baseline_metadata, expected)) in cases.iter().enumerate()
++	{
++		let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++		let texture_path = "assets/minecraft/textures/blocks/lava_flow.png";
++
++		write_file(baseline_dir.path(), texture_path, &texture);
++		write_file(pack_dir.path(), texture_path, pack_texture);
++
++		if let Some(metadata) = baseline_metadata {
++			write_file(
++				baseline_dir.path(),
++				&format!("{texture_path}.mcmeta"),
++				metadata
++			);
++		}
++		if let Some(metadata) = pack_metadata {
++			write_file(pack_dir.path(), &format!("{texture_path}.mcmeta"), metadata);
++		}
++
++		let baseline = baseline_directory(&baseline_dir).await;
++
++		assert_eq!(
++			baseline
++				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), texture_path))
++				.await,
++			*expected,
++			"texture of case {case}"
++		);
++
++		if pack_metadata.is_some() {
++			assert_eq!(
++				baseline
++					.is_redundant(
++						&OsFilesystem,
++						&pack_file(pack_dir.path(), &format!("{texture_path}.mcmeta"))
++					)
++					.await,
++				*expected,
++				"metadata of case {case}"
++			);
++		}
++	}
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn archives_can_be_baseline_packs() {
++	let (archive_dir, pack_dir) = (temp_dir(), temp_dir());
++	let texture = png(1, 1, &[1, 2, 3, 255], Compression::best());
++
++	let archive = zip(
++		&[
++			("assets/minecraft/", b"", false),
++			("assets/minecraft/lang/en_us.lang", b"a=b\n", true),
++			("assets/minecraft/textures/a.png", &texture, true),
++			("assets/minecraft/textures/a.png.mcmeta", b"{}", false)
++		],
++		b"a comment that is longer than nothing"
++	);
++	write_file(archive_dir.path(), "client.jar", &archive);
++
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/lang/en_us.lang",
++		b"a=b\n"
++	);
++	write_file(pack_dir.path(), "assets/minecraft/textures/a.png", &texture);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/a.png.mcmeta",
++		b"{ }"
++	);
++	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &texture);
++
++	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"))
++		.await
++		.unwrap();
++
++	for (file, expected) in [
++		("assets/minecraft/lang/en_us.lang", true),
++		("assets/minecraft/textures/a.png", true),
++		("assets/minecraft/textures/a.png.mcmeta", true),
++		("assets/minecraft/textures/b.png", false)
++	] {
++		assert_eq!(
++			baseline
++				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
++				.await,
++			expected,
++			"{file}"
++		);
++	}
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn unusable_baseline_packs_are_rejected() {
++	let dir = temp_dir();
++	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
++
++	assert!(matches!(
++		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar")).await,
++		Err(BaselinePackError::InvalidArchive(_))
++	));
++	assert!(matches!(
++		BaselinePack::open(&OsFilesystem, &dir.path().join("missing")).await,
++		Err(BaselinePackError::IoError(_))
++	));
++}
++
++#[test]
++fn zip_reader_reads_stored_and_deflated_entries() {
++	let big_entry = vec![b'x'; 100_000];
++	let archive = ZipArchive::parse(zip(
++		&[
++			("stored.txt", b"stored data", false),
++			("deflated.txt", b"deflated data", true),
++			("empty.txt", b"", false),
++			("big.txt", &big_entry, true),
++			("folder/", b"", false)
++		],
++		b""
++	))
++	.unwrap();
++
++	assert_eq!(
++		archive.read("stored.txt").as_deref(),
++		Some(&b"stored data"[..])
++	);
++	assert_eq!(
++		archive.read("deflated.txt").as_deref(),
++		Some(&b"deflated data"[..])
++	);
++	assert_eq!(archive.read("empty.txt").as_deref(), Some(&b""[..]));
++	assert_eq!(archive.read("big.txt"), Some(big_entry));
++	assert_eq!(archive.read("missing.txt"), None);
++	assert!(!archive.contains("folder/"), "directories are not files");
++}
++
++#[test]
++fn zip_reader_rejects_corrupt_data() {
++	let valid = zip(&[("a.txt", b"hello world", false)], b"");
++
++	// Not an archive, or one truncated in the middle of its central directory
++	assert!(matches!(
++		ZipArchive::parse(b"abc".to_vec()),
++		Err(ZipReadError::MissingEndOfCentralDirectory)
++	));
++	assert!(ZipArchive::parse(valid[..valid.len() - 30].to_vec()).is_err());
++
++	// A flipped bit in the file data must be caught by the CRC check
++	let mut corrupt = valid.clone();
++	corrupt[40] ^= 1;
++	assert_eq!(ZipArchive::parse(corrupt).unwrap().read("a.txt"), None);
++
++	// Unsupported compression methods
++	let mut unsupported = valid;
++	let central_directory_offset = unsupported
++		.windows(4)
++		.position(|window| window == 0x0201_4B50_u32.to_le_bytes())
++		.unwrap();
++	unsupported[central_directory_offset + 10] = 12; // BZIP2
++	assert_eq!(ZipArchive::parse(unsupported).unwrap().read("a.txt"), None);
++}
++
++/// Not async because `PackSquasher::run` starts its own runtime.
++#[test]
++fn squashing_leaves_out_files_identical_to_the_baseline() {
++	let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
++
++	let stone = png(2, 1, &[1, 2, 3, 255, 4, 5, 6, 255], Compression::best());
++	let dirt = png(2, 1, &[7, 7, 7, 255, 8, 8, 8, 255], Compression::best());
++	let modified_dirt = png(2, 1, &[7, 7, 7, 255, 9, 9, 9, 255], Compression::best());
++
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/blocks/stone.png",
++		&stone
++	);
++	write_file(
++		baseline_dir.path(),
++		"assets/minecraft/textures/blocks/dirt.png",
++		&dirt
++	);
++
++	write_file(
++		pack_dir.path(),
++		"pack.mcmeta",
++		br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
++	);
++	// Re-encoded, but with the same pixels as the baseline
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/blocks/stone.png",
++		&png(2, 1, &[1, 2, 3, 255, 4, 5, 6, 255], Compression::none())
++	);
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/textures/blocks/dirt.png",
++		&modified_dirt
++	);
++
++	let output_path = output_dir.path().join("pack.zip");
++	let mut global_options = GlobalOptions {
++		baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
++		output_file_path: output_path.clone(),
++		..GlobalOptions::default()
++	};
++	global_options.zip_compression_iterations = 1;
++
++	let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
++
++	PackSquasher::new()
++		.run(
++			OsFilesystem,
++			SquashOptions {
++				pack_directory: pack_dir.path().to_path_buf(),
++				global_options,
++				file_options: Default::default()
++			},
++			Some(sender)
++		)
++		.expect("Squashing a valid pack should succeed");
++
++	let mut skipped_due_to_baseline = Vec::new();
++	while let Ok(status) = receiver.try_recv() {
++		if let PackSquasherStatus::PackFileProcessed(status) = status {
++			assert!(status.optimization_error().is_none());
++
++			if status.intentionally_skipped() {
++				assert!(status.skipped());
++				skipped_due_to_baseline.push(status.path().as_str().to_owned());
++			}
++		}
++	}
++	assert_eq!(
++		skipped_due_to_baseline,
++		["assets/minecraft/textures/blocks/stone.png"]
++	);
++
++	let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
++	assert!(output.contains("pack.mcmeta"));
++	assert!(output.contains("assets/minecraft/textures/blocks/dirt.png"));
++	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
++}
+diff --git a/packages/packsquash/src/baseline_pack/zip_reader.rs b/packages/packsquash/src/baseline_pack/zip_reader.rs
+new file mode 100644
+index 0000000..4693810
+--- /dev/null
++++ b/packages/packsquash/src/baseline_pack/zip_reader.rs
+@@ -0,0 +1,198 @@
++//! A minimal, read-only ZIP archive reader, just capable enough to read the files of
++//! vanilla client JARs and resource pack ZIPs that are used as baseline packs.
++//!
++//! Only stored and deflated entries are supported. ZIP64 archives and encrypted entries
++//! are not, which is fine for the archives this module is meant to read.
++
++use std::collections::HashMap;
++use std::io::Read;
++
++use flate2::read::DeflateDecoder;
++use thiserror::Error;
++
++const END_OF_CENTRAL_DIRECTORY_SIGNATURE: u32 = 0x0605_4B50;
++const CENTRAL_DIRECTORY_HEADER_SIGNATURE: u32 = 0x0201_4B50;
++const LOCAL_FILE_HEADER_SIGNATURE: u32 = 0x0403_4B50;
++
++const END_OF_CENTRAL_DIRECTORY_MIN_SIZE: usize = 22;
++const CENTRAL_DIRECTORY_HEADER_MIN_SIZE: usize = 46;
++const LOCAL_FILE_HEADER_MIN_SIZE: usize = 30;
++
++/// The maximum size of an uncompressed entry that will be read. This protects against
++/// decompression bombs. No file of a sane baseline pack comes close to this limit.
++const MAX_ENTRY_SIZE: usize = 256 * 1024 * 1024;
++
++/// An error that may occur while parsing a ZIP archive.
++#[derive(Error, Debug)]
++pub enum ZipReadError {
++	/// The end of central directory record could not be found, so the data is
++	/// most likely not a ZIP archive.
++	#[error("the end of central directory record was not found")]
++	MissingEndOfCentralDirectory,
++	/// The central directory is truncated or has invalid contents.
++	#[error("the central directory is truncated or malformed")]
++	MalformedCentralDirectory,
++	/// The archive uses the ZIP64 extensions, which are not supported.
++	#[error("ZIP64 archives are not supported")]
++	Zip64Unsupported
++}
++
++#[derive(Debug)]
++struct Entry {
++	local_header_offset: usize,
++	compressed_size: usize,
++	uncompressed_size: usize,
++	crc32: u32,
++	compression_method: u16
++}
++
++/// An in-memory ZIP archive whose entries can be read by name.
++#[derive(Debug)]
++pub struct ZipArchive {
++	data: Vec<u8>,
++	entries: HashMap<String, Entry>
++}
++
++fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
++	Some(u16::from_le_bytes(
++		data.get(offset..offset + 2)?.try_into().ok()?
++	))
++}
++
++fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
++	Some(u32::from_le_bytes(
++		data.get(offset..offset + 4)?.try_into().ok()?
++	))
++}
++
++impl ZipArchive {
++	/// Parses the central directory of the provided ZIP archive data, taking
++	/// ownership of it so entries can be lazily read later.
++	pub fn parse(data: Vec<u8>) -> Result<Self, ZipReadError> {
++		let end_record_offset = Self::find_end_of_central_directory(&data)
++			.ok_or(ZipReadError::MissingEndOfCentralDirectory)?;
++
++		let malformed = || ZipReadError::MalformedCentralDirectory;
++
++		let entry_count = read_u16(&data, end_record_offset + 10).ok_or_else(malformed)?;
++		let central_directory_size = read_u32(&data, end_record_offset + 12).ok_or_else(malformed)?;
++		let central_directory_offset =
++			read_u32(&data, end_record_offset + 16).ok_or_else(malformed)?;
++
++		if entry_count == u16::MAX
++			|| central_directory_size == u32::MAX
++			|| central_directory_offset == u32::MAX
++		{
++			return Err(ZipReadError::Zip64Unsupported);
++		}
++
++		let mut entries = HashMap::with_capacity(entry_count.into());
++		let mut offset = central_directory_offset as usize;
++
++		for _ in 0..entry_count {
++			if read_u32(&data, offset).ok_or_else(malformed)? != CENTRAL_DIRECTORY_HEADER_SIGNATURE
++				|| data.len() < offset + CENTRAL_DIRECTORY_HEADER_MIN_SIZE
++			{
++				return Err(ZipReadError::MalformedCentralDirectory);
++			}
++
++			let flags = read_u16(&data, offset + 8).ok_or_else(malformed)?;
++			let compression_method = read_u16(&data, offset + 10).ok_or_else(malformed)?;
++			let crc32 = read_u32(&data, offset + 16).ok_or_else(malformed)?;
++			let compressed_size = read_u32(&data, offset + 20).ok_or_else(malformed)? as usize;
++			let uncompressed_size = read_u32(&data, offset + 24).ok_or_else(malformed)? as usize;
++			let name_length = read_u16(&data, offset + 28).ok_or_else(malformed)? as usize;
++			let extra_length = read_u16(&data, offset + 30).ok_or_else(malformed)? as usize;
++			let comment_length = read_u16(&data, offset + 32).ok_or_else(malformed)? as usize;
++			let local_header_offset = read_u32(&data, offset + 42).ok_or_else(malformed)? as usize;
++
++			let name_start = offset + CENTRAL_DIRECTORY_HEADER_MIN_SIZE;
++			let name_bytes = data
++				.get(name_start..name_start + name_length)
++				.ok_or_else(malformed)?;
++			let name = String::from_utf8_lossy(name_bytes).into_owned();
++
++			// Skip directories and encrypted entries (bit 0 of the flags), which cannot be
++			// read anyway. Not having them in the entry map makes them be treated as
++			// missing files
++			if !name.ends_with('/') && flags & 1 == 0 {
++				entries.insert(
++					name,
++					Entry {
++						local_header_offset,
++						compressed_size,
++						uncompressed_size,
++						crc32,
++						compression_method
++					}
++				);
++			}
++
++			offset = name_start + name_length + extra_length + comment_length;
++		}
++
++		Ok(Self { data, entries })
++	}
++
++	/// Looks for the end of central directory record, which is at the end of the archive,
++	/// optionally followed by a comment of up to 65535 bytes.
++	fn find_end_of_central_directory(data: &[u8]) -> Option<usize> {
++		let last_candidate = data.len().checked_sub(END_OF_CENTRAL_DIRECTORY_MIN_SIZE)?;
++		let first_candidate = last_candidate.saturating_sub(u16::MAX.into());
++
++		(first_candidate..=last_candidate)
++			.rev()
++			.find(|&offset| read_u32(data, offset) == Some(END_OF_CENTRAL_DIRECTORY_SIGNATURE))
++	}
++
++	/// Returns whether the archive has a file entry with the given name.
++	#[cfg(test)]
++	pub fn contains(&self, name: &str) -> bool {
++		self.entries.contains_key(name)
++	}
++
++	/// Reads and decompresses the entry with the given name. `None` is returned if the
++	/// entry does not exist, uses an unsupported compression method, or is corrupt.
++	pub fn read(&self, name: &str) -> Option<Vec<u8>> {
++		let entry = self.entries.get(name)?;
++
++		if entry.uncompressed_size > MAX_ENTRY_SIZE {
++			return None;
++		}
++
++		let header_offset = entry.local_header_offset;
++		if read_u32(&self.data, header_offset)? != LOCAL_FILE_HEADER_SIGNATURE {
++			return None;
++		}
++
++		// The extra field in the local header may have a different length than the one in
++		// the central directory, so it must be read from the local header
++		let name_length = read_u16(&self.data, header_offset + 26)? as usize;
++		let extra_length = read_u16(&self.data, header_offset + 28)? as usize;
++		let data_start = header_offset + LOCAL_FILE_HEADER_MIN_SIZE + name_length + extra_length;
++		let compressed = self
++			.data
++			.get(data_start..data_start + entry.compressed_size)?;
++
++		let decompressed = match entry.compression_method {
++			0 => compressed.to_vec(),
++			8 => {
++				let mut decompressed = Vec::with_capacity(entry.uncompressed_size);
++
++				// Read one byte more than expected to detect entries that decompress to
++				// more data than they claim
++				DeflateDecoder::new(compressed)
++					.take(entry.uncompressed_size as u64 + 1)
++					.read_to_end(&mut decompressed)
++					.ok()?;
++
++				decompressed
++			}
++			_ => return None
++		};
++
++		(decompressed.len() == entry.uncompressed_size
++			&& crc32fast::hash(&decompressed) == entry.crc32)
++			.then_some(decompressed)
++	}
++}
+diff --git a/packages/packsquash/src/config/mod.rs b/packages/packsquash/src/config/mod.rs
+index 20cc7e5..ff9d5c3 100644
+--- a/packages/packsquash/src/config/mod.rs
++++ b/packages/packsquash/src/config/mod.rs
+@@ -218,6 +218,37 @@ pub struct GlobalOptions {
+ 	///
+ 	/// **Default value**: `true`
+ 	pub ignore_system_and_hidden_files: bool,
++	/// The path of a baseline pack that the pack being processed is meant to be layered on top
++	/// of. Typically, this is the vanilla game assets: either a directory with the extracted
++	/// contents of a game version client JAR, or the client JAR (or any other ZIP file) itself.
++	///
++	/// When this option is set, pack files that are identical to the file with the same path in
++	/// the baseline pack are left out of the result ZIP file, as the game would load the same
++	/// file from the baseline anyway. This makes packs that only customize a few files of the
++	/// baseline much smaller. Textures are compared by their pixels, so differences in how they
++	/// were encoded do not matter, and the JSON files are compared by their contents, so
++	/// differences in formatting and key ordering do not matter either. A texture is only left
++	/// out if its animation metadata file, if any, is identical too, and vice versa.
++	///
++	/// The baseline pack must match the game version the pack will be used with. The `pack.mcmeta`
++	/// and `pack.png` files are never left out. Be aware that if the pack is going to be used
++	/// together with other packs that sit below it, leaving out a file that is identical to the
++	/// baseline lets the files of those other packs show through.
++	///
++	/// **Default value**: not set (do not compare pack files with any baseline pack)
++	pub baseline_pack_path: Option<PathBuf>,
++	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
++	/// use. Packs sometimes ship sky images that no entry names, either because they are
++	/// leftovers or because the entries that used them were removed. When this option is
++	/// enabled, PackSquash leaves those unused images out of the result ZIP file. If the pack has
++	/// no OptiFine custom sky entries at all, no image is considered unused.
++	///
++	/// This option has no effect unless `allow_mods` contains OptiFine.
++	///
++	/// **Default value**: `false`
++	#[cfg(feature = "optifine")]
++	#[doc(cfg(feature = "optifine"))]
++	pub skip_unused_optifine_sky_images: bool,
+ 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
+ 	/// lean as possible by default, you should indicate what mods do you want to support and include
+ 	/// in the result ZIP file.
+@@ -289,6 +320,9 @@ impl Default for GlobalOptions {
+ 			work_around_minecraft_quirks: EnumSet::empty(),
+ 			automatic_asset_types_mask_detection: true,
+ 			ignore_system_and_hidden_files: true,
++			baseline_pack_path: None,
++			#[cfg(feature = "optifine")]
++			skip_unused_optifine_sky_images: false,
+ 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
+ 			allow_mods: EnumSet::empty(),
+ 			threads: hardware_threads,
+diff --git a/packages/packsquash/src/lib.rs b/packages/packsquash/src/lib.rs
+index 1f1dd48..b18e876 100644
+--- a/packages/packsquash/src/lib.rs
++++ b/packages/packsquash/src/lib.rs
+@@ -28,7 +28,10 @@ use tokio::sync::Semaphore;
+ use tokio::sync::mpsc::Sender;
+ use tokio::{fs::File, io::AsyncRead, runtime::Builder};
+ 
++use baseline_pack::{BaselinePack, BaselinePackError};
+ use config::ProcessedSquashOptions;
++#[cfg(feature = "optifine")]
++use optifine_sky::UnusedSkyImageDetector;
+ use pack_metadata::{PackMetadata, PackMetadataError};
+ use squash_zip::{SquashZip, SquashZipError};
+ 
+@@ -49,7 +52,10 @@ use crate::vfs::{IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSyst
+ pub mod config;
+ pub mod vfs;
+ 
++mod baseline_pack;
+ mod buffered_async_spooled_temp_file;
++#[cfg(feature = "optifine")]
++mod optifine_sky;
+ mod pack_file;
+ mod pack_metadata;
+ mod squash_zip;
+@@ -224,6 +230,43 @@ impl PackSquasher {
+ 		));
+ 		let options_holder = Arc::new(options_holder);
+ 
++		// Load the baseline pack, if configured, before processing any pack file. Doing
++		// so here makes an unusable baseline pack fail the operation promptly
++		let baseline_pack = options_holder
++			.options
++			.global_options
++			.baseline_pack_path
++			.as_deref()
++			.map(|baseline_pack_path| runtime.block_on(BaselinePack::open(&*vfs, baseline_pack_path)))
++			.transpose()?
++			.map(Arc::new);
++
++		// Find out which OptiFine custom sky images are not used by any sky entry, if
++		// they are to be left out
++		#[cfg(feature = "optifine")]
++		let unused_sky_image_detector = (options_holder
++			.options
++			.global_options
++			.skip_unused_optifine_sky_images
++			&& options_holder
++				.options
++				.global_options
++				.allow_mods
++				.contains(config::MinecraftMod::Optifine))
++		.then(|| {
++			runtime.block_on(UnusedSkyImageDetector::scan(
++				&*vfs,
++				&options_holder.options.pack_directory,
++				IteratorTraversalOptions {
++					ignore_system_and_hidden_files: options_holder
++						.options
++						.global_options
++						.ignore_system_and_hidden_files
++				}
++			))
++		})
++		.map(Arc::new);
++
+ 		runtime.block_on(async {
+ 			let pack_file_iter = vfs.file_iterator(
+ 				&options_holder.options.pack_directory,
+@@ -363,6 +406,9 @@ impl PackSquasher {
+ 				let asset_type_matcher = Arc::clone(&asset_type_matcher);
+ 				let squash_zip = Arc::clone(&squash_zip);
+ 				let vfs = Arc::clone(&vfs);
++				let baseline_pack = baseline_pack.clone();
++				#[cfg(feature = "optifine")]
++				let unused_sky_image_detector = unused_sky_image_detector.clone();
+ 
+ 				let in_flight_tasks_semaphore = Arc::clone(&in_flight_tasks_semaphore);
+ 				let pack_file_optimization_failed = Arc::clone(&pack_file_optimization_failed);
+@@ -382,7 +428,8 @@ impl PackSquasher {
+ 									path: RelativePath::from_inner(Cow::Borrowed("-")),
+ 									optimization_strategy: Cow::Borrowed("Pack directory scan error"),
+ 									optimization_error: Some(err.to_string()),
+-									skipped: false
++									skipped: false,
++									intentionally_skipped: false
+ 								}))
+ 								.await
+ 								.ok();
+@@ -393,6 +440,50 @@ impl PackSquasher {
+ 						}
+ 					};
+ 
++					// Files that do not change anything relative to the baseline pack are left out
++					// of the result ZIP file. Do this before any file is processed to not waste
++					// time optimizing files that are not going to be included anyway
++					if let Some(baseline_pack) = &baseline_pack
++						&& baseline_pack.is_redundant(&*vfs, &pack_file_data).await
++					{
++						if let Some(tx) = pack_file_status_sender {
++							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
++								path: pack_file_data.relative_path,
++								optimization_strategy: Cow::Borrowed(
++									"Identical to the baseline pack"
++								),
++								optimization_error: None,
++								skipped: true,
++								intentionally_skipped: true
++							}))
++							.await
++							.ok();
++						}
++
++						return;
++					}
++
++					#[cfg(feature = "optifine")]
++					if let Some(detector) = &unused_sky_image_detector
++						&& detector.is_unused(pack_file_data.relative_path.as_str())
++					{
++						if let Some(tx) = pack_file_status_sender {
++							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
++								path: pack_file_data.relative_path,
++								optimization_strategy: Cow::Borrowed(
++									"Unused by OptiFine custom sky entries"
++								),
++								optimization_error: None,
++								skipped: true,
++								intentionally_skipped: true
++							}))
++							.await
++							.ok();
++						}
++
++						return;
++					}
++
+ 					let have_default_options;
+ 					let asset_type_matches = {
+ 						let asset_type_matches =
+@@ -485,7 +576,8 @@ impl PackSquasher {
+ 							path: pack_file_data.relative_path,
+ 							optimization_strategy: Cow::Borrowed("Skipped"),
+ 							optimization_error: None,
+-							skipped: true
++							skipped: true,
++							intentionally_skipped: false
+ 						}))
+ 						.await
+ 						.ok();
+@@ -588,7 +680,11 @@ pub enum PackSquasherError {
+ 	/// Thrown when an error happened while parsing the pack metadata manifest,
+ 	/// which defines some basic characteristics of a pack.
+ 	#[error("Pack metadata error: {0}")]
+-	PackMetadataError(#[from] PackMetadataError)
++	PackMetadataError(#[from] PackMetadataError),
++	/// Thrown when the baseline pack, which pack files are compared with to leave out
++	/// redundant ones, could not be loaded.
++	#[error("Baseline pack error: {0}")]
++	BaselinePackError(#[from] BaselinePackError)
+ }
+ 
+ impl From<Infallible> for PackSquasherError {
+@@ -644,7 +740,8 @@ pub struct PackFileStatus {
+ 	path: RelativePath<'static>,
+ 	optimization_strategy: Cow<'static, str>,
+ 	optimization_error: Option<String>,
+-	skipped: bool
++	skipped: bool,
++	intentionally_skipped: bool
+ }
+ 
+ impl PackFileStatus {
+@@ -675,6 +772,17 @@ impl PackFileStatus {
+ 	pub const fn skipped(&self) -> bool {
+ 		self.skipped
+ 	}
++
++	/// Checks whether this file was skipped because the squash options ask for files like
++	/// it to be left out of the result ZIP file, for example because it is identical to
++	/// the file with the same path in the baseline pack configured with the
++	/// `baseline_pack_path` option. Unlike other skipped files, which PackSquash did not
++	/// recognize or deemed unnecessary on its own, these are expected, so they do not hint
++	/// at a problem. If this method returns `true`, [`skipped`](Self::skipped) returns
++	/// `true` too.
++	pub const fn intentionally_skipped(&self) -> bool {
++		self.intentionally_skipped
++	}
+ }
+ 
+ /// Processes the given pack file according to the provided file options and the asset types that
+@@ -738,7 +846,8 @@ async fn match_and_process_pack_file(
+ 				path: pack_file_data.relative_path.as_owned(),
+ 				optimization_strategy: Cow::Borrowed("Error opening pack file"),
+ 				optimization_error: Some(err.to_string()),
+-				skipped: false
++				skipped: false,
++				intentionally_skipped: false
+ 			}))
+ 			.await
+ 			.ok();
+@@ -857,7 +966,8 @@ async fn process_pack_file(
+ 			path: pack_file_path,
+ 			optimization_strategy,
+ 			optimization_error,
+-			skipped: false
++			skipped: false,
++			intentionally_skipped: false
+ 		}))
+ 		.await
+ 		.ok();
+diff --git a/packages/packsquash/src/optifine_sky.rs b/packages/packsquash/src/optifine_sky.rs
+new file mode 100644
+index 0000000..e376b59
+--- /dev/null
++++ b/packages/packsquash/src/optifine_sky.rs
+@@ -0,0 +1,73 @@
++//! Support for finding OptiFine custom sky images that no custom sky entry uses, which
++//! are dead weight in a pack.
++
++use std::path::Path;
++
++use crate::vfs::{IteratorTraversalOptions, VirtualFileSystem, read_file};
++
++#[cfg(test)]
++mod tests;
++
++/// The directory where OptiFine looks for custom sky entries (`.properties` files) and the
++/// images they use.
++const SKY_DIRECTORY: &str = "assets/minecraft/optifine/sky/";
++
++/// Detects the images of OptiFine custom skies that are not used by any custom sky entry.
++pub(crate) struct UnusedSkyImageDetector {
++	/// The concatenated contents of every custom sky entry, or `None` if there are no
++	/// entries or they could not be read. In that case, no image is considered unused.
++	sky_entries_text: Option<String>
++}
++
++impl UnusedSkyImageDetector {
++	/// Reads the custom sky entries of the pack in the given directory.
++	pub(crate) async fn scan<V: VirtualFileSystem>(
++		vfs: &V,
++		pack_directory: &Path,
++		iterator_traversal_options: IteratorTraversalOptions
++	) -> Self {
++		let mut sky_entries_text: Option<String> = None;
++
++		// Errors while iterating the pack files are not handled here: the main pack
++		// processing loop will report them
++		for pack_file in vfs
++			.file_iterator(pack_directory, iterator_traversal_options)
++			.flatten()
++		{
++			let relative_path = pack_file.relative_path.as_str();
++
++			if relative_path.starts_with(SKY_DIRECTORY) && relative_path.ends_with(".properties") {
++				let Some(entry_data) = read_file(vfs, &pack_file.file_path).await else {
++					// Being unable to know what is used means that nothing can be
++					// safely considered unused
++					return Self {
++						sky_entries_text: None
++					};
++				};
++
++				let text = sky_entries_text.get_or_insert_with(String::new);
++				text.push_str(&String::from_utf8_lossy(&entry_data));
++				text.push('\n');
++			}
++		}
++
++		Self { sky_entries_text }
++	}
++
++	/// Checks whether the pack file at the given relative path is a custom sky image that no
++	/// custom sky entry uses. An image is considered used if any entry mentions its file name,
++	/// which is a conservative approximation of how entries refer to images.
++	pub(crate) fn is_unused(&self, relative_path: &str) -> bool {
++		let Some(sky_entries_text) = &self.sky_entries_text else {
++			return false;
++		};
++
++		relative_path
++			.strip_prefix(SKY_DIRECTORY)
++			.filter(|path_in_sky_directory| path_in_sky_directory.ends_with(".png"))
++			.is_some_and(|_| {
++				let file_name = relative_path.rsplit('/').next().unwrap_or(relative_path);
++				!sky_entries_text.contains(file_name)
++			})
++	}
++}
+diff --git a/packages/packsquash/src/optifine_sky/tests.rs b/packages/packsquash/src/optifine_sky/tests.rs
+new file mode 100644
+index 0000000..1e5c838
+--- /dev/null
++++ b/packages/packsquash/src/optifine_sky/tests.rs
+@@ -0,0 +1,142 @@
++use std::fs;
++
++use flate2::Compression;
++
++use super::*;
++use crate::baseline_pack::ZipArchive;
++use crate::baseline_pack::tests::{png, temp_dir, write_file};
++use crate::config::{GlobalOptions, MinecraftMod, SquashOptions};
++use crate::vfs::os_fs::OsFilesystem;
++use crate::{PackSquasher, PackSquasherStatus};
++
++const SKY_ENTRY: &[u8] = b"source=./cloud.png\nstartFadeIn=6:00\nendFadeIn=7:00\n";
++
++async fn detector(pack_dir: &Path) -> UnusedSkyImageDetector {
++	UnusedSkyImageDetector::scan(&OsFilesystem, pack_dir, IteratorTraversalOptions::default()).await
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn images_not_named_by_any_entry_are_unused() {
++	let pack_dir = temp_dir();
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/optifine/sky/world0/sky1.properties",
++		SKY_ENTRY
++	);
++
++	let detector = detector(pack_dir.path()).await;
++
++	assert!(!detector.is_unused("assets/minecraft/optifine/sky/world0/cloud.png"));
++	assert!(detector.is_unused("assets/minecraft/optifine/sky/world0/leftover.png"));
++	// Only sky images are considered
++	assert!(!detector.is_unused("assets/minecraft/optifine/colormap/leftover.png"));
++	assert!(!detector.is_unused("assets/minecraft/optifine/sky/world0/sky1.properties"));
++	assert!(!detector.is_unused("assets/minecraft/textures/blocks/leftover.png"));
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn nothing_is_unused_without_sky_entries() {
++	let pack_dir = temp_dir();
++	write_file(
++		pack_dir.path(),
++		"assets/minecraft/optifine/sky/world0/leftover.png",
++		b""
++	);
++
++	assert!(
++		!detector(pack_dir.path())
++			.await
++			.is_unused("assets/minecraft/optifine/sky/world0/leftover.png")
++	);
++}
++
++/// Not async because `PackSquasher::run` starts its own runtime.
++#[test]
++fn squashing_leaves_out_unused_sky_images_only_if_asked() {
++	let sky_image = png(1, 1, &[1, 2, 3, 255], Compression::best());
++
++	for (skip_unused_images, allow_optifine) in [(true, true), (false, true), (true, false)] {
++		let (pack_dir, output_dir) = (temp_dir(), temp_dir());
++
++		write_file(
++			pack_dir.path(),
++			"pack.mcmeta",
++			br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
++		);
++		write_file(
++			pack_dir.path(),
++			"assets/minecraft/optifine/sky/world0/sky1.properties",
++			SKY_ENTRY
++		);
++		write_file(
++			pack_dir.path(),
++			"assets/minecraft/optifine/sky/world0/cloud.png",
++			&sky_image
++		);
++		write_file(
++			pack_dir.path(),
++			"assets/minecraft/optifine/sky/world0/leftover.png",
++			&sky_image
++		);
++
++		let output_path = output_dir.path().join("pack.zip");
++		let mut global_options = GlobalOptions {
++			skip_unused_optifine_sky_images: skip_unused_images,
++			output_file_path: output_path.clone(),
++			..GlobalOptions::default()
++		};
++		global_options.zip_compression_iterations = 1;
++		if allow_optifine {
++			global_options.allow_mods = MinecraftMod::Optifine.into();
++		}
++
++		let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
++
++		PackSquasher::new()
++			.run(
++				OsFilesystem,
++				SquashOptions {
++					pack_directory: pack_dir.path().to_path_buf(),
++					global_options,
++					file_options: Default::default()
++				},
++				Some(sender)
++			)
++			.expect("Squashing a valid pack should succeed");
++
++		let mut intentionally_skipped = Vec::new();
++		while let Ok(status) = receiver.try_recv() {
++			if let PackSquasherStatus::PackFileProcessed(status) = status {
++				assert!(status.optimization_error().is_none());
++
++				if status.intentionally_skipped() {
++					intentionally_skipped.push(status.path().as_str().to_owned());
++				}
++			}
++		}
++
++		let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
++		let sky_directory = "assets/minecraft/optifine/sky/world0/";
++
++		if skip_unused_images && allow_optifine {
++			assert_eq!(
++				intentionally_skipped,
++				[format!("{sky_directory}leftover.png")]
++			);
++			assert!(!output.contains(&format!("{sky_directory}leftover.png")));
++		} else {
++			assert!(intentionally_skipped.is_empty());
++			// Without OptiFine support, the whole sky directory is not included anyway,
++			// so only check the result if OptiFine support was enabled
++			assert_eq!(
++				output.contains(&format!("{sky_directory}leftover.png")),
++				allow_optifine
++			);
++		}
++
++		if allow_optifine {
++			assert!(output.contains(&format!("{sky_directory}cloud.png")));
++			assert!(output.contains(&format!("{sky_directory}sky1.properties")));
++		}
++	}
++}
+diff --git a/packages/packsquash/src/vfs.rs b/packages/packsquash/src/vfs.rs
+index 14c5b9a..33ec9b4 100644
+--- a/packages/packsquash/src/vfs.rs
++++ b/packages/packsquash/src/vfs.rs
+@@ -5,7 +5,7 @@ use std::time::SystemTime;
+ use std::{fs::FileType, io, path::Path};
+ 
+ use crate::RelativePath;
+-use tokio::io::AsyncRead;
++use tokio::io::{AsyncRead, AsyncReadExt};
+ 
+ pub mod os_fs;
+ 
+@@ -80,3 +80,20 @@ pub struct VfsPackFileMetadata {
+ 	/// time to the creation time.
+ 	pub modification_time: Option<SystemTime>
+ }
++
++/// Reads everything that `reader` yields, using `size_hint` to preallocate the buffer.
++pub(crate) async fn read_to_end(
++	mut reader: impl AsyncRead + Unpin,
++	size_hint: u64
++) -> io::Result<Vec<u8>> {
++	let mut data = Vec::with_capacity(usize::try_from(size_hint).unwrap_or(0));
++	reader.read_to_end(&mut data).await?;
++	Ok(data)
++}
++
++/// Reads the whole file at the given path of a virtual filesystem, returning `None` if
++/// it does not exist or any I/O error happens.
++pub(crate) async fn read_file<V: VirtualFileSystem>(vfs: &V, path: &Path) -> Option<Vec<u8>> {
++	let file = vfs.open(path).ok()?;
++	read_to_end(file.file_read, file.file_size_hint).await.ok()
++}
+diff --git a/packages/packsquash_cli/src/bin/packsquash/main.rs b/packages/packsquash_cli/src/bin/packsquash/main.rs
+index 1e06379..94d7055 100644
+--- a/packages/packsquash_cli/src/bin/packsquash/main.rs
++++ b/packages/packsquash_cli/src/bin/packsquash/main.rs
+@@ -297,7 +297,9 @@ fn squash(
+ 									error_description
+ 								),
+ 								None => {
+-									if pack_file_status.skipped() {
++									// Files that the options ask to leave out are expected to be skipped, so they
++									// should not be reported like the ones that may signal a problem
++									if pack_file_status.skipped() && !pack_file_status.intentionally_skipped() {
+ 										warn!(
+ 											"{}: {}",
+ 											pack_file_status.path().as_str(),
+-- 
+2.43.0
+

@@ -218,6 +218,37 @@ pub struct GlobalOptions {
 	///
 	/// **Default value**: `true`
 	pub ignore_system_and_hidden_files: bool,
+	/// The path of a baseline pack that the pack being processed is meant to be layered on top
+	/// of. Typically, this is the vanilla game assets: either a directory with the extracted
+	/// contents of a game version client JAR, or the client JAR (or any other ZIP file) itself.
+	///
+	/// When this option is set, pack files that are identical to the file with the same path in
+	/// the baseline pack are left out of the result ZIP file, as the game would load the same
+	/// file from the baseline anyway. This makes packs that only customize a few files of the
+	/// baseline much smaller. Textures are compared by their pixels, so differences in how they
+	/// were encoded do not matter, and the JSON files are compared by their contents, so
+	/// differences in formatting and key ordering do not matter either. A texture is only left
+	/// out if its animation metadata file, if any, is identical too, and vice versa.
+	///
+	/// The baseline pack must match the game version the pack will be used with. The `pack.mcmeta`
+	/// and `pack.png` files are never left out. Be aware that if the pack is going to be used
+	/// together with other packs that sit below it, leaving out a file that is identical to the
+	/// baseline lets the files of those other packs show through.
+	///
+	/// **Default value**: not set (do not compare pack files with any baseline pack)
+	pub baseline_pack_path: Option<PathBuf>,
+	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
+	/// use. Packs sometimes ship sky images that no entry names, either because they are
+	/// leftovers or because the entries that used them were removed. When this option is
+	/// enabled, PackSquash leaves those unused images out of the result ZIP file. If the pack has
+	/// no OptiFine custom sky entries at all, no image is considered unused.
+	///
+	/// This option has no effect unless `allow_mods` contains OptiFine.
+	///
+	/// **Default value**: `false`
+	#[cfg(feature = "optifine")]
+	#[doc(cfg(feature = "optifine"))]
+	pub skip_unused_optifine_sky_images: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include
 	/// in the result ZIP file.
@@ -289,6 +320,9 @@ impl Default for GlobalOptions {
 			work_around_minecraft_quirks: EnumSet::empty(),
 			automatic_asset_types_mask_detection: true,
 			ignore_system_and_hidden_files: true,
+			baseline_pack_path: None,
+			#[cfg(feature = "optifine")]
+			skip_unused_optifine_sky_images: false,
 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
 			allow_mods: EnumSet::empty(),
 			threads: hardware_threads,

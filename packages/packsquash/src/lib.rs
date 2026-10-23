@@ -28,7 +28,10 @@ use tokio::sync::Semaphore;
 use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
+use baseline_pack::{BaselinePack, BaselinePackError};
 use config::ProcessedSquashOptions;
+#[cfg(feature = "optifine")]
+use optifine_sky::UnusedSkyImageDetector;
 use pack_metadata::{PackMetadata, PackMetadataError};
 use squash_zip::{SquashZip, SquashZipError};
 
@@ -49,7 +52,10 @@ use crate::vfs::{IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSyst
 pub mod config;
 pub mod vfs;
 
+mod baseline_pack;
 mod buffered_async_spooled_temp_file;
+#[cfg(feature = "optifine")]
+mod optifine_sky;
 mod pack_file;
 mod pack_metadata;
 mod squash_zip;
@@ -224,6 +230,43 @@ impl PackSquasher {
 		));
 		let options_holder = Arc::new(options_holder);
 
+		// Load the baseline pack, if configured, before processing any pack file. Doing
+		// so here makes an unusable baseline pack fail the operation promptly
+		let baseline_pack = options_holder
+			.options
+			.global_options
+			.baseline_pack_path
+			.as_deref()
+			.map(|baseline_pack_path| runtime.block_on(BaselinePack::open(&*vfs, baseline_pack_path)))
+			.transpose()?
+			.map(Arc::new);
+
+		// Find out which OptiFine custom sky images are not used by any sky entry, if
+		// they are to be left out
+		#[cfg(feature = "optifine")]
+		let unused_sky_image_detector = (options_holder
+			.options
+			.global_options
+			.skip_unused_optifine_sky_images
+			&& options_holder
+				.options
+				.global_options
+				.allow_mods
+				.contains(config::MinecraftMod::Optifine))
+		.then(|| {
+			runtime.block_on(UnusedSkyImageDetector::scan(
+				&*vfs,
+				&options_holder.options.pack_directory,
+				IteratorTraversalOptions {
+					ignore_system_and_hidden_files: options_holder
+						.options
+						.global_options
+						.ignore_system_and_hidden_files
+				}
+			))
+		})
+		.map(Arc::new);
+
 		runtime.block_on(async {
 			let pack_file_iter = vfs.file_iterator(
 				&options_holder.options.pack_directory,
@@ -363,6 +406,9 @@ impl PackSquasher {
 				let asset_type_matcher = Arc::clone(&asset_type_matcher);
 				let squash_zip = Arc::clone(&squash_zip);
 				let vfs = Arc::clone(&vfs);
+				let baseline_pack = baseline_pack.clone();
+				#[cfg(feature = "optifine")]
+				let unused_sky_image_detector = unused_sky_image_detector.clone();
 
 				let in_flight_tasks_semaphore = Arc::clone(&in_flight_tasks_semaphore);
 				let pack_file_optimization_failed = Arc::clone(&pack_file_optimization_failed);
@@ -382,7 +428,8 @@ impl PackSquasher {
 									path: RelativePath::from_inner(Cow::Borrowed("-")),
 									optimization_strategy: Cow::Borrowed("Pack directory scan error"),
 									optimization_error: Some(err.to_string()),
-									skipped: false
+									skipped: false,
+									intentionally_skipped: false
 								}))
 								.await
 								.ok();
@@ -392,6 +439,50 @@ impl PackSquasher {
 							return;
 						}
 					};
+
+					// Files that do not change anything relative to the baseline pack are left out
+					// of the result ZIP file. Do this before any file is processed to not waste
+					// time optimizing files that are not going to be included anyway
+					if let Some(baseline_pack) = &baseline_pack
+						&& baseline_pack.is_redundant(&*vfs, &pack_file_data).await
+					{
+						if let Some(tx) = pack_file_status_sender {
+							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+								path: pack_file_data.relative_path,
+								optimization_strategy: Cow::Borrowed(
+									"Identical to the baseline pack"
+								),
+								optimization_error: None,
+								skipped: true,
+								intentionally_skipped: true
+							}))
+							.await
+							.ok();
+						}
+
+						return;
+					}
+
+					#[cfg(feature = "optifine")]
+					if let Some(detector) = &unused_sky_image_detector
+						&& detector.is_unused(pack_file_data.relative_path.as_str())
+					{
+						if let Some(tx) = pack_file_status_sender {
+							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+								path: pack_file_data.relative_path,
+								optimization_strategy: Cow::Borrowed(
+									"Unused by OptiFine custom sky entries"
+								),
+								optimization_error: None,
+								skipped: true,
+								intentionally_skipped: true
+							}))
+							.await
+							.ok();
+						}
+
+						return;
+					}
 
 					let have_default_options;
 					let asset_type_matches = {
@@ -485,7 +576,8 @@ impl PackSquasher {
 							path: pack_file_data.relative_path,
 							optimization_strategy: Cow::Borrowed("Skipped"),
 							optimization_error: None,
-							skipped: true
+							skipped: true,
+							intentionally_skipped: false
 						}))
 						.await
 						.ok();
@@ -588,7 +680,11 @@ pub enum PackSquasherError {
 	/// Thrown when an error happened while parsing the pack metadata manifest,
 	/// which defines some basic characteristics of a pack.
 	#[error("Pack metadata error: {0}")]
-	PackMetadataError(#[from] PackMetadataError)
+	PackMetadataError(#[from] PackMetadataError),
+	/// Thrown when the baseline pack, which pack files are compared with to leave out
+	/// redundant ones, could not be loaded.
+	#[error("Baseline pack error: {0}")]
+	BaselinePackError(#[from] BaselinePackError)
 }
 
 impl From<Infallible> for PackSquasherError {
@@ -644,7 +740,8 @@ pub struct PackFileStatus {
 	path: RelativePath<'static>,
 	optimization_strategy: Cow<'static, str>,
 	optimization_error: Option<String>,
-	skipped: bool
+	skipped: bool,
+	intentionally_skipped: bool
 }
 
 impl PackFileStatus {
@@ -674,6 +771,17 @@ impl PackFileStatus {
 	/// PackSquash did not recognize it.
 	pub const fn skipped(&self) -> bool {
 		self.skipped
+	}
+
+	/// Checks whether this file was skipped because the squash options ask for files like
+	/// it to be left out of the result ZIP file, for example because it is identical to
+	/// the file with the same path in the baseline pack configured with the
+	/// `baseline_pack_path` option. Unlike other skipped files, which PackSquash did not
+	/// recognize or deemed unnecessary on its own, these are expected, so they do not hint
+	/// at a problem. If this method returns `true`, [`skipped`](Self::skipped) returns
+	/// `true` too.
+	pub const fn intentionally_skipped(&self) -> bool {
+		self.intentionally_skipped
 	}
 }
 
@@ -738,7 +846,8 @@ async fn match_and_process_pack_file(
 				path: pack_file_data.relative_path.as_owned(),
 				optimization_strategy: Cow::Borrowed("Error opening pack file"),
 				optimization_error: Some(err.to_string()),
-				skipped: false
+				skipped: false,
+				intentionally_skipped: false
 			}))
 			.await
 			.ok();
@@ -857,7 +966,8 @@ async fn process_pack_file(
 			path: pack_file_path,
 			optimization_strategy,
 			optimization_error,
-			skipped: false
+			skipped: false,
+			intentionally_skipped: false
 		}))
 		.await
 		.ok();
