@@ -237,6 +237,24 @@ pub struct GlobalOptions {
 	///
 	/// **Default value**: not set (do not compare pack files with any baseline pack)
 	pub baseline_pack_path: Option<PathBuf>,
+	/// The game version to use from the baseline pack, if it holds the assets of several game
+	/// versions in a single file or directory. This option is required for those baseline packs
+	/// and not allowed for the others. The `baseline_pack_path` option documents how a
+	/// baseline pack can hold several versions.
+	///
+	/// **Default value**: not set
+	pub baseline_pack_version: Option<String>,
+	/// When a baseline pack is set with `baseline_pack_path`, this option removes the entries of
+	/// language files (the `.json` files of modern versions and the `.lang` files of old ones, in
+	/// the `lang` directory of each namespace) that have the same value as the entry with the same
+	/// key in the language file of the baseline pack with the same path. The game falls back to the
+	/// baseline pack for the removed entries, so players see the same translations. Language files
+	/// that end up with no entries are left out of the result ZIP file.
+	///
+	/// This option has no effect if `baseline_pack_path` is not set.
+	///
+	/// **Default value**: `true`
+	pub skip_language_keys_identical_to_baseline: bool,
 	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
 	/// use. Packs sometimes ship sky images that no entry names, either because they are
 	/// leftovers or because the entries that used them were removed. When this option is
@@ -321,6 +339,8 @@ impl Default for GlobalOptions {
 			automatic_asset_types_mask_detection: true,
 			ignore_system_and_hidden_files: true,
 			baseline_pack_path: None,
+			baseline_pack_version: None,
+			skip_language_keys_identical_to_baseline: true,
 			#[cfg(feature = "optifine")]
 			skip_unused_optifine_sky_images: false,
 			#[cfg(any(feature = "optifine", feature = "mtr3"))]

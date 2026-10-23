@@ -1,0 +1,1127 @@
+From 5c79a315fd4a8b32d2c78802c3e4946fe4abbce2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 23 Oct 2026 05:16:06 +0000
+Subject: [PATCH] feat: remove language keys identical to a baseline pack and
+ support versioned baseline packs
+
+Add the skip_language_keys_identical_to_baseline global option, enabled by
+default (PackSquash #197). Entries of .json and .lang language files that
+have the same value in the baseline pack language file are removed, and files
+that end up empty are left out. Repeated keys in .lang files use the last
+value, like the game does.
+
+Add the baseline_pack_version global option and support for baseline packs
+that hold many game versions. Such packs have a baseline.json index at their
+root. Each version only stores the files it added or changed, and lists the
+files it deleted.
+
+Replace the data read for a pack file with in-memory data when needed.
+---
+ CHANGELOG.md                                  |   8 +
+ docs/wiki/Options-files.md                    |  77 ++++-
+ packages/packsquash/src/baseline_pack.rs      | 316 +++++++++++++++--
+ .../packsquash/src/baseline_pack/tests.rs     | 319 +++++++++++++++++-
+ packages/packsquash/src/config/mod.rs         |  20 ++
+ packages/packsquash/src/lib.rs                | 107 +++++-
+ 6 files changed, 808 insertions(+), 39 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8fd590e..a0511eb 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -61,6 +61,14 @@ compared by their pixels, JSON files by their contents, and other files byte by
+ byte. Textures and their animation metadata are only left out together. For more
+ details, please see
+ [#402](https://github.com/ComunidadAylas/PackSquash/issues/402).
++- The new `baseline_pack_version` global option selects the game version to use
++from a baseline pack that holds many versions, described by a `baseline.json`
++file at its root. Versions only store the files they added or changed.
++- The new `skip_language_keys_identical_to_baseline` global option, enabled by
++default, removes the entries of `.json` and `.lang` language files that have the
++same value in the language file of the baseline pack, and leaves out the files
++that end up empty. For more details, please see
++[#197](https://github.com/ComunidadAylas/PackSquash/issues/197).
+ - The new `skip_unused_optifine_sky_images` global option leaves OptiFine
+ custom sky images that no sky entry names out of the result ZIP file. It only
+ has an effect when OptiFine support is enabled in `allow_mods`.
+diff --git a/docs/wiki/Options-files.md b/docs/wiki/Options-files.md
+index 80f4b0a..d2bea2f 100644
+--- a/docs/wiki/Options-files.md
++++ b/docs/wiki/Options-files.md
+@@ -27,6 +27,8 @@
+   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
+   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
+   - [`baseline_pack_path`](#baseline_pack_path)
++  - [`baseline_pack_version`](#baseline_pack_version)
++  - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
+   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
+   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
+@@ -496,7 +498,9 @@ game loads those files from the baseline anyway, so the result ZIP file is
+ smaller and behaves the same.
+ 
+ The path can point to a directory with the extracted contents of the baseline,
+-or to a ZIP file, such as the `.jar` file of a game version client. Pack
++or to a ZIP file, such as the `.jar` file of a game version client. A baseline
++can also hold many game versions, as described in
++[`baseline_pack_version`](#baseline_pack_version). Pack
+ files are compared like this:
+ 
+ - Textures are compared by their size and pixels, so it does not matter how they
+@@ -528,6 +532,73 @@ Example:
+ baseline_pack_path = 'C:\path\to\1.8.9.jar'
+ ```
+ 
++### `baseline_pack_version`
++
++**Type**: [String](https://toml.io/en/v1.0.0#string)
++
++**Default value**: not set
++
++A baseline pack can hold the assets of many game versions in a single file or
++directory. This option selects which version PackSquash compares the pack with.
++It is required for those baseline packs, and an error for the others.
++
++A baseline pack holds several versions if it has a `baseline.json` file at its
++root, with this structure:
++
++```json
++{
++  "format": 1,
++  "versions": ["1.8.9", "1.9", "1.9.4"],
++  "removed": { "1.9": ["assets/minecraft/textures/blocks/deleted.png"] }
++}
++```
++
++- `versions` lists the versions from the oldest to the newest.
++- Every version has a directory named after it, like `1.9/assets/minecraft/...`.
++  The directory of the oldest version holds all of its files. The directory of
++  any other version only holds the files that the version added or changed
++  relative to the previous one.
++- `removed` lists, for each version, the files that the version deleted relative
++  to the previous one.
++
++To look up a file in the selected version, PackSquash checks the directory of
++that version first, then the directories of the previous versions, and stops at
++the first version that has the file or deleted it. This keeps a baseline pack
++for many versions close to the size of a few full versions.
++
++Example:
++
++```toml
++baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
++baseline_pack_version = '1.21.4'
++```
++
++### `skip_language_keys_identical_to_baseline`
++
++**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
++
++**Default value**: `true`
++
++If a [baseline pack](#baseline_pack_path) is set, language files lose the
++entries that have the same value as the entry with the same key in the language
++file of the baseline pack with the same path. This applies to the `.json` files
++of modern versions and the `.lang` files of old ones, in the `lang` directory of
++each namespace. The game falls back to the baseline pack for the removed
++entries, so players see the same translations. Language files that end up with
++no entries are left out of the result ZIP file.
++
++Please note that:
++
++- The remaining JSON entries are written without formatting, in their original
++  order. Comments and blank lines of `.lang` files are kept.
++- When a `.lang` file repeats a key, the game uses its last value, and so does
++  PackSquash when deciding whether the key is identical to the baseline.
++- Files that are not valid language files are left as they are.
++- PackSquash may reuse files from a previous result ZIP file if they did not
++  change. If you change the baseline pack, delete the previous ZIP file first.
++
++This option has no effect if `baseline_pack_path` is not set.
++
+ ### `skip_unused_optifine_sky_images`
+ 
+ **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+@@ -1871,7 +1942,9 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
+ skip_pack_icon = true
+ validate_pack_metadata_file = true
+ ignore_system_and_hidden_files = false
+-baseline_pack_path = 'C:\path\to\1.8.9.jar'
++baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
++baseline_pack_version = '1.8.9'
++skip_language_keys_identical_to_baseline = true
+ skip_unused_optifine_sky_images = true
+ zip_spec_conformance_level = 'high'
+ # These two are actually ignored due to the ZIP spec conformance level
+diff --git a/packages/packsquash/src/baseline_pack.rs b/packages/packsquash/src/baseline_pack.rs
+index b0a8731..332e048 100644
+--- a/packages/packsquash/src/baseline_pack.rs
++++ b/packages/packsquash/src/baseline_pack.rs
+@@ -1,11 +1,31 @@
+ //! Support for baseline packs: packs, usually the vanilla game assets, that the pack being
+ //! processed is layered on top of. Pack files that do not change anything relative to the
+ //! baseline are redundant, so they can be left out of the result ZIP file to make it smaller.
+-
++//!
++//! A baseline pack can also hold the assets of many game versions in a compact way. Such a
++//! versioned baseline pack has a `baseline.json` file at its root with this structure:
++//!
++//! ```json
++//! {
++//!     "format": 1,
++//!     "versions": ["1.8.9", "1.9", "1.9.4"],
++//!     "removed": { "1.9": ["assets/minecraft/textures/blocks/some_deleted_texture.png"] }
++//! }
++//! ```
++//!
++//! `versions` lists the versions from the oldest to the newest. Every version has a directory
++//! named after it that holds the files that the version added or changed relative to the
++//! previous one, and the oldest version holds all of its files. `removed` lists, for each
++//! version, the files that the version deleted relative to the previous one. Selecting a version
++//! means looking for each file in the directory of that version first, and then in the
++//! directories of the previous versions, stopping at the first version that has or removed it.
++
++use std::collections::{HashMap, HashSet};
+ use std::ffi::OsString;
+ use std::io;
+ use std::path::{Path, PathBuf};
+ 
++use serde::Deserialize;
+ use spng::{ContextFlags, DecodeFlags, Format};
+ use thiserror::Error;
+ 
+@@ -19,6 +39,9 @@ mod zip_reader;
+ #[cfg(test)]
+ pub(crate) mod tests;
+ 
++/// The name of the file that marks a baseline pack as versioned.
++const VERSION_INDEX_FILE: &str = "baseline.json";
++
+ /// The PNG file signature, followed by the length and type of the IHDR chunk, which
+ /// always is the first chunk of a PNG file.
+ const PNG_HEADER: [u8; 16] = [
+@@ -38,7 +61,24 @@ pub enum BaselinePackError {
+ 	IoError(#[from] io::Error),
+ 	/// Thrown when the baseline pack is a file, but not a valid ZIP archive.
+ 	#[error("the baseline pack is neither a directory nor a valid ZIP file: {0}")]
+-	InvalidArchive(#[from] ZipReadError)
++	InvalidArchive(#[from] ZipReadError),
++	/// Thrown when the version index of a versioned baseline pack is not valid.
++	#[error("the baseline pack version index is not valid: {0}")]
++	InvalidVersionIndex(String),
++	/// Thrown when the baseline pack holds several game versions, but none was selected.
++	#[error("the baseline pack holds several game versions, so baseline_pack_version must be set to one of: {0}")]
++	VersionRequired(String),
++	/// Thrown when the selected game version is not in the baseline pack.
++	#[error("the baseline pack does not hold the game version {version}. It holds: {available}")]
++	UnknownVersion {
++		/// The version that was selected.
++		version: String,
++		/// The comma-separated versions that the baseline pack holds.
++		available: String
++	},
++	/// Thrown when a game version was selected, but the baseline pack is not versioned.
++	#[error("baseline_pack_version is set, but the baseline pack does not hold several game versions")]
++	NotVersioned
+ }
+ 
+ enum BaselineSource {
+@@ -48,41 +88,146 @@ enum BaselineSource {
+ 	Archive(ZipArchive)
+ }
+ 
++/// The contents of the `baseline.json` file.
++#[derive(Deserialize)]
++struct VersionIndexFile {
++	format: u32,
++	versions: Vec<String>,
++	#[serde(default)]
++	removed: HashMap<String, Vec<String>>
++}
++
++/// A game version of a versioned baseline pack, and the files that it deleted
++/// relative to the previous version.
++struct VersionLayer {
++	version: String,
++	removed_files: HashSet<String>
++}
++
+ /// A loaded baseline pack, ready to be used to find redundant pack files.
+ pub(crate) struct BaselinePack {
+-	source: BaselineSource
++	source: BaselineSource,
++	/// For versioned baseline packs, the layers of the selected version and all the
++	/// previous ones, from the newest to the oldest.
++	layers: Option<Vec<VersionLayer>>
++}
++
++/// The result of removing the language keys that a baseline pack already provides from
++/// a language file.
++#[derive(Debug, PartialEq, Eq)]
++pub(crate) enum LanguageFileReduction {
++	/// There is nothing to remove, or the file can't be safely reduced.
++	Unchanged,
++	/// Every key is already provided by the baseline pack, so the file is not needed.
++	Redundant,
++	/// Some keys were removed. The reduced file contents are provided.
++	Reduced { data: Vec<u8> }
+ }
+ 
+ impl BaselinePack {
+ 	/// Loads the baseline pack at the given path, which can be either a directory or a
+-	/// ZIP archive such as a vanilla client JAR.
++	/// ZIP archive such as a vanilla client JAR. If the baseline pack holds the assets of
++	/// several game versions, `version` selects which one is used.
+ 	pub(crate) async fn open<V: VirtualFileSystem>(
+ 		vfs: &V,
+-		path: &Path
++		path: &Path,
++		version: Option<&str>
+ 	) -> Result<Self, BaselinePackError> {
+-		if vfs.file_type(path)?.is_dir() {
+-			return Ok(Self {
+-				source: BaselineSource::Directory(path.to_path_buf())
+-			});
++		let source = if vfs.file_type(path)?.is_dir() {
++			BaselineSource::Directory(path.to_path_buf())
++		} else {
++			let file = vfs.open(path)?;
++			let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
++
++			BaselineSource::Archive(ZipArchive::parse(archive_data)?)
++		};
++
++		let mut baseline_pack = Self {
++			source,
++			layers: None
++		};
++
++		baseline_pack.layers = match (baseline_pack.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
++			(Some(index), version) => Some(Self::select_version(&index, version)?),
++			(None, None) => None,
++			(None, Some(_)) => return Err(BaselinePackError::NotVersioned)
++		};
++
++		Ok(baseline_pack)
++	}
++
++	/// Parses the version index and returns the layers of the selected version.
++	fn select_version(
++		index: &[u8],
++		version: Option<&str>
++	) -> Result<Vec<VersionLayer>, BaselinePackError> {
++		let index = serde_json::from_slice::<VersionIndexFile>(index)
++			.map_err(|err| BaselinePackError::InvalidVersionIndex(err.to_string()))?;
++
++		if index.format != 1 {
++			return Err(BaselinePackError::InvalidVersionIndex(format!(
++				"unsupported format {}",
++				index.format
++			)));
+ 		}
+ 
+-		let file = vfs.open(path)?;
+-		let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
++		let available = index.versions.join(", ");
++		let Some(version) = version else {
++			return Err(BaselinePackError::VersionRequired(available));
++		};
++		let Some(selected_position) = index.versions.iter().position(|v| v == version) else {
++			return Err(BaselinePackError::UnknownVersion {
++				version: version.to_owned(),
++				available
++			});
++		};
+ 
+-		Ok(Self {
+-			source: BaselineSource::Archive(ZipArchive::parse(archive_data)?)
+-		})
++		let mut removed = index.removed;
++
++		Ok(index.versions[..=selected_position]
++			.iter()
++			.rev()
++			.map(|version| VersionLayer {
++				version: version.clone(),
++				removed_files: removed
++					.remove(version)
++					.map(|files| files.into_iter().collect())
++					.unwrap_or_default()
++			})
++			.collect())
+ 	}
+ 
+-	/// Reads the contents of the baseline pack file with the given relative path, if it
++	/// Reads a file at the given path, relative to the root of the baseline pack, if it
+ 	/// exists and can be read.
+-	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
++	async fn read_raw<V: VirtualFileSystem>(&self, vfs: &V, path: &str) -> Option<Vec<u8>> {
+ 		match &self.source {
+-			BaselineSource::Directory(directory) => {
+-				read_file(vfs, &directory.join(relative_path)).await
++			BaselineSource::Directory(directory) => read_file(vfs, &directory.join(path)).await,
++			BaselineSource::Archive(archive) => archive.read(path)
++		}
++	}
++
++	/// Reads the contents of the baseline pack file with the given relative path, if it
++	/// exists and can be read. For versioned baseline packs, this reads the file as it
++	/// is in the selected game version.
++	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
++		let Some(layers) = &self.layers else {
++			return self.read_raw(vfs, relative_path).await;
++		};
++
++		for layer in layers {
++			if let Some(data) = self
++				.read_raw(vfs, &format!("{}/{relative_path}", layer.version))
++				.await
++			{
++				return Some(data);
++			}
++
++			if layer.removed_files.contains(relative_path) {
++				return None;
+ 			}
+-			BaselineSource::Archive(archive) => archive.read(relative_path)
+ 		}
++
++		None
+ 	}
+ 
+ 	/// Checks whether including the given pack file in the result ZIP file is redundant
+@@ -181,6 +326,49 @@ impl BaselinePack {
+ 			_ => false
+ 		}
+ 	}
++
++	/// Removes the keys of a language file that have the same value in the language file
++	/// of the baseline pack with the same path. As the game falls back to the baseline
++	/// pack for the missing keys, the translations the player sees are the same.
++	///
++	/// Files that are not language files, that do not have a counterpart in the baseline pack,
++	/// or that can't be parsed are reported as unchanged.
++	pub(crate) async fn reduce_language_file<V: VirtualFileSystem>(
++		&self,
++		vfs: &V,
++		pack_file: &VfsPackFileIterEntry
++	) -> LanguageFileReduction {
++		let relative_path = pack_file.relative_path.as_str();
++
++		let mut components = relative_path.split('/');
++		let is_in_language_directory = components.next() == Some("assets")
++			&& components.next().is_some()
++			&& components.next() == Some("lang")
++			&& components.next().is_some();
++
++		let reduce: fn(&[u8], &[u8]) -> LanguageFileReduction = if !is_in_language_directory {
++			return LanguageFileReduction::Unchanged;
++		} else if relative_path.ends_with(".json") {
++			reduce_json_language_file
++		} else if relative_path.ends_with(".lang") {
++			reduce_legacy_language_file
++		} else {
++			return LanguageFileReduction::Unchanged;
++		};
++
++		let (Some(pack_data), Some(baseline_data)) = (
++			read_file(vfs, &pack_file.file_path).await,
++			self.read(vfs, relative_path).await
++		) else {
++			return LanguageFileReduction::Unchanged;
++		};
++
++		reduce(&pack_data, &baseline_data)
++	}
++}
++
++fn strip_bom(data: &[u8]) -> &[u8] {
++	data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data)
+ }
+ 
+ /// Checks whether two JSON documents have the same contents, regardless of how they are
+@@ -191,16 +379,91 @@ fn json_is_identical(a: &[u8], b: &[u8]) -> bool {
+ 		return true;
+ 	}
+ 
+-	let parse = |data: &[u8]| {
+-		serde_json::from_slice::<serde_json::Value>(
+-			data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data)
+-		)
+-		.ok()
+-	};
++	let parse = |data: &[u8]| serde_json::from_slice::<serde_json::Value>(strip_bom(data)).ok();
+ 
+ 	matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
+ }
+ 
++/// Removes the entries of a JSON language file that the baseline language file has with the
++/// same value.
++fn reduce_json_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
++	let parse = |data: &[u8]| match serde_json::from_slice(strip_bom(data)) {
++		Ok(serde_json::Value::Object(entries)) => Some(entries),
++		_ => None
++	};
++
++	let (Some(mut pack_entries), Some(baseline_entries)) = (parse(pack), parse(baseline)) else {
++		return LanguageFileReduction::Unchanged;
++	};
++
++	let entry_count = pack_entries.len();
++	pack_entries.retain(|key, value| baseline_entries.get(key) != Some(&*value));
++
++	if pack_entries.len() == entry_count {
++		LanguageFileReduction::Unchanged
++	} else if pack_entries.is_empty() {
++		LanguageFileReduction::Redundant
++	} else {
++		serde_json::to_vec(&pack_entries)
++			.map_or(LanguageFileReduction::Unchanged, |data| {
++				LanguageFileReduction::Reduced { data }
++			})
++	}
++}
++
++/// Removes the entries of a legacy language file (`key=value` lines) that the baseline
++/// language file has with the same value. Comments, blank lines and line endings are kept.
++fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
++	let (Ok(pack), Ok(baseline)) = (std::str::from_utf8(pack), std::str::from_utf8(baseline))
++	else {
++		return LanguageFileReduction::Unchanged;
++	};
++
++	// Like the game does, ignore blank lines, comments, and lines without an equals sign,
++	// and do not trim anything but the line terminator
++	fn entry(line: &str) -> Option<(&str, &str)> {
++		let line = line.trim_end_matches(['\r', '\n']);
++
++		if line.is_empty() || line.starts_with('#') {
++			None
++		} else {
++			line.split_once('=')
++		}
++	}
++
++	// When a key appears several times, the game uses the last value, so that is the one
++	// to compare with. A key is only removed if the value the game would use is provided by
++	// the baseline, which means removing every line of that key
++	let baseline_values: HashMap<_, _> = baseline.split_inclusive('\n').filter_map(entry).collect();
++	let pack_values: HashMap<_, _> = pack.split_inclusive('\n').filter_map(entry).collect();
++
++	let mut reduced = String::with_capacity(pack.len());
++	let (mut removed_entries, mut kept_entries) = (0_usize, 0_usize);
++
++	for line in pack.split_inclusive('\n') {
++		match entry(line) {
++			Some((key, _)) if baseline_values.get(key) == pack_values.get(key) => {
++				removed_entries += 1;
++			}
++			Some(_) => {
++				kept_entries += 1;
++				reduced.push_str(line);
++			}
++			None => reduced.push_str(line)
++		}
++	}
++
++	if removed_entries == 0 {
++		LanguageFileReduction::Unchanged
++	} else if kept_entries == 0 {
++		LanguageFileReduction::Redundant
++	} else {
++		LanguageFileReduction::Reduced {
++			data: reduced.into_bytes()
++		}
++	}
++}
++
+ /// Checks whether two PNG images look the same in the game: they have the same size and
+ /// pixels, regardless of how they were encoded. The color of fully transparent pixels is
+ /// ignored, as it can't be seen. If either image can't be decoded, or it is too big to
+@@ -215,7 +478,8 @@ fn png_is_identical(a: &[u8], b: &[u8]) -> bool {
+ 		return false;
+ 	};
+ 
+-	if size_a != size_b || u64::from(size_a.0) * u64::from(size_a.1) > MAX_PIXEL_COMPARISON_PIXELS {
++	if size_a != size_b || u64::from(size_a.0) * u64::from(size_a.1) > MAX_PIXEL_COMPARISON_PIXELS
++	{
+ 		return false;
+ 	}
+ 
+diff --git a/packages/packsquash/src/baseline_pack/tests.rs b/packages/packsquash/src/baseline_pack/tests.rs
+index b7830a9..93e7d2b 100644
+--- a/packages/packsquash/src/baseline_pack/tests.rs
++++ b/packages/packsquash/src/baseline_pack/tests.rs
+@@ -126,7 +126,7 @@ fn zip(entries: &[(&str, &[u8], bool)], comment: &[u8]) -> Vec<u8> {
+ }
+ 
+ async fn baseline_directory(directory: &TempDir) -> BaselinePack {
+-	BaselinePack::open(&OsFilesystem, directory.path())
++	BaselinePack::open(&OsFilesystem, directory.path(), None)
+ 		.await
+ 		.unwrap()
+ }
+@@ -394,7 +394,7 @@ async fn archives_can_be_baseline_packs() {
+ 	);
+ 	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &texture);
+ 
+-	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"))
++	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
+ 		.await
+ 		.unwrap();
+ 
+@@ -420,11 +420,11 @@ async fn unusable_baseline_packs_are_rejected() {
+ 	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
+ 
+ 	assert!(matches!(
+-		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar")).await,
++		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
+ 		Err(BaselinePackError::InvalidArchive(_))
+ 	));
+ 	assert!(matches!(
+-		BaselinePack::open(&OsFilesystem, &dir.path().join("missing")).await,
++		BaselinePack::open(&OsFilesystem, &dir.path().join("missing"), None).await,
+ 		Err(BaselinePackError::IoError(_))
+ 	));
+ }
+@@ -564,3 +564,314 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
+ 	assert!(output.contains("assets/minecraft/textures/blocks/dirt.png"));
+ 	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
+ }
++
++fn language_entry(root: &Path, file: &str, pack_data: &[u8], baseline_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
++	let baseline_dir = temp_dir();
++	write_file(baseline_dir.path(), file, baseline_data);
++	write_file(root, file, pack_data);
++
++	(baseline_dir, pack_file(root, file))
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn json_language_keys_identical_to_the_baseline_are_removed() {
++	let file = "assets/minecraft/lang/es_es.json";
++	let baseline = br#"{"a": "1", "b": "2", "c": "3"}"#;
++
++	let reduce = |pack: &'static [u8]| async move {
++		let pack_dir = temp_dir();
++		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
++		baseline_directory(&baseline_dir)
++			.await
++			.reduce_language_file(&OsFilesystem, &entry)
++			.await
++	};
++
++	// Same key with another value, and a new key, are kept. Order is preserved
++	let LanguageFileReduction::Reduced { data } =
++		reduce(br#"{"z": "26", "a": "1", "b": "changed", "d": "4"}"#).await
++	else {
++		panic!("Some keys should have been removed");
++	};
++	assert_eq!(
++		String::from_utf8(data).unwrap(),
++		r#"{"z":"26","b":"changed","d":"4"}"#
++	);
++
++	assert_eq!(
++		reduce(br#"{"a": "1", "c": "3"}"#).await,
++		LanguageFileReduction::Redundant
++	);
++	assert_eq!(
++		reduce(br#"{"a": "other", "e": "5"}"#).await,
++		LanguageFileReduction::Unchanged
++	);
++	assert_eq!(reduce(b"not JSON").await, LanguageFileReduction::Unchanged);
++	assert_eq!(reduce(b"[1, 2]").await, LanguageFileReduction::Unchanged);
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
++	let file = "assets/minecraft/lang/en_US.lang";
++	let baseline = b"a=1\nb=2\nc=3 \nd=\n";
++
++	let reduce = |pack: &'static [u8]| async move {
++		let pack_dir = temp_dir();
++		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
++		baseline_directory(&baseline_dir)
++			.await
++			.reduce_language_file(&OsFilesystem, &entry)
++			.await
++	};
++	let reduced = |reduction: LanguageFileReduction| match reduction {
++		LanguageFileReduction::Reduced { data } => String::from_utf8(data).unwrap(),
++		other => panic!("Some keys should have been removed, but got {other:?}")
++	};
++
++	// Comments, blank lines and line endings are kept. Values are not trimmed, so "c=3"
++	// differs from "c=3 ". An empty value is a value like any other
++	assert_eq!(
++		reduced(reduce(b"# Comment\r\na=1\r\n\r\nb=changed\r\nc=3\r\nd=\r\ne=5").await),
++		"# Comment\r\n\r\nb=changed\r\nc=3\r\ne=5"
++	);
++
++	// The game uses the last value of repeated keys, so that is the one that counts
++	assert_eq!(
++		reduced(reduce(b"a=changed\na=1\nb=changed\nb=2\nb=changed again\nz=26\n").await),
++		"b=changed\nb=2\nb=changed again\nz=26\n"
++	);
++
++	assert_eq!(
++		reduce(b"# Only inherited\na=1\nb=2\n").await,
++		LanguageFileReduction::Redundant
++	);
++	assert_eq!(
++		reduce(b"a=changed\nnew=1\n").await,
++		LanguageFileReduction::Unchanged
++	);
++	assert_eq!(reduce(b"\xFF\xFE").await, LanguageFileReduction::Unchanged);
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn language_files_are_only_reduced_when_they_are_language_files() {
++	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++
++	for file in [
++		"assets/minecraft/texts/credits.json",
++		"assets/minecraft/lang/notes.txt",
++		"lang/es_es.json"
++	] {
++		write_file(baseline_dir.path(), file, br#"{"a": "1"}"#);
++		write_file(pack_dir.path(), file, br#"{"a": "1", "b": "2"}"#);
++	}
++
++	let baseline = baseline_directory(&baseline_dir).await;
++
++	for file in [
++		"assets/minecraft/texts/credits.json",
++		"assets/minecraft/lang/notes.txt",
++		"lang/es_es.json"
++	] {
++		assert_eq!(
++			baseline
++				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file))
++				.await,
++			LanguageFileReduction::Unchanged,
++			"{file}"
++		);
++	}
++}
++
++fn versioned_jar(index: &str) -> Vec<u8> {
++	zip(
++		&[
++			("baseline.json", index.as_bytes(), true),
++			("1.0/assets/minecraft/texts/a.txt", b"a from 1.0", true),
++			("1.0/assets/minecraft/texts/b.txt", b"b from 1.0", true),
++			("1.1/assets/minecraft/texts/a.txt", b"a from 1.1", true),
++			("1.2/assets/minecraft/texts/c.txt", b"c from 1.2", true)
++		],
++		b""
++	)
++}
++
++const VERSION_INDEX: &str = r#"{
++	"format": 1,
++	"versions": ["1.0", "1.1", "1.2"],
++	"removed": {"1.2": ["assets/minecraft/texts/b.txt"]}
++}"#;
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
++	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
++	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
++
++	for (name, content) in [
++		("a", "a from 1.0"),
++		("b", "b from 1.0"),
++		("c", "c from 1.2")
++	] {
++		write_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"), content.as_bytes());
++	}
++	write_file(pack_dir.path(), "assets/minecraft/texts/a_1_1.txt", b"unused");
++	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt.1_1", b"unused");
++
++	// For each version, whether the pack files named a, b and c are redundant
++	for (version, expected) in [
++		("1.0", [true, true, false]),
++		("1.1", [false, true, false]),
++		("1.2", [false, false, true])
++	] {
++		let baseline = BaselinePack::open(
++			&OsFilesystem,
++			&jar_dir.path().join("vanilla.jar"),
++			Some(version)
++		)
++		.await
++		.unwrap();
++
++		for (name, expected) in ["a", "b", "c"].into_iter().zip(expected) {
++			assert_eq!(
++				baseline
++					.is_redundant(
++						&OsFilesystem,
++						&pack_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"))
++					)
++					.await,
++				expected,
++				"file {name} in version {version}"
++			);
++		}
++	}
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn versioned_baseline_packs_can_be_directories() {
++	let baseline_dir = temp_dir();
++	write_file(baseline_dir.path(), "baseline.json", VERSION_INDEX.as_bytes());
++	write_file(baseline_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
++	write_file(baseline_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
++
++	let pack_dir = temp_dir();
++	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt", b"a from 1.1");
++
++	let baseline = BaselinePack::open(&OsFilesystem, baseline_dir.path(), Some("1.2"))
++		.await
++		.unwrap();
++
++	assert!(
++		baseline
++			.is_redundant(
++				&OsFilesystem,
++				&pack_file(pack_dir.path(), "assets/minecraft/texts/a.txt")
++			)
++			.await
++	);
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
++async fn versioned_baseline_packs_reject_wrong_version_selections() {
++	let dir = temp_dir();
++	write_file(dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
++	write_file(dir.path(), "plain.jar", &zip(&[("assets/a.txt", b"a", false)], b""));
++	write_file(
++		dir.path(),
++		"bad_format.jar",
++		&versioned_jar(r#"{"format": 2, "versions": ["1.0"]}"#)
++	);
++	write_file(dir.path(), "bad_index.jar", &versioned_jar("not JSON"));
++
++	let open = |file: &'static str, version: Option<&'static str>| {
++		let path = dir.path().join(file);
++		async move { BaselinePack::open(&OsFilesystem, &path, version).await.err() }
++	};
++
++	assert!(matches!(
++		open("vanilla.jar", None).await,
++		Some(BaselinePackError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
++	));
++	assert!(matches!(
++		open("vanilla.jar", Some("9.9")).await,
++		Some(BaselinePackError::UnknownVersion { version, .. }) if version == "9.9"
++	));
++	assert!(matches!(
++		open("plain.jar", Some("1.0")).await,
++		Some(BaselinePackError::NotVersioned)
++	));
++	assert!(matches!(
++		open("bad_format.jar", Some("1.0")).await,
++		Some(BaselinePackError::InvalidVersionIndex(_))
++	));
++	assert!(matches!(
++		open("bad_index.jar", Some("1.0")).await,
++		Some(BaselinePackError::InvalidVersionIndex(_))
++	));
++	assert!(open("plain.jar", None).await.is_none());
++}
++
++/// Not async because `PackSquasher::run` starts its own runtime.
++#[test]
++fn squashing_removes_language_keys_identical_to_the_baseline() {
++	for skip_language_keys in [true, false] {
++		let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
++
++		write_file(baseline_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
++		write_file(baseline_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
++
++		write_file(
++			pack_dir.path(),
++			"pack.mcmeta",
++			br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
++		);
++		write_file(pack_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=9\nc=3\nd=4\n");
++		write_file(pack_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\n");
++
++		let output_path = output_dir.path().join("pack.zip");
++		let mut global_options = GlobalOptions {
++			baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
++			skip_language_keys_identical_to_baseline: skip_language_keys,
++			output_file_path: output_path.clone(),
++			..GlobalOptions::default()
++		};
++		global_options.zip_compression_iterations = 1;
++
++		let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
++
++		PackSquasher::new()
++			.run(
++				OsFilesystem,
++				SquashOptions {
++					pack_directory: pack_dir.path().to_path_buf(),
++					global_options,
++					file_options: Default::default()
++				},
++				Some(sender)
++			)
++			.expect("Squashing a valid pack should succeed");
++
++		let mut intentionally_skipped = Vec::new();
++		while let Ok(status) = receiver.try_recv() {
++			if let PackSquasherStatus::PackFileProcessed(status) = status {
++				assert!(status.optimization_error().is_none());
++
++				if status.intentionally_skipped() {
++					intentionally_skipped.push(status.path().as_str().to_owned());
++				}
++			}
++		}
++
++		let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
++		let english = String::from_utf8(output.read("assets/minecraft/lang/en_US.lang").unwrap()).unwrap();
++
++		if skip_language_keys {
++			assert_eq!(intentionally_skipped, ["assets/minecraft/lang/fr_FR.lang"]);
++			assert!(output.read("assets/minecraft/lang/fr_FR.lang").is_none());
++			assert!(english.contains("b=9") && english.contains("d=4"));
++			assert!(!english.contains("a=1") && !english.contains("c=3"), "{english}");
++		} else {
++			assert!(intentionally_skipped.is_empty());
++			assert!(output.read("assets/minecraft/lang/fr_FR.lang").is_some());
++			assert!(english.contains("a=1") && english.contains("c=3"));
++		}
++	}
++}
+diff --git a/packages/packsquash/src/config/mod.rs b/packages/packsquash/src/config/mod.rs
+index ff9d5c3..f08909c 100644
+--- a/packages/packsquash/src/config/mod.rs
++++ b/packages/packsquash/src/config/mod.rs
+@@ -237,6 +237,24 @@ pub struct GlobalOptions {
+ 	///
+ 	/// **Default value**: not set (do not compare pack files with any baseline pack)
+ 	pub baseline_pack_path: Option<PathBuf>,
++	/// The game version to use from the baseline pack, if it holds the assets of several game
++	/// versions in a single file or directory. This option is required for those baseline packs
++	/// and not allowed for the others. The `baseline_pack_path` option documents how a
++	/// baseline pack can hold several versions.
++	///
++	/// **Default value**: not set
++	pub baseline_pack_version: Option<String>,
++	/// When a baseline pack is set with `baseline_pack_path`, this option removes the entries of
++	/// language files (the `.json` files of modern versions and the `.lang` files of old ones, in
++	/// the `lang` directory of each namespace) that have the same value as the entry with the same
++	/// key in the language file of the baseline pack with the same path. The game falls back to the
++	/// baseline pack for the removed entries, so players see the same translations. Language files
++	/// that end up with no entries are left out of the result ZIP file.
++	///
++	/// This option has no effect if `baseline_pack_path` is not set.
++	///
++	/// **Default value**: `true`
++	pub skip_language_keys_identical_to_baseline: bool,
+ 	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
+ 	/// use. Packs sometimes ship sky images that no entry names, either because they are
+ 	/// leftovers or because the entries that used them were removed. When this option is
+@@ -321,6 +339,8 @@ impl Default for GlobalOptions {
+ 			automatic_asset_types_mask_detection: true,
+ 			ignore_system_and_hidden_files: true,
+ 			baseline_pack_path: None,
++			baseline_pack_version: None,
++			skip_language_keys_identical_to_baseline: true,
+ 			#[cfg(feature = "optifine")]
+ 			skip_unused_optifine_sky_images: false,
+ 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
+diff --git a/packages/packsquash/src/lib.rs b/packages/packsquash/src/lib.rs
+index b18e876..ece47cc 100644
+--- a/packages/packsquash/src/lib.rs
++++ b/packages/packsquash/src/lib.rs
+@@ -16,6 +16,7 @@ use std::panic;
+ use std::pin::Pin;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, LazyLock};
++use std::task::{Context, Poll};
+ use std::{io, time::SystemTime};
+ 
+ use enumset::EnumSet;
+@@ -23,12 +24,13 @@ use futures::StreamExt;
+ use futures::future;
+ use thiserror::Error;
+ use tokio::io::AsyncSeek;
++use tokio::io::ReadBuf;
+ use tokio::io::BufReader;
+ use tokio::sync::Semaphore;
+ use tokio::sync::mpsc::Sender;
+ use tokio::{fs::File, io::AsyncRead, runtime::Builder};
+ 
+-use baseline_pack::{BaselinePack, BaselinePackError};
++use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
+ use config::ProcessedSquashOptions;
+ #[cfg(feature = "optifine")]
+ use optifine_sky::UnusedSkyImageDetector;
+@@ -47,7 +49,9 @@ use crate::pack_file::asset_type::{
+ };
+ use crate::squash_zip::PreviousZipParseError;
+ pub use crate::squash_zip::relative_path::RelativePath;
+-use crate::vfs::{IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSystem};
++use crate::vfs::{
++	IteratorTraversalOptions, VfsPackFileIterEntry, VfsPackFileMetadata, VirtualFileSystem
++};
+ 
+ pub mod config;
+ pub mod vfs;
+@@ -237,7 +241,17 @@ impl PackSquasher {
+ 			.global_options
+ 			.baseline_pack_path
+ 			.as_deref()
+-			.map(|baseline_pack_path| runtime.block_on(BaselinePack::open(&*vfs, baseline_pack_path)))
++			.map(|baseline_pack_path| {
++				runtime.block_on(BaselinePack::open(
++					&*vfs,
++					baseline_pack_path,
++					options_holder
++						.options
++						.global_options
++						.baseline_pack_version
++						.as_deref()
++				))
++			})
+ 			.transpose()?
+ 			.map(Arc::new);
+ 
+@@ -463,6 +477,43 @@ impl PackSquasher {
+ 						return;
+ 					}
+ 
++					// Remove the language keys that the baseline pack already provides. This
++					// replaces the data that is read from the pack file by the reduced data
++					let mut file_data_override: Option<Arc<[u8]>> = None;
++					if let Some(baseline_pack) = &baseline_pack
++						&& options_holder
++							.options
++							.global_options
++							.skip_language_keys_identical_to_baseline
++					{
++						match baseline_pack
++							.reduce_language_file(&*vfs, &pack_file_data)
++							.await
++						{
++							LanguageFileReduction::Unchanged => {}
++							LanguageFileReduction::Redundant => {
++								if let Some(tx) = pack_file_status_sender {
++									tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
++										path: pack_file_data.relative_path,
++										optimization_strategy: Cow::Borrowed(
++											"Every language key is identical to the baseline pack"
++										),
++										optimization_error: None,
++										skipped: true,
++										intentionally_skipped: true
++									}))
++									.await
++									.ok();
++								}
++
++								return;
++							}
++							LanguageFileReduction::Reduced { data } => {
++								file_data_override = Some(data.into());
++							}
++						}
++					}
++
+ 					#[cfg(feature = "optifine")]
+ 					if let Some(detector) = &unused_sky_image_detector
+ 						&& detector.is_unused(pack_file_data.relative_path.as_str())
+@@ -516,6 +567,7 @@ impl PackSquasher {
+ 								&*vfs,
+ 								&asset_type_matches,
+ 								&pack_file_data,
++								file_data_override.as_ref(),
+ 								&*pack_file_optimization_failed,
+ 								pack_file_status_sender.as_ref()
+ 							)
+@@ -801,23 +853,44 @@ async fn match_and_process_pack_file(
+ 	vfs: &impl VirtualFileSystem,
+ 	asset_type_matches: &PackFileAssetTypeMatches,
+ 	pack_file_data: &VfsPackFileIterEntry,
++	file_data_override: Option<&Arc<[u8]>>,
+ 	pack_file_optimization_failed: &AtomicBool,
+ 	pack_file_status_sender: Option<&Sender<PackSquasherStatus>>
+ ) -> bool {
+ 	let mut pack_file_open_error = None;
+ 	let mut vfs_file_meta = None;
+ 
+-	let process_data =
+-		asset_type_matches.process_data(file_options, || match vfs.open(&pack_file_data.file_path) {
++	let process_data = asset_type_matches.process_data(file_options, || {
++		if let Some(data) = file_data_override {
++			// The data was changed, so it can't be reused from the previous ZIP file
++			// based on the modification time of the original file
++			vfs_file_meta = Some((
++				VfsPackFileMetadata {
++					modification_time: None
++				},
++				data.len() as u64
++			));
++
++			return Some((
++				PackFileRead::Memory(io::Cursor::new(Arc::clone(data))),
++				data.len() as u64
++			));
++		}
++
++		match vfs.open(&pack_file_data.file_path) {
+ 			Ok(vfs_file) => {
+ 				vfs_file_meta = Some((vfs_file.metadata, vfs_file.file_size_hint));
+-				Some((vfs_file.file_read, vfs_file.file_size_hint))
++				Some((
++					PackFileRead::Vfs(vfs_file.file_read),
++					vfs_file.file_size_hint
++				))
+ 			}
+ 			Err(err) => {
+ 				pack_file_open_error = Some(err);
+ 				None
+ 			}
+-		});
++		}
++	});
+ 
+ 	let pack_file_process_failed;
+ 	let have_process_data;
+@@ -976,6 +1049,26 @@ async fn process_pack_file(
+ 	all_ok
+ }
+ 
++/// The byte source of a pack file: either a file of the virtual filesystem, or data that
++/// replaces it, which is already in memory.
++enum PackFileRead<R> {
++	Vfs(R),
++	Memory(io::Cursor<Arc<[u8]>>)
++}
++
++impl<R: AsyncRead + Unpin> AsyncRead for PackFileRead<R> {
++	fn poll_read(
++		self: Pin<&mut Self>,
++		cx: &mut Context<'_>,
++		buf: &mut ReadBuf<'_>
++	) -> Poll<io::Result<()>> {
++		match self.get_mut() {
++			Self::Vfs(read) => Pin::new(read).poll_read(cx, buf),
++			Self::Memory(read) => Pin::new(read).poll_read(cx, buf)
++		}
++	}
++}
++
+ /// Helper newtype that consumes a boxed trait object that implements `AsRef<[u8]> + Send` and
+ /// delegates both traits on the wrapped object.
+ #[repr(transparent)]
+-- 
+2.43.0
+

@@ -27,6 +27,8 @@
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
   - [`baseline_pack_path`](#baseline_pack_path)
+  - [`baseline_pack_version`](#baseline_pack_version)
+  - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
@@ -496,7 +498,9 @@ game loads those files from the baseline anyway, so the result ZIP file is
 smaller and behaves the same.
 
 The path can point to a directory with the extracted contents of the baseline,
-or to a ZIP file, such as the `.jar` file of a game version client. Pack
+or to a ZIP file, such as the `.jar` file of a game version client. A baseline
+can also hold many game versions, as described in
+[`baseline_pack_version`](#baseline_pack_version). Pack
 files are compared like this:
 
 - Textures are compared by their size and pixels, so it does not matter how they
@@ -527,6 +531,73 @@ Example:
 ```toml
 baseline_pack_path = 'C:\path\to\1.8.9.jar'
 ```
+
+### `baseline_pack_version`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: not set
+
+A baseline pack can hold the assets of many game versions in a single file or
+directory. This option selects which version PackSquash compares the pack with.
+It is required for those baseline packs, and an error for the others.
+
+A baseline pack holds several versions if it has a `baseline.json` file at its
+root, with this structure:
+
+```json
+{
+  "format": 1,
+  "versions": ["1.8.9", "1.9", "1.9.4"],
+  "removed": { "1.9": ["assets/minecraft/textures/blocks/deleted.png"] }
+}
+```
+
+- `versions` lists the versions from the oldest to the newest.
+- Every version has a directory named after it, like `1.9/assets/minecraft/...`.
+  The directory of the oldest version holds all of its files. The directory of
+  any other version only holds the files that the version added or changed
+  relative to the previous one.
+- `removed` lists, for each version, the files that the version deleted relative
+  to the previous one.
+
+To look up a file in the selected version, PackSquash checks the directory of
+that version first, then the directories of the previous versions, and stops at
+the first version that has the file or deleted it. This keeps a baseline pack
+for many versions close to the size of a few full versions.
+
+Example:
+
+```toml
+baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
+baseline_pack_version = '1.21.4'
+```
+
+### `skip_language_keys_identical_to_baseline`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `true`
+
+If a [baseline pack](#baseline_pack_path) is set, language files lose the
+entries that have the same value as the entry with the same key in the language
+file of the baseline pack with the same path. This applies to the `.json` files
+of modern versions and the `.lang` files of old ones, in the `lang` directory of
+each namespace. The game falls back to the baseline pack for the removed
+entries, so players see the same translations. Language files that end up with
+no entries are left out of the result ZIP file.
+
+Please note that:
+
+- The remaining JSON entries are written without formatting, in their original
+  order. Comments and blank lines of `.lang` files are kept.
+- When a `.lang` file repeats a key, the game uses its last value, and so does
+  PackSquash when deciding whether the key is identical to the baseline.
+- Files that are not valid language files are left as they are.
+- PackSquash may reuse files from a previous result ZIP file if they did not
+  change. If you change the baseline pack, delete the previous ZIP file first.
+
+This option has no effect if `baseline_pack_path` is not set.
 
 ### `skip_unused_optifine_sky_images`
 
@@ -1871,7 +1942,9 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 skip_pack_icon = true
 validate_pack_metadata_file = true
 ignore_system_and_hidden_files = false
-baseline_pack_path = 'C:\path\to\1.8.9.jar'
+baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
+baseline_pack_version = '1.8.9'
+skip_language_keys_identical_to_baseline = true
 skip_unused_optifine_sky_images = true
 zip_spec_conformance_level = 'high'
 # These two are actually ignored due to the ZIP spec conformance level

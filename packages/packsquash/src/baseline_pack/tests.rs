@@ -126,7 +126,7 @@ fn zip(entries: &[(&str, &[u8], bool)], comment: &[u8]) -> Vec<u8> {
 }
 
 async fn baseline_directory(directory: &TempDir) -> BaselinePack {
-	BaselinePack::open(&OsFilesystem, directory.path())
+	BaselinePack::open(&OsFilesystem, directory.path(), None)
 		.await
 		.unwrap()
 }
@@ -394,7 +394,7 @@ async fn archives_can_be_baseline_packs() {
 	);
 	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &texture);
 
-	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"))
+	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
 		.await
 		.unwrap();
 
@@ -420,11 +420,11 @@ async fn unusable_baseline_packs_are_rejected() {
 	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
 
 	assert!(matches!(
-		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar")).await,
+		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
 		Err(BaselinePackError::InvalidArchive(_))
 	));
 	assert!(matches!(
-		BaselinePack::open(&OsFilesystem, &dir.path().join("missing")).await,
+		BaselinePack::open(&OsFilesystem, &dir.path().join("missing"), None).await,
 		Err(BaselinePackError::IoError(_))
 	));
 }
@@ -563,4 +563,315 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
 	assert!(output.contains("pack.mcmeta"));
 	assert!(output.contains("assets/minecraft/textures/blocks/dirt.png"));
 	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
+}
+
+fn language_entry(root: &Path, file: &str, pack_data: &[u8], baseline_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
+	let baseline_dir = temp_dir();
+	write_file(baseline_dir.path(), file, baseline_data);
+	write_file(root, file, pack_data);
+
+	(baseline_dir, pack_file(root, file))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn json_language_keys_identical_to_the_baseline_are_removed() {
+	let file = "assets/minecraft/lang/es_es.json";
+	let baseline = br#"{"a": "1", "b": "2", "c": "3"}"#;
+
+	let reduce = |pack: &'static [u8]| async move {
+		let pack_dir = temp_dir();
+		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
+		baseline_directory(&baseline_dir)
+			.await
+			.reduce_language_file(&OsFilesystem, &entry)
+			.await
+	};
+
+	// Same key with another value, and a new key, are kept. Order is preserved
+	let LanguageFileReduction::Reduced { data } =
+		reduce(br#"{"z": "26", "a": "1", "b": "changed", "d": "4"}"#).await
+	else {
+		panic!("Some keys should have been removed");
+	};
+	assert_eq!(
+		String::from_utf8(data).unwrap(),
+		r#"{"z":"26","b":"changed","d":"4"}"#
+	);
+
+	assert_eq!(
+		reduce(br#"{"a": "1", "c": "3"}"#).await,
+		LanguageFileReduction::Redundant
+	);
+	assert_eq!(
+		reduce(br#"{"a": "other", "e": "5"}"#).await,
+		LanguageFileReduction::Unchanged
+	);
+	assert_eq!(reduce(b"not JSON").await, LanguageFileReduction::Unchanged);
+	assert_eq!(reduce(b"[1, 2]").await, LanguageFileReduction::Unchanged);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
+	let file = "assets/minecraft/lang/en_US.lang";
+	let baseline = b"a=1\nb=2\nc=3 \nd=\n";
+
+	let reduce = |pack: &'static [u8]| async move {
+		let pack_dir = temp_dir();
+		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
+		baseline_directory(&baseline_dir)
+			.await
+			.reduce_language_file(&OsFilesystem, &entry)
+			.await
+	};
+	let reduced = |reduction: LanguageFileReduction| match reduction {
+		LanguageFileReduction::Reduced { data } => String::from_utf8(data).unwrap(),
+		other => panic!("Some keys should have been removed, but got {other:?}")
+	};
+
+	// Comments, blank lines and line endings are kept. Values are not trimmed, so "c=3"
+	// differs from "c=3 ". An empty value is a value like any other
+	assert_eq!(
+		reduced(reduce(b"# Comment\r\na=1\r\n\r\nb=changed\r\nc=3\r\nd=\r\ne=5").await),
+		"# Comment\r\n\r\nb=changed\r\nc=3\r\ne=5"
+	);
+
+	// The game uses the last value of repeated keys, so that is the one that counts
+	assert_eq!(
+		reduced(reduce(b"a=changed\na=1\nb=changed\nb=2\nb=changed again\nz=26\n").await),
+		"b=changed\nb=2\nb=changed again\nz=26\n"
+	);
+
+	assert_eq!(
+		reduce(b"# Only inherited\na=1\nb=2\n").await,
+		LanguageFileReduction::Redundant
+	);
+	assert_eq!(
+		reduce(b"a=changed\nnew=1\n").await,
+		LanguageFileReduction::Unchanged
+	);
+	assert_eq!(reduce(b"\xFF\xFE").await, LanguageFileReduction::Unchanged);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn language_files_are_only_reduced_when_they_are_language_files() {
+	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+
+	for file in [
+		"assets/minecraft/texts/credits.json",
+		"assets/minecraft/lang/notes.txt",
+		"lang/es_es.json"
+	] {
+		write_file(baseline_dir.path(), file, br#"{"a": "1"}"#);
+		write_file(pack_dir.path(), file, br#"{"a": "1", "b": "2"}"#);
+	}
+
+	let baseline = baseline_directory(&baseline_dir).await;
+
+	for file in [
+		"assets/minecraft/texts/credits.json",
+		"assets/minecraft/lang/notes.txt",
+		"lang/es_es.json"
+	] {
+		assert_eq!(
+			baseline
+				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file))
+				.await,
+			LanguageFileReduction::Unchanged,
+			"{file}"
+		);
+	}
+}
+
+fn versioned_jar(index: &str) -> Vec<u8> {
+	zip(
+		&[
+			("baseline.json", index.as_bytes(), true),
+			("1.0/assets/minecraft/texts/a.txt", b"a from 1.0", true),
+			("1.0/assets/minecraft/texts/b.txt", b"b from 1.0", true),
+			("1.1/assets/minecraft/texts/a.txt", b"a from 1.1", true),
+			("1.2/assets/minecraft/texts/c.txt", b"c from 1.2", true)
+		],
+		b""
+	)
+}
+
+const VERSION_INDEX: &str = r#"{
+	"format": 1,
+	"versions": ["1.0", "1.1", "1.2"],
+	"removed": {"1.2": ["assets/minecraft/texts/b.txt"]}
+}"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+
+	for (name, content) in [
+		("a", "a from 1.0"),
+		("b", "b from 1.0"),
+		("c", "c from 1.2")
+	] {
+		write_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"), content.as_bytes());
+	}
+	write_file(pack_dir.path(), "assets/minecraft/texts/a_1_1.txt", b"unused");
+	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt.1_1", b"unused");
+
+	// For each version, whether the pack files named a, b and c are redundant
+	for (version, expected) in [
+		("1.0", [true, true, false]),
+		("1.1", [false, true, false]),
+		("1.2", [false, false, true])
+	] {
+		let baseline = BaselinePack::open(
+			&OsFilesystem,
+			&jar_dir.path().join("vanilla.jar"),
+			Some(version)
+		)
+		.await
+		.unwrap();
+
+		for (name, expected) in ["a", "b", "c"].into_iter().zip(expected) {
+			assert_eq!(
+				baseline
+					.is_redundant(
+						&OsFilesystem,
+						&pack_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"))
+					)
+					.await,
+				expected,
+				"file {name} in version {version}"
+			);
+		}
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn versioned_baseline_packs_can_be_directories() {
+	let baseline_dir = temp_dir();
+	write_file(baseline_dir.path(), "baseline.json", VERSION_INDEX.as_bytes());
+	write_file(baseline_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
+	write_file(baseline_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
+
+	let pack_dir = temp_dir();
+	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt", b"a from 1.1");
+
+	let baseline = BaselinePack::open(&OsFilesystem, baseline_dir.path(), Some("1.2"))
+		.await
+		.unwrap();
+
+	assert!(
+		baseline
+			.is_redundant(
+				&OsFilesystem,
+				&pack_file(pack_dir.path(), "assets/minecraft/texts/a.txt")
+			)
+			.await
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn versioned_baseline_packs_reject_wrong_version_selections() {
+	let dir = temp_dir();
+	write_file(dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+	write_file(dir.path(), "plain.jar", &zip(&[("assets/a.txt", b"a", false)], b""));
+	write_file(
+		dir.path(),
+		"bad_format.jar",
+		&versioned_jar(r#"{"format": 2, "versions": ["1.0"]}"#)
+	);
+	write_file(dir.path(), "bad_index.jar", &versioned_jar("not JSON"));
+
+	let open = |file: &'static str, version: Option<&'static str>| {
+		let path = dir.path().join(file);
+		async move { BaselinePack::open(&OsFilesystem, &path, version).await.err() }
+	};
+
+	assert!(matches!(
+		open("vanilla.jar", None).await,
+		Some(BaselinePackError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
+	));
+	assert!(matches!(
+		open("vanilla.jar", Some("9.9")).await,
+		Some(BaselinePackError::UnknownVersion { version, .. }) if version == "9.9"
+	));
+	assert!(matches!(
+		open("plain.jar", Some("1.0")).await,
+		Some(BaselinePackError::NotVersioned)
+	));
+	assert!(matches!(
+		open("bad_format.jar", Some("1.0")).await,
+		Some(BaselinePackError::InvalidVersionIndex(_))
+	));
+	assert!(matches!(
+		open("bad_index.jar", Some("1.0")).await,
+		Some(BaselinePackError::InvalidVersionIndex(_))
+	));
+	assert!(open("plain.jar", None).await.is_none());
+}
+
+/// Not async because `PackSquasher::run` starts its own runtime.
+#[test]
+fn squashing_removes_language_keys_identical_to_the_baseline() {
+	for skip_language_keys in [true, false] {
+		let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+
+		write_file(baseline_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
+		write_file(baseline_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
+
+		write_file(
+			pack_dir.path(),
+			"pack.mcmeta",
+			br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
+		);
+		write_file(pack_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=9\nc=3\nd=4\n");
+		write_file(pack_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\n");
+
+		let output_path = output_dir.path().join("pack.zip");
+		let mut global_options = GlobalOptions {
+			baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
+			skip_language_keys_identical_to_baseline: skip_language_keys,
+			output_file_path: output_path.clone(),
+			..GlobalOptions::default()
+		};
+		global_options.zip_compression_iterations = 1;
+
+		let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+
+		PackSquasher::new()
+			.run(
+				OsFilesystem,
+				SquashOptions {
+					pack_directory: pack_dir.path().to_path_buf(),
+					global_options,
+					file_options: Default::default()
+				},
+				Some(sender)
+			)
+			.expect("Squashing a valid pack should succeed");
+
+		let mut intentionally_skipped = Vec::new();
+		while let Ok(status) = receiver.try_recv() {
+			if let PackSquasherStatus::PackFileProcessed(status) = status {
+				assert!(status.optimization_error().is_none());
+
+				if status.intentionally_skipped() {
+					intentionally_skipped.push(status.path().as_str().to_owned());
+				}
+			}
+		}
+
+		let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
+		let english = String::from_utf8(output.read("assets/minecraft/lang/en_US.lang").unwrap()).unwrap();
+
+		if skip_language_keys {
+			assert_eq!(intentionally_skipped, ["assets/minecraft/lang/fr_FR.lang"]);
+			assert!(output.read("assets/minecraft/lang/fr_FR.lang").is_none());
+			assert!(english.contains("b=9") && english.contains("d=4"));
+			assert!(!english.contains("a=1") && !english.contains("c=3"), "{english}");
+		} else {
+			assert!(intentionally_skipped.is_empty());
+			assert!(output.read("assets/minecraft/lang/fr_FR.lang").is_some());
+			assert!(english.contains("a=1") && english.contains("c=3"));
+		}
+	}
 }

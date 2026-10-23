@@ -16,6 +16,7 @@ use std::panic;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::task::{Context, Poll};
 use std::{io, time::SystemTime};
 
 use enumset::EnumSet;
@@ -23,12 +24,13 @@ use futures::StreamExt;
 use futures::future;
 use thiserror::Error;
 use tokio::io::AsyncSeek;
+use tokio::io::ReadBuf;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
-use baseline_pack::{BaselinePack, BaselinePackError};
+use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
 use config::ProcessedSquashOptions;
 #[cfg(feature = "optifine")]
 use optifine_sky::UnusedSkyImageDetector;
@@ -47,7 +49,9 @@ use crate::pack_file::asset_type::{
 };
 use crate::squash_zip::PreviousZipParseError;
 pub use crate::squash_zip::relative_path::RelativePath;
-use crate::vfs::{IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSystem};
+use crate::vfs::{
+	IteratorTraversalOptions, VfsPackFileIterEntry, VfsPackFileMetadata, VirtualFileSystem
+};
 
 pub mod config;
 pub mod vfs;
@@ -237,7 +241,17 @@ impl PackSquasher {
 			.global_options
 			.baseline_pack_path
 			.as_deref()
-			.map(|baseline_pack_path| runtime.block_on(BaselinePack::open(&*vfs, baseline_pack_path)))
+			.map(|baseline_pack_path| {
+				runtime.block_on(BaselinePack::open(
+					&*vfs,
+					baseline_pack_path,
+					options_holder
+						.options
+						.global_options
+						.baseline_pack_version
+						.as_deref()
+				))
+			})
 			.transpose()?
 			.map(Arc::new);
 
@@ -463,6 +477,43 @@ impl PackSquasher {
 						return;
 					}
 
+					// Remove the language keys that the baseline pack already provides. This
+					// replaces the data that is read from the pack file by the reduced data
+					let mut file_data_override: Option<Arc<[u8]>> = None;
+					if let Some(baseline_pack) = &baseline_pack
+						&& options_holder
+							.options
+							.global_options
+							.skip_language_keys_identical_to_baseline
+					{
+						match baseline_pack
+							.reduce_language_file(&*vfs, &pack_file_data)
+							.await
+						{
+							LanguageFileReduction::Unchanged => {}
+							LanguageFileReduction::Redundant => {
+								if let Some(tx) = pack_file_status_sender {
+									tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+										path: pack_file_data.relative_path,
+										optimization_strategy: Cow::Borrowed(
+											"Every language key is identical to the baseline pack"
+										),
+										optimization_error: None,
+										skipped: true,
+										intentionally_skipped: true
+									}))
+									.await
+									.ok();
+								}
+
+								return;
+							}
+							LanguageFileReduction::Reduced { data } => {
+								file_data_override = Some(data.into());
+							}
+						}
+					}
+
 					#[cfg(feature = "optifine")]
 					if let Some(detector) = &unused_sky_image_detector
 						&& detector.is_unused(pack_file_data.relative_path.as_str())
@@ -516,6 +567,7 @@ impl PackSquasher {
 								&*vfs,
 								&asset_type_matches,
 								&pack_file_data,
+								file_data_override.as_ref(),
 								&*pack_file_optimization_failed,
 								pack_file_status_sender.as_ref()
 							)
@@ -801,23 +853,44 @@ async fn match_and_process_pack_file(
 	vfs: &impl VirtualFileSystem,
 	asset_type_matches: &PackFileAssetTypeMatches,
 	pack_file_data: &VfsPackFileIterEntry,
+	file_data_override: Option<&Arc<[u8]>>,
 	pack_file_optimization_failed: &AtomicBool,
 	pack_file_status_sender: Option<&Sender<PackSquasherStatus>>
 ) -> bool {
 	let mut pack_file_open_error = None;
 	let mut vfs_file_meta = None;
 
-	let process_data =
-		asset_type_matches.process_data(file_options, || match vfs.open(&pack_file_data.file_path) {
+	let process_data = asset_type_matches.process_data(file_options, || {
+		if let Some(data) = file_data_override {
+			// The data was changed, so it can't be reused from the previous ZIP file
+			// based on the modification time of the original file
+			vfs_file_meta = Some((
+				VfsPackFileMetadata {
+					modification_time: None
+				},
+				data.len() as u64
+			));
+
+			return Some((
+				PackFileRead::Memory(io::Cursor::new(Arc::clone(data))),
+				data.len() as u64
+			));
+		}
+
+		match vfs.open(&pack_file_data.file_path) {
 			Ok(vfs_file) => {
 				vfs_file_meta = Some((vfs_file.metadata, vfs_file.file_size_hint));
-				Some((vfs_file.file_read, vfs_file.file_size_hint))
+				Some((
+					PackFileRead::Vfs(vfs_file.file_read),
+					vfs_file.file_size_hint
+				))
 			}
 			Err(err) => {
 				pack_file_open_error = Some(err);
 				None
 			}
-		});
+		}
+	});
 
 	let pack_file_process_failed;
 	let have_process_data;
@@ -974,6 +1047,26 @@ async fn process_pack_file(
 	}
 
 	all_ok
+}
+
+/// The byte source of a pack file: either a file of the virtual filesystem, or data that
+/// replaces it, which is already in memory.
+enum PackFileRead<R> {
+	Vfs(R),
+	Memory(io::Cursor<Arc<[u8]>>)
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for PackFileRead<R> {
+	fn poll_read(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &mut ReadBuf<'_>
+	) -> Poll<io::Result<()>> {
+		match self.get_mut() {
+			Self::Vfs(read) => Pin::new(read).poll_read(cx, buf),
+			Self::Memory(read) => Pin::new(read).poll_read(cx, buf)
+		}
+	}
 }
 
 /// Helper newtype that consumes a boxed trait object that implements `AsRef<[u8]> + Send` and

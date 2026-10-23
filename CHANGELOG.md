@@ -61,6 +61,14 @@ compared by their pixels, JSON files by their contents, and other files byte by
 byte. Textures and their animation metadata are only left out together. For more
 details, please see
 [#402](https://github.com/ComunidadAylas/PackSquash/issues/402).
+- The new `baseline_pack_version` global option selects the game version to use
+from a baseline pack that holds many versions, described by a `baseline.json`
+file at its root. Versions only store the files they added or changed.
+- The new `skip_language_keys_identical_to_baseline` global option, enabled by
+default, removes the entries of `.json` and `.lang` language files that have the
+same value in the language file of the baseline pack, and leaves out the files
+that end up empty. For more details, please see
+[#197](https://github.com/ComunidadAylas/PackSquash/issues/197).
 - The new `skip_unused_optifine_sky_images` global option leaves OptiFine
 custom sky images that no sky entry names out of the result ZIP file. It only
 has an effect when OptiFine support is enabled in `allow_mods`.
