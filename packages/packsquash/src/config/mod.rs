@@ -218,6 +218,12 @@ pub struct GlobalOptions {
 	///
 	/// **Default value**: `true`
 	pub ignore_system_and_hidden_files: bool,
+	/// The edition of Minecraft the pack is for: `auto`, `java` or `bedrock`. Bedrock Edition packs
+	/// have a different structure and file formats than Java Edition ones, so PackSquash needs to
+	/// know which kind it is processing. By default, the edition is detected from the pack files.
+	///
+	/// **Default value**: `auto`
+	pub pack_edition: PackEdition,
 	/// The path of a baseline pack that the pack being processed is meant to be layered on top
 	/// of. Typically, this is the vanilla game assets: either a directory with the extracted
 	/// contents of a game version client JAR, or the client JAR (or any other ZIP file) itself.
@@ -338,6 +344,7 @@ impl Default for GlobalOptions {
 			work_around_minecraft_quirks: EnumSet::empty(),
 			automatic_asset_types_mask_detection: true,
 			ignore_system_and_hidden_files: true,
+			pack_edition: PackEdition::Auto,
 			baseline_pack_path: None,
 			baseline_pack_version: None,
 			skip_language_keys_identical_to_baseline: true,
@@ -385,6 +392,22 @@ impl GlobalOptions {
 			zip_comment: self.zip_comment.clone()
 		}
 	}
+}
+
+/// The edition of Minecraft that a pack is meant for.
+#[derive(Default, Clone, Copy, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PackEdition {
+	/// The edition is detected automatically. A pack that has a `manifest.json` file at its root
+	/// and no `pack.mcmeta` file is considered a Bedrock Edition pack, and any other pack is
+	/// considered a Java Edition pack.
+	#[default]
+	Auto,
+	/// The pack is a Java Edition resource or data pack.
+	Java,
+	/// The pack is a Bedrock Edition resource pack, which is distributed as a `.mcpack` file.
+	Bedrock
 }
 
 /// A ZIP specification intent conformance level that a squash operation can adhere to.

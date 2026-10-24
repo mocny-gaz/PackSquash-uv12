@@ -31,6 +31,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
 use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
+use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
 #[cfg(feature = "optifine")]
 use optifine_sky::UnusedSkyImageDetector;
@@ -41,7 +42,8 @@ use squash_zip::{SquashZip, SquashZipError};
 use crate::config::PropertiesFileOptions;
 use crate::config::{
 	AudioFileOptions, CommandFunctionFileOptions, CompressedCompoundNbtTagFileOptions, FileOptions,
-	JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions, ShaderFileOptions, SquashOptions
+	JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions, ShaderFileOptions, SquashOptions,
+	ZipSpecConformanceLevel
 };
 use crate::pack_file::PackFileProcessData;
 use crate::pack_file::asset_type::{
@@ -57,6 +59,7 @@ pub mod config;
 pub mod vfs;
 
 mod baseline_pack;
+mod bedrock_pack;
 mod buffered_async_spooled_temp_file;
 #[cfg(feature = "optifine")]
 mod optifine_sky;
@@ -158,6 +161,30 @@ impl PackSquasher {
 			.build()
 			.unwrap();
 
+		// Bedrock Edition packs are processed by different rules than Java Edition ones
+		let is_bedrock = bedrock_pack::is_bedrock_pack(
+			&vfs,
+			&options_holder.options.pack_directory,
+			options_holder.options.global_options.pack_edition
+		);
+
+		if is_bedrock {
+			// Bedrock Edition's ZIP file reader has not been checked against the ZIP file
+			// structures that the less conformant levels use, so only the one that follows the
+			// specification to the letter is allowed
+			if !matches!(
+				options_holder.options.global_options.zip_spec_conformance_level,
+				ZipSpecConformanceLevel::Pedantic
+			) {
+				return Err(PackSquasherError::InvalidOptions(
+					"Bedrock Edition packs require the \"pedantic\" zip_spec_conformance_level"
+				));
+			}
+
+			// Java Edition quirks do not apply to Bedrock Edition
+			options_holder.options.global_options.work_around_minecraft_quirks = EnumSet::empty();
+		}
+
 		let automatic_quirk_detection = options_holder
 			.options
 			.global_options
@@ -168,12 +195,13 @@ impl PackSquasher {
 			.global_options
 			.automatic_asset_types_mask_detection;
 
-		let read_pack_meta = automatic_quirk_detection
+		let read_pack_meta = !is_bedrock
+			&& (automatic_quirk_detection
 			|| automatic_asset_type_mask_detection
 			|| options_holder
 				.options
 				.global_options
-				.validate_pack_metadata_file;
+				.validate_pack_metadata_file);
 
 		// By default, allow every known asset type to match pack files. This will be adjusted later
 		// depending on the options and automatic asset type mask detection, if enabled
@@ -224,6 +252,29 @@ impl PackSquasher {
 				HashMap::from_iter([(arcstr::literal!(""), HashSet::default())])
 			});
 
+		if is_bedrock {
+			let mut notices = vec!["Processing a Bedrock Edition pack".to_owned()];
+
+			if options_holder
+				.options
+				.global_options
+				.validate_pack_metadata_file
+			{
+				notices.extend(runtime.block_on(bedrock_pack::validate_manifest(
+					&vfs,
+					&options_holder.options.pack_directory
+				))?);
+			}
+
+			if let Some(pack_file_status_sender) = &pack_file_status_sender {
+				for notice in notices {
+					runtime
+						.block_on(pack_file_status_sender.send(PackSquasherStatus::Notice(Cow::Owned(notice))))
+						.ok();
+				}
+			}
+		}
+
 		let vfs = Arc::new(vfs);
 		let asset_type_matcher = Arc::new(PackFileAssetTypeMatcher::new(
 			tweak_asset_types_mask_from_global_options(
@@ -258,7 +309,8 @@ impl PackSquasher {
 		// Find out which OptiFine custom sky images are not used by any sky entry, if
 		// they are to be left out
 		#[cfg(feature = "optifine")]
-		let unused_sky_image_detector = (options_holder
+		let unused_sky_image_detector = (!is_bedrock
+			&& options_holder
 			.options
 			.global_options
 			.skip_unused_optifine_sky_images
@@ -535,8 +587,37 @@ impl PackSquasher {
 						return;
 					}
 
+					// Bedrock Edition packs have their own file classification
+					let bedrock_file_kind = is_bedrock.then(|| {
+						BedrockFileKind::of(
+							pack_file_data.relative_path.as_str(),
+							options_holder.options.global_options.skip_pack_icon
+						)
+					});
+
+					if bedrock_file_kind == Some(BedrockFileKind::ExcludedPackIcon) {
+						if let Some(tx) = pack_file_status_sender {
+							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+								path: pack_file_data.relative_path,
+								optimization_strategy: Cow::Borrowed("Pack icon left out"),
+								optimization_error: None,
+								skipped: true,
+								intentionally_skipped: true
+							}))
+							.await
+							.ok();
+						}
+
+						return;
+					}
+
 					let have_default_options;
-					let asset_type_matches = {
+					let asset_type_matches = if let Some(bedrock_file_kind) = bedrock_file_kind {
+						// Bedrock Edition defaults are tried separately below, as they differ from
+						// the Java Edition ones
+						have_default_options = false;
+						bedrock_file_kind.asset_type_matches()
+					} else {
 						let asset_type_matches =
 							asset_type_matcher.matches_for(&pack_file_data.relative_path);
 
@@ -593,6 +674,13 @@ impl PackSquasher {
 					// in which case we should try defaults, or the file settings it matched
 					// were not appropriate for its type (i.e. all matches were for JSON files,
 					// but this is an audio file), in which case we should try defaults too
+					if let Some(default_file_options) =
+						bedrock_file_kind.and_then(BedrockFileKind::default_file_options)
+						&& try_process_with_file_options!(Some(default_file_options))
+					{
+						return;
+					}
+
 					if have_default_options {
 						for default_file_options in [
 							Some(FileOptions::JsonFileOptions(JsonFileOptions::default())),
@@ -736,7 +824,13 @@ pub enum PackSquasherError {
 	/// Thrown when the baseline pack, which pack files are compared with to leave out
 	/// redundant ones, could not be loaded.
 	#[error("Baseline pack error: {0}")]
-	BaselinePackError(#[from] BaselinePackError)
+	BaselinePackError(#[from] BaselinePackError),
+	/// Thrown when the manifest of a Bedrock Edition pack can't be read, or is not valid.
+	#[error("Bedrock pack manifest error: {0}")]
+	BedrockManifestError(#[from] BedrockManifestError),
+	/// Thrown when the options are not appropriate for the pack being processed.
+	#[error("Invalid options: {0}")]
+	InvalidOptions(&'static str)
 }
 
 impl From<Infallible> for PackSquasherError {

@@ -2,6 +2,7 @@
 
 * [Getting started](https://github.com/ComunidadAylas/PackSquash/wiki/Getting-started)
 * [Options files](https://github.com/ComunidadAylas/PackSquash/wiki/Options-files)
+* [Bedrock Edition packs](Bedrock-Edition-packs.md)
 
 ### Using PackSquash effectively
 

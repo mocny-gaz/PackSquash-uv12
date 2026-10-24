@@ -594,6 +594,15 @@ impl PackFileAssetTypeMatches {
 		}
 	}
 
+	/// Returns a [`PackFileAssetTypeMatches`] that represents the given matches, in order of
+	/// preference. The first matched asset type whose file options are provided to
+	/// `process_data` is the one that gets used.
+	pub(crate) fn of_asset_types(asset_types: &[PackFileAssetType]) -> Self {
+		Self {
+			matches: Cow::Owned(asset_types.to_vec())
+		}
+	}
+
 	/// Checks whether there are no matches in this set, so that `process_data` would always
 	/// return `None`.
 	pub fn is_empty(&self) -> bool {

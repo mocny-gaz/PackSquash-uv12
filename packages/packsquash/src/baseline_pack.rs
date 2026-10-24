@@ -243,8 +243,11 @@ impl BaselinePack {
 	) -> bool {
 		let relative_path = pack_file.relative_path.as_str();
 
-		// The pack metadata and icon identify the pack itself, and must always be kept
-		if matches!(relative_path, "pack.mcmeta" | "pack.png") {
+		// The pack metadata, manifest and icons identify the pack itself, and must always be kept
+		if matches!(
+			relative_path,
+			"pack.mcmeta" | "pack.png" | "manifest.json" | "pack_icon.png" | "bug_pack_icon.png"
+		) {
 			return false;
 		}
 

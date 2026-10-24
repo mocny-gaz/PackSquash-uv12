@@ -26,6 +26,7 @@
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
+  - [`pack_edition`](#pack_edition)
   - [`baseline_pack_path`](#baseline_pack_path)
   - [`baseline_pack_version`](#baseline_pack_version)
   - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
@@ -481,6 +482,35 @@ Example:
 
 ```toml
 ignore_system_and_hidden_files = false
+```
+
+### `pack_edition`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: `'auto'`
+
+The edition of Minecraft the pack is for. Java Edition and Bedrock Edition packs
+have a different structure and different file formats, so PackSquash needs to
+know which one it is processing. These values are accepted:
+
+- `'auto'`: a pack that has a `manifest.json` file at its root and no
+  `pack.mcmeta` file is processed as a Bedrock Edition pack. Any other pack is
+  processed as a Java Edition pack.
+- `'java'`: the pack is a Java Edition resource or data pack.
+- `'bedrock'`: the pack is a Bedrock Edition resource pack.
+
+Bedrock Edition support has its own rules, which are described in [Bedrock
+Edition packs](Bedrock-Edition-packs.md). The Java Edition specific options
+(`allow_mods`, `automatic_minecraft_quirks_detection`,
+`work_around_minecraft_quirks`, `automatic_asset_types_mask_detection`, and
+`skip_unused_optifine_sky_images`) do not apply to Bedrock Edition packs.
+
+Example:
+
+```toml
+pack_edition = 'bedrock'
+output_file_path = 'pack.mcpack'
 ```
 
 ### `baseline_pack_path`

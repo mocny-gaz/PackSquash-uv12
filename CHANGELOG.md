@@ -61,6 +61,14 @@ compared by their pixels, JSON files by their contents, and other files byte by
 byte. Textures and their animation metadata are only left out together. For more
 details, please see
 [#402](https://github.com/ComunidadAylas/PackSquash/issues/402).
+- Bedrock Edition resource packs are now supported. The new `pack_edition`
+global option, which detects the edition by default, makes PackSquash validate
+`manifest.json` and process the pack with rules that are safe for Bedrock
+Edition: PNG textures, JSON files (minified, comments removed) and Ogg Vorbis
+audio are optimized, and every other file is copied as-is. Generated ZIP files
+must use the `pedantic` conformance level. For more details, please see
+[#266](https://github.com/ComunidadAylas/PackSquash/issues/266) and the new
+Bedrock Edition packs wiki page.
 - The new `baseline_pack_version` global option selects the game version to use
 from a baseline pack that holds many versions, described by a `baseline.json`
 file at its root. Versions only store the files they added or changed.
