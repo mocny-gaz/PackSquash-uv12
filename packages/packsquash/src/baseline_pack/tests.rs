@@ -312,7 +312,8 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 	let other_metadata = br#"{"animation": {"frametime": 5}}"#;
 
 	// (pack texture, pack metadata, baseline metadata, are the texture and metadata redundant)
-	let cases: [(&[u8], Option<&[u8]>, Option<&[u8]>, bool); 6] = [
+	type TextureCase<'a> = (&'a [u8], Option<&'a [u8]>, Option<&'a [u8]>, bool);
+	let cases: [TextureCase; 6] = [
 		(&texture, Some(reformatted_metadata), Some(metadata), true),
 		(&texture, None, None, true),
 		(&texture, Some(other_metadata), Some(metadata), false),

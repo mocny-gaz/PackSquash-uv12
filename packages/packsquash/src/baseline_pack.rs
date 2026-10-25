@@ -513,7 +513,7 @@ fn decode_png(png: &[u8]) -> Option<Vec<u8>> {
 	let mut pixels = vec![0; reader.output_buffer_size()];
 	reader.next_frame(&mut pixels).ok()?;
 
-	for pixel in pixels.chunks_exact_mut(4) {
+	for pixel in pixels.as_chunks_mut::<4>().0 {
 		if pixel[3] == 0 {
 			pixel[..3].fill(0);
 		}

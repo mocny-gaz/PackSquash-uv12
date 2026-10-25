@@ -217,3 +217,56 @@ specification. Contributions of any kind welcome! If you are interested, you can
 check out the [contributing
 guidelines](https://github.com/ComunidadAylas/PackSquash/blob/master/CONTRIBUTING.md)
 to get started.
+
+## my fork of packsquash, where i use ai to add stuff that i want
+
+Thanks to all the PackSquash contributors for creating such a wonderful tool.
+Everything above this section is the original PackSquash README, unchanged.
+
+This is my fork of PackSquash. I use AI (Claude) to add the features that I want
+here, and I check them with automated tests. The changes are not reviewed or
+endorsed by the PackSquash maintainers, so please report problems with this fork
+in this repository, not in the original one. Packs that do not use the new
+options are processed like in the original PackSquash, with one exception: a pack
+that has a `manifest.json` file and no `pack.mcmeta` file is now processed as a
+Bedrock Edition pack.
+
+What this fork adds:
+
+- **Baseline packs** (original issue
+  [#402](https://github.com/ComunidadAylas/PackSquash/issues/402)). With
+  `baseline_pack_path`, files that are identical to the vanilla assets (a folder,
+  a ZIP, or a client `.jar`) are left out of the result ZIP file. Textures are
+  compared by pixels, and JSON files by contents.
+- **Many versions in one baseline file.** `baseline_pack_version` selects a game
+  version from a single baseline jar that stores each version as a small delta.
+  The `tools/baseline-jar` folder has a script and an AI prompt to build that jar
+  and to update it when new game versions come out.
+- **Language files** (original issue
+  [#197](https://github.com/ComunidadAylas/PackSquash/issues/197)). With a
+  baseline, entries that have the same value as vanilla are removed from `.json`
+  and `.lang` language files. The game uses the vanilla value for them.
+  Option: `skip_language_keys_identical_to_baseline`.
+- **Bedrock Edition packs** (original issue
+  [#266](https://github.com/ComunidadAylas/PackSquash/issues/266)). PackSquash
+  validates `manifest.json`, optimizes textures, JSON files and Ogg audio, and
+  copies everything else untouched. This was tested with automated tests, not in
+  the game. Option: `pack_edition`. See the wiki page
+  [Bedrock Edition packs](docs/wiki/Bedrock-Edition-packs.md).
+- **OptiFine custom skies.** `skip_unused_optifine_sky_images` leaves out sky
+  images that no sky entry uses, and `merge_identical_optifine_sky_images` merges
+  identical images and updates the sky entries.
+- **Quieter command line.** Files that your options ask to leave out are no
+  longer reported as warnings.
+
+A minimal example, in your PackSquash options file:
+
+```toml
+baseline_pack_path = 'vanilla-baseline.jar'
+baseline_pack_version = '1.21.4'
+```
+
+All the options are documented in [Options
+files](docs/wiki/Options-files.md), and every change is listed in the
+[changelog](CHANGELOG.md). The license is the same as the original one:
+AGPL-3.0-or-later.

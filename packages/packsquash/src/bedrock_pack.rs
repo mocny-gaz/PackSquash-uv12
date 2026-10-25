@@ -153,7 +153,7 @@ pub(crate) fn is_bedrock_pack<V: VirtualFileSystem>(
 		PackEdition::Bedrock => true,
 		PackEdition::Auto => {
 			let exists = |file_name: &str| {
-				vfs.file_type(&pack_directory.join(file_name))
+				vfs.file_type(pack_directory.join(file_name))
 					.is_ok_and(|file_type| !file_type.is_dir())
 			};
 
@@ -168,7 +168,7 @@ pub(crate) async fn validate_manifest<V: VirtualFileSystem>(
 	vfs: &V,
 	pack_directory: &Path
 ) -> Result<Vec<String>, BedrockManifestError> {
-	let file = vfs.open(&pack_directory.join(MANIFEST_FILE_NAME))?;
+	let file = vfs.open(pack_directory.join(MANIFEST_FILE_NAME))?;
 	let data = read_to_end(file.file_read, file.file_size_hint).await?;
 
 	// The game accepts comments in JSON files, so be as lenient as it is

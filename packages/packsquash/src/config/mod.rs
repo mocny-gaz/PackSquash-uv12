@@ -273,6 +273,20 @@ pub struct GlobalOptions {
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
 	pub skip_unused_optifine_sky_images: bool,
+	/// OptiFine custom sky entries name the image they use, and packs sometimes ship the same image
+	/// several times under different names. When this option is enabled, PackSquash merges the
+	/// identical images (byte by byte) of each directory into one: the first image in path order is
+	/// kept, the others are left out of the result ZIP file, and the sky entries of the same
+	/// directory that mention them are changed to use the kept image. An image is not merged if a
+	/// sky entry in another directory mentions its file name, as the entry may refer to another
+	/// image.
+	///
+	/// This option has no effect unless `allow_mods` contains OptiFine.
+	///
+	/// **Default value**: `false`
+	#[cfg(feature = "optifine")]
+	#[doc(cfg(feature = "optifine"))]
+	pub merge_identical_optifine_sky_images: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include
 	/// in the result ZIP file.
@@ -350,6 +364,8 @@ impl Default for GlobalOptions {
 			skip_language_keys_identical_to_baseline: true,
 			#[cfg(feature = "optifine")]
 			skip_unused_optifine_sky_images: false,
+			#[cfg(feature = "optifine")]
+			merge_identical_optifine_sky_images: false,
 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
 			allow_mods: EnumSet::empty(),
 			threads: hardware_threads,

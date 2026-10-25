@@ -92,7 +92,8 @@ fn suspicious_manifests_get_warnings() {
 
 #[test]
 fn invalid_manifests_are_rejected() {
-	let mutations: [(&str, fn(&mut serde_json::Value)); 13] = [
+	type Mutation = (&'static str, fn(&mut serde_json::Value));
+	let mutations: [Mutation; 13] = [
 		("not an object", |m| *m = json!([])),
 		("missing format version", |m| {
 			m.as_object_mut().unwrap().remove("format_version");

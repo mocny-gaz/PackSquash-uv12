@@ -31,6 +31,7 @@
   - [`baseline_pack_version`](#baseline_pack_version)
   - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+  - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
@@ -650,6 +651,39 @@ Example:
 ```toml
 allow_mods = ['OptiFine']
 skip_unused_optifine_sky_images = true
+```
+
+### `merge_identical_optifine_sky_images`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+Packs sometimes ship the same OptiFine custom sky image several times under
+different names. If `true`, PackSquash merges the images of each `optifine/sky`
+directory that have identical bytes into one:
+
+- The first image in path order is kept. The other ones are left out of the
+  result ZIP file.
+- The sky entries (`.properties` files) of the same directory that mention a
+  left out image are changed to mention the kept image. Only whole file names
+  are replaced, so `b.png` is replaced in `source=./b.png`, but not in
+  `source=ab.png`.
+- An image is not merged if a sky entry in another directory mentions its file
+  name, because that entry may mean another image.
+
+Images that are identical but sit in different directories are different images,
+and are not merged. [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+can be combined with this option. Unused images are then found after the merge.
+
+This option has no effect unless [`allow_mods`](#allow_mods) contains
+`'OptiFine'`.
+
+Example:
+
+```toml
+allow_mods = ['OptiFine']
+merge_identical_optifine_sky_images = true
 ```
 
 ### `zip_spec_conformance_level`
@@ -1976,6 +2010,7 @@ baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
 baseline_pack_version = '1.8.9'
 skip_language_keys_identical_to_baseline = true
 skip_unused_optifine_sky_images = true
+merge_identical_optifine_sky_images = true
 zip_spec_conformance_level = 'high'
 # These two are actually ignored due to the ZIP spec conformance level
 size_increasing_zip_obfuscation = true

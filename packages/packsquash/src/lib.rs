@@ -34,7 +34,7 @@ use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
 use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
 #[cfg(feature = "optifine")]
-use optifine_sky::UnusedSkyImageDetector;
+use optifine_sky::SkyImageOptimizer;
 use pack_metadata::{PackMetadata, PackMetadataError};
 use squash_zip::{SquashZip, SquashZipError};
 
@@ -306,32 +306,32 @@ impl PackSquasher {
 			.transpose()?
 			.map(Arc::new);
 
-		// Find out which OptiFine custom sky images are not used by any sky entry, if
-		// they are to be left out
+		// Find out which OptiFine custom sky images can be left out, if they are to be, and how
+		// the sky entries need to change when images are merged
 		#[cfg(feature = "optifine")]
-		let unused_sky_image_detector = (!is_bedrock
-			&& options_holder
-			.options
-			.global_options
-			.skip_unused_optifine_sky_images
-			&& options_holder
-				.options
-				.global_options
-				.allow_mods
-				.contains(config::MinecraftMod::Optifine))
-		.then(|| {
-			runtime.block_on(UnusedSkyImageDetector::scan(
-				&*vfs,
-				&options_holder.options.pack_directory,
-				IteratorTraversalOptions {
-					ignore_system_and_hidden_files: options_holder
-						.options
-						.global_options
-						.ignore_system_and_hidden_files
-				}
-			))
-		})
-		.map(Arc::new);
+		let sky_image_optimizer = {
+			let global_options = &options_holder.options.global_options;
+			let skip_unused_images = global_options.skip_unused_optifine_sky_images;
+			let merge_identical_images = global_options.merge_identical_optifine_sky_images;
+
+			(!is_bedrock
+				&& (skip_unused_images || merge_identical_images)
+				&& global_options
+					.allow_mods
+					.contains(config::MinecraftMod::Optifine))
+			.then(|| {
+				runtime.block_on(SkyImageOptimizer::scan(
+					&*vfs,
+					&options_holder.options.pack_directory,
+					IteratorTraversalOptions {
+						ignore_system_and_hidden_files: global_options.ignore_system_and_hidden_files
+					},
+					skip_unused_images,
+					merge_identical_images
+				))
+			})
+			.map(Arc::new)
+		};
 
 		runtime.block_on(async {
 			let pack_file_iter = vfs.file_iterator(
@@ -474,7 +474,7 @@ impl PackSquasher {
 				let vfs = Arc::clone(&vfs);
 				let baseline_pack = baseline_pack.clone();
 				#[cfg(feature = "optifine")]
-				let unused_sky_image_detector = unused_sky_image_detector.clone();
+				let sky_image_optimizer = sky_image_optimizer.clone();
 
 				let in_flight_tasks_semaphore = Arc::clone(&in_flight_tasks_semaphore);
 				let pack_file_optimization_failed = Arc::clone(&pack_file_optimization_failed);
@@ -567,24 +567,30 @@ impl PackSquasher {
 					}
 
 					#[cfg(feature = "optifine")]
-					if let Some(detector) = &unused_sky_image_detector
-						&& detector.is_unused(pack_file_data.relative_path.as_str())
-					{
-						if let Some(tx) = pack_file_status_sender {
-							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
-								path: pack_file_data.relative_path,
-								optimization_strategy: Cow::Borrowed(
-									"Unused by OptiFine custom sky entries"
-								),
-								optimization_error: None,
-								skipped: true,
-								intentionally_skipped: true
-							}))
-							.await
-							.ok();
+					if let Some(sky_image_optimizer) = &sky_image_optimizer {
+						let relative_path = pack_file_data.relative_path.as_str();
+
+						if let Some(skip_reason) = sky_image_optimizer.skip_reason(relative_path) {
+							if let Some(tx) = pack_file_status_sender {
+								tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+									path: pack_file_data.relative_path,
+									optimization_strategy: Cow::Borrowed(skip_reason),
+									optimization_error: None,
+									skipped: true,
+									intentionally_skipped: true
+								}))
+								.await
+								.ok();
+							}
+
+							return;
 						}
 
-						return;
+						// Custom sky entries that mention merged images must use the image
+						// that was kept instead
+						if let Some(rewritten_entry) = sky_image_optimizer.rewritten_entry(relative_path) {
+							file_data_override = Some(rewritten_entry);
+						}
 					}
 
 					// Bedrock Edition packs have their own file classification

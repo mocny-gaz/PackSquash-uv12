@@ -80,6 +80,11 @@ that end up empty. For more details, please see
 - The new `skip_unused_optifine_sky_images` global option leaves OptiFine
 custom sky images that no sky entry names out of the result ZIP file. It only
 has an effect when OptiFine support is enabled in `allow_mods`.
+- The new `merge_identical_optifine_sky_images` global option merges the
+OptiFine custom sky images of a directory that have identical bytes, leaves the
+duplicates out of the result ZIP file, and updates the sky entries of that
+directory to use the kept image. It only has an effect when OptiFine support is
+enabled in `allow_mods`.
 - `PackFileStatus` has a new `intentionally_skipped` method that tells apart the
 files that the options ask to leave out from the ones that PackSquash skips on
 its own. The command-line interface no longer warns about the former.
