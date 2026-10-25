@@ -1,12 +1,3 @@
-my fork of packsquash, where i use ai to add stuff that i want
-
-thanks to all the packsquash contributors for creating such a wonderful tool
-
-
-
-
-the original readme:
-
 <div align="center">
 <img src="https://packsquash.aylas.org/logo/kawaii.png" alt="PackSquash" width="600">
 
