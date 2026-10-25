@@ -41,8 +41,8 @@ use squash_zip::{SquashZip, SquashZipError};
 #[cfg(feature = "optifine")]
 use crate::config::PropertiesFileOptions;
 use crate::config::{
-	AudioFileOptions, CommandFunctionFileOptions, CompressedCompoundNbtTagFileOptions, FileOptions,
-	JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions, ShaderFileOptions, SquashOptions,
+	AudioFileOptions, CommandFunctionFileOptions, CompressedCompoundNbtTagFileOptions,
+	CustomFileOptions, FileOptions, JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions, ShaderFileOptions, SquashOptions,
 	ZipSpecConformanceLevel
 };
 use crate::pack_file::PackFileProcessData;
@@ -59,6 +59,8 @@ pub mod config;
 pub mod vfs;
 
 mod mcchanges;
+#[cfg(test)]
+mod copy_as_is_tests;
 mod bedrock_pack;
 mod buffered_async_spooled_temp_file;
 #[cfg(feature = "optifine")]
@@ -529,10 +531,26 @@ impl PackSquasher {
 						return;
 					}
 
+					// Files that the options ask to copy as-is are never modified by the options below
+					let copy_as_is = options_holder
+						.file_options_globs
+						.matches(&*pack_file_data.relative_path)
+						.into_iter()
+						.any(|i| {
+							matches!(
+								options_holder.options.file_options[i],
+								FileOptions::CustomFileOptions(CustomFileOptions {
+									copy_as_is: true,
+									..
+								})
+							)
+						});
+
 					// Remove the language keys that the mcchanges pack already provides. This
 					// replaces the data that is read from the pack file by the reduced data
 					let mut file_data_override: Option<Arc<[u8]>> = None;
 					if let Some(mcchanges) = &mcchanges
+						&& !copy_as_is
 						&& options_holder
 							.options
 							.global_options
@@ -588,7 +606,9 @@ impl PackSquasher {
 
 						// Custom sky entries that mention merged images must use the image
 						// that was kept instead
-						if let Some(rewritten_entry) = sky_image_optimizer.rewritten_entry(relative_path) {
+						if !copy_as_is
+							&& let Some(rewritten_entry) = sky_image_optimizer.rewritten_entry(relative_path)
+						{
 							file_data_override = Some(rewritten_entry);
 						}
 					}

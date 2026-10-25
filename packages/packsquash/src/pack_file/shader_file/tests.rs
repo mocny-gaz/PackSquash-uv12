@@ -264,3 +264,59 @@ async fn include_shaders_with_preprocessor_directives_are_passed_through() {
 	)
 	.await
 }
+
+static INCLUDE_DIRECTIVE_SHADERS: [&[u8]; 4] = [
+	// Minecraft 26.3 and later, with quotes
+	b"#version 330\n\n#include \"minecraft:fog.glsl\"\n\nout vec4 fragColor;\n\nvoid main() {\n\tfragColor = vec4(1.0);\n}\n",
+	// With angle brackets
+	b"#version 330\n\n#include <fog.glsl>\n\nout vec4 fragColor;\n\nvoid main() {\n\tfragColor = vec4(1.0);\n}\n",
+	// With the extension that defines the directive, and spaces around the directive name
+	b"#version 330\n#extension GL_GOOGLE_include_directive : enable\n\n  #  include \"fog.glsl\"\n\nout vec4 fragColor;\n\nvoid main() {\n\tfragColor = vec4(1.0);\n}\n",
+	// Windows line endings
+	b"#version 330\r\n#include \"fog.glsl\"\r\nout vec4 fragColor;\r\nvoid main() {\r\n\tfragColor = vec4(1.0);\r\n}\r\n"
+];
+
+#[tokio::test]
+async fn shaders_with_include_directives_are_copied_as_is() {
+	for strategy in [
+		ShaderSourceTransformationStrategy::Minify,
+		ShaderSourceTransformationStrategy::Prettify,
+		ShaderSourceTransformationStrategy::KeepAsIs
+	] {
+		for shader in INCLUDE_DIRECTIVE_SHADERS {
+			successful_process_test::<TranslationUnit>(
+				shader,
+				false, // No BOM
+				ShaderFileOptions {
+					source_transformation_strategy: strategy,
+					..Default::default()
+				},
+				true,  // Fragment shader
+				true,  // Top-level TU
+				false, // The input can't be parsed without expanding the directive
+				false, // Same size
+				true   // Same output text
+			)
+			.await
+		}
+	}
+}
+
+#[tokio::test]
+async fn shaders_with_include_directives_do_not_confuse_other_shaders() {
+	// A word that merely starts like the directive is not the directive
+	successful_process_test::<TranslationUnit>(
+		b"#version 330\nout vec4 fragColor;\n// #include <not_a_directive.glsl>\nvoid main() {\n\tfragColor = vec4(1.0);\n}\n",
+		false, // No BOM
+		ShaderFileOptions {
+			source_transformation_strategy: ShaderSourceTransformationStrategy::Minify,
+			..Default::default()
+		},
+		true,  // Fragment shader
+		true,  // Top-level TU
+		true,  // The output AST should match the input AST
+		true,  // Smaller size
+		false  // Different output text
+	)
+	.await
+}

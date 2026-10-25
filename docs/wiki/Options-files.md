@@ -77,6 +77,7 @@
     - [`nbt_compression_iterations`](#nbt_compression_iterations)
   - [Custom files](#custom-files)
     - [`force_include`](#force_include)
+    - [`copy_as_is`](#copy_as_is)
 - [Examples](#examples)
   - [Basic options file](#basic-options-file)
   - [Basic options file but tuned for extreme compression](#basic-options-file-but-tuned-for-extreme-compression)
@@ -1900,6 +1901,42 @@ Example:
 
 ```toml
 force_include = true
+```
+
+#### `copy_as_is`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+If `true`, the file is copied to the generated ZIP file exactly as it is: no
+optimization, no minification, no validation and no change of its name. Unlike
+`force_include`, this also works for files that PackSquash knows how to
+optimize, like shaders, JSON files or textures. Unrecognized files are included,
+as with `force_include`. A `false` value explicitly asks for the default behavior.
+
+Use it for the few files that must stay byte for byte as they are, for example
+because a mod or a tool reads them in a way that PackSquash does not expect.
+PackSquash can still optimize how the file is stored in the ZIP file. If a file
+is broken by PackSquash, please also report it, so it can be fixed for everyone.
+
+Files that are copied as-is are not changed by
+[`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
+or by the OptiFine custom sky options. Make sure that these options do not leave
+out files that a copied file needs, like a sky image that a copied sky entry uses.
+Do not combine `copy_as_is` with the options of a specific file type for the
+same file.
+
+This feature was requested in issues
+[#338](https://github.com/ComunidadAylas/PackSquash/issues/338) and
+[#368](https://github.com/ComunidadAylas/PackSquash/issues/368), using TOML
+options instead of a separate ignore file.
+
+Example:
+
+```toml
+['assets/minecraft/shaders/core/**']
+copy_as_is = true
 ```
 
 ## Examples

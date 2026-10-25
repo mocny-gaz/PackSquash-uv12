@@ -81,6 +81,11 @@ that end up empty. For more details, please see
 - The new `skip_unused_optifine_sky_images` global option leaves OptiFine
 custom sky images that no sky entry names out of the result ZIP file. It only
 has an effect when OptiFine support is enabled in `allow_mods`.
+- The new `copy_as_is` file option copies the files that match its glob to the
+generated ZIP file exactly as they are, even if PackSquash knows how to optimize
+them. It is the way to leave specific files out of the optimization, as asked in
+[#338](https://github.com/ComunidadAylas/PackSquash/issues/338) and
+[#368](https://github.com/ComunidadAylas/PackSquash/issues/368).
 - The new `merge_identical_optifine_sky_images` global option merges the
 OptiFine custom sky images of a directory that have identical bytes, leaves the
 duplicates out of the result ZIP file, and updates the sky entries of that
@@ -94,6 +99,10 @@ its own. The command-line interface no longer warns about the former.
 
 #### Fixed
 
+- Shaders that use the `#include` preprocessor directive, which Minecraft 26.3 snapshots
+use instead of `#moj_import`, no longer make PackSquash fail with an unknown directive error.
+Like with an `#moj_import` that can't be expanded, they are not transformed, and syntax
+errors are tentative. ([#397](https://github.com/ComunidadAylas/PackSquash/issues/397))
 - PackSquash now processes `.properties` files used to define randomized model
 selection for OptiFine Custom Entity Models (CEM). ([#404](https://github.com/ComunidadAylas/PackSquash/issues/404))
 

@@ -46,7 +46,7 @@ pub enum ParseError {
 	Syntax {
 		error: glsl_lang::parse::ParseError<LexicalError<Infallible>>,
 		/// Represents whether this syntax error happened when the source file contained
-		/// an unresolvable `#moj_import` directive. This indicates that the syntax error
+		/// an unresolvable `#moj_import` or `#include` directive. This indicates that the syntax error
 		/// might be a false positive, as it can be caused due to preprocessor directives
 		/// being inappropriately expanded or masked: imported shaders can change the
 		/// outcome of the preprocessing stage.
@@ -55,7 +55,7 @@ pub enum ParseError {
 	#[error("Non-included shaders must define a main function, but it was not defined")]
 	MissingMainFunction {
 		/// Represents whether this error happened when the source file contained an
-		/// unresolvable `#moj_import` directive. This indicates that the error might
+		/// unresolvable `#moj_import` or `#include` directive. This indicates that the error might
 		/// be a false positive, as it can be caused due to changes in the outcome of
 		/// the preprocessing stage compared to during runtime.
 		found_unresolvable_moj_import: bool
@@ -104,6 +104,12 @@ impl Parser {
 
 		let found_unresolvable_moj_import = Cell::new(false);
 
+		// Minecraft 26.3 replaced #moj_import with the standard #include directive. Our
+		// preprocessor does not understand it, and it can't be resolved anyway, because included
+		// files may come from packs below this one. Treat it like an #moj_import that we couldn't
+		// expand: the shader is not transformed, and syntax errors are tentative
+		let uses_include_directive = INCLUDE_DIRECTIVE.is_match(&source);
+
 		let mut preprocessor =
 			Processor::new_with_fs(ImportFileSystem::new(&found_unresolvable_moj_import));
 
@@ -143,6 +149,7 @@ impl Parser {
 				}) {
 					return Err(ParseError::MissingMainFunction {
 						found_unresolvable_moj_import: found_unresolvable_moj_import.get()
+							|| uses_include_directive
 					});
 				}
 
@@ -158,6 +165,7 @@ impl Parser {
 				// it's definitely not safe to transform this code
 				let safe_to_transpile = lacks_preprocessor_directives
 					|| (!found_unresolvable_moj_import.get()
+						&& !uses_include_directive
 						&& self.lacks_injectable_pp_directives_out_of_external_declaration_position(
 							&source
 						));
@@ -181,6 +189,7 @@ impl Parser {
 				Err(ParseError::Syntax {
 					error,
 					found_unresolvable_moj_import: found_unresolvable_moj_import.get()
+						|| uses_include_directive
 				})
 			},
 			|map_result| {
@@ -238,6 +247,10 @@ impl Parser {
 		.is_ok()
 	}
 }
+
+/// Matches the `#include` preprocessor directive, which is at the start of a line.
+static INCLUDE_DIRECTIVE: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new("(?m:^[[:space:]]*#[[:space:]]*include\\b)").unwrap());
 
 /// The virtual filesystem used by [`PreprocessingLexer`] to expand `#moj_import`
 /// directives to the contents of the files they reference.

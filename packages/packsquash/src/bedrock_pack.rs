@@ -133,7 +133,8 @@ impl BedrockFileKind {
 			})),
 			Self::OggAudio => Some(FileOptions::AudioFileOptions(Default::default())),
 			Self::Passthrough => Some(FileOptions::CustomFileOptions(CustomFileOptions {
-				force_include: true
+				force_include: true,
+				..CustomFileOptions::default()
 			})),
 			Self::Unknown | Self::ExcludedPackIcon => None
 		}

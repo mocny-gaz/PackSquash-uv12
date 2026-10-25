@@ -639,6 +639,19 @@ impl PackFileAssetTypeMatches {
 			// However, some of the additional redundancy is mitigated thanks to the macro, and the fact that
 			// there are almost as many arms as asset types can make future additions easier, so it's not that bad
 			match asset_type {
+				// A file can be asked to be copied untouched whatever its asset type is. This arm
+				// goes first so that no other arm gets to process the file, and uses the custom
+				// asset type so that the path of the file is not changed either
+				_ if let Some(FileOptions::CustomFileOptions(CustomFileOptions {
+					copy_as_is: true,
+					..
+				})) = file_options =>
+				{
+					return pack_file_to_process_data(
+						PackFileAssetType::Custom,
+						PassthroughFile::new(file_read_producer, PackFileAssetType::Custom, ())
+					);
+				}
 				PackFileAssetType::MinecraftTextureMetadata
 					if let Some(FileOptions::JsonFileOptions(optimization_settings)) =
 						file_options =>

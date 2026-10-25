@@ -1368,15 +1368,24 @@ impl Default for PropertiesFileOptions {
 
 /// Parameters that define a custom pack file, which PackSquash doesn't expect
 /// and skips by default, but that the pack author desires to put in the
-/// generated ZIP file.
-#[derive(Deserialize, Clone, Copy)]
+/// generated ZIP file, or a file that PackSquash expects, but that the pack
+/// author wants to be copied untouched.
+#[derive(Deserialize, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct CustomFileOptions {
 	/// If `true`, the custom file will be copied to the generated ZIP file as-is,
 	/// without any specific optimizations. A `false` value explicitly asks for
 	/// the default behavior of skipping the file.
-	pub force_include: bool
+	#[serde(default)]
+	pub force_include: bool,
+	/// If `true`, the file will be copied to the generated ZIP file as-is, without
+	/// any optimization or modification, even if PackSquash expects a file like it
+	/// and knows how to optimize it. Unlike `force_include`, this also applies to
+	/// files that PackSquash recognizes. A `false` value explicitly asks for the
+	/// default behavior.
+	#[serde(default)]
+	pub copy_as_is: bool
 }
 
 /// Compiles the specified glob pattern to a matcher that is ready to consume

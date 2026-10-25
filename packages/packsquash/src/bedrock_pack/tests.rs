@@ -384,7 +384,8 @@ fn lenient_json_can_be_copied_as_is_on_request() {
 		options.file_options.insert(
 			"entity/lenient.json".to_owned(),
 			crate::config::FileOptions::CustomFileOptions(crate::config::CustomFileOptions {
-				force_include: true
+				force_include: true,
+				..Default::default()
 			})
 		);
 	});
