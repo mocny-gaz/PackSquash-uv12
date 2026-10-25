@@ -52,10 +52,10 @@ the `pack.mcmeta` file is no longer needed.
 - When automatically detecting the mask of asset types to process, only asset
 types belonging to the specific pack type being processed are now considered.
 This means that resource packs now skip data- pack-only files, and vice versa.
-- The new `baseline_pack_path` global option lets you specify a baseline pack,
+- The new `mcchanges_path` global option lets you specify a mcchanges pack,
 such as the vanilla game assets of the targeted game version, as a directory or
 a ZIP file like a client `.jar`. Pack files that are identical to the file with
-the same path in the baseline pack are left out of the result ZIP file, which
+the same path in the mcchanges pack are left out of the result ZIP file, which
 makes packs that only change a few vanilla files much smaller. Textures are
 compared by their pixels, JSON files by their contents, and other files byte by
 byte. Textures and their animation metadata are only left out together. For more
@@ -69,12 +69,13 @@ audio are optimized, and every other file is copied as-is. Generated ZIP files
 must use the `pedantic` conformance level. For more details, please see
 [#266](https://github.com/ComunidadAylas/PackSquash/issues/266) and the new
 Bedrock Edition packs wiki page.
-- The new `baseline_pack_version` global option selects the game version to use
-from a baseline pack that holds many versions, described by a `baseline.json`
+- Archives with more than 65535 entries (ZIP64) can be used as mcchanges files.
+- The new `mcchanges_version` global option selects the game version to use
+from a mcchanges pack that holds many versions, described by a `mcchanges.json`
 file at its root. Versions only store the files they added or changed.
-- The new `skip_language_keys_identical_to_baseline` global option, enabled by
+- The new `skip_language_keys_identical_to_mcchanges` global option, enabled by
 default, removes the entries of `.json` and `.lang` language files that have the
-same value in the language file of the baseline pack, and leaves out the files
+same value in the language file of the mcchanges pack, and leaves out the files
 that end up empty. For more details, please see
 [#197](https://github.com/ComunidadAylas/PackSquash/issues/197).
 - The new `skip_unused_optifine_sky_images` global option leaves OptiFine

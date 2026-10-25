@@ -87,10 +87,24 @@ PackSquash only warns if `min_engine_version` is missing, if there is no
 - **Pack layers and mods:** pack overlays, quirks, OptiFine and Minecraft Transit
   Railway options do not apply.
 
-## Using a baseline pack
+## Using an mcchanges file
 
-[`baseline_pack_path`](Options-files.md#baseline_pack_path) also works with Bedrock
-Edition packs. For example, you can point it to the official sample resource pack
-to leave out the files you did not change. The `manifest.json`, `pack_icon.png`
-and `bug_pack_icon.png` files are never left out. Language key removal only works
-for Java Edition language files.
+[`mcchanges_path`](Options-files.md#mcchanges_path) also works with Bedrock Edition
+packs. It leaves out the files that are identical to the vanilla ones, which makes
+the pack smaller. The fork has a script that builds an mcchanges jar for Bedrock
+Edition from the official `Mojang/bedrock-samples` releases:
+
+```
+python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --count 5
+```
+
+Then add it to your options file, with one of the versions that it has:
+
+```toml
+mcchanges_path = 'mcchanges-bedrock.jar'
+mcchanges_version = '1.26.50.4'
+```
+
+The `manifest.json`, `pack_icon.png` and `bug_pack_icon.png` files are never left
+out. Language key removal only works for Java Edition language files. Sound files
+(`.ogg` and `.fsb`) are not in the jar unless you build it with `--include-audio`.

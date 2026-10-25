@@ -224,20 +224,21 @@ Bedrock Edition pack.
 
 What this fork adds:
 
-- **Baseline packs** (original issue
+- **McChanges packs** (original issue
   [#402](https://github.com/ComunidadAylas/PackSquash/issues/402)). With
-  `baseline_pack_path`, files that are identical to the vanilla assets (a folder,
+  `mcchanges_path`, files that are identical to the vanilla assets (a folder,
   a ZIP, or a client `.jar`) are left out of the result ZIP file. Textures are
   compared by pixels, and JSON files by contents.
-- **Many versions in one baseline file.** `baseline_pack_version` selects a game
-  version from a single baseline jar that stores each version as a small delta.
-  The `tools/baseline-jar` folder has a script and an AI prompt to build that jar
-  and to update it when new game versions come out.
+- **Many versions in one mcchanges file.** `mcchanges_version` selects a game
+  version from a single mcchanges jar that stores each version as a small delta.
+  The `tools/mcchanges-jar` folder has a script that downloads the files and builds
+  that jar for Java Edition and for Bedrock Edition, and updates it when new game
+  versions come out. It also has an AI prompt for it.
 - **Language files** (original issue
   [#197](https://github.com/ComunidadAylas/PackSquash/issues/197)). With a
-  baseline, entries that have the same value as vanilla are removed from `.json`
+  mcchanges, entries that have the same value as vanilla are removed from `.json`
   and `.lang` language files. The game uses the vanilla value for them.
-  Option: `skip_language_keys_identical_to_baseline`.
+  Option: `skip_language_keys_identical_to_mcchanges`.
 - **Bedrock Edition packs** (original issue
   [#266](https://github.com/ComunidadAylas/PackSquash/issues/266)). PackSquash
   validates `manifest.json`, optimizes textures, JSON files and Ogg audio, and
@@ -253,8 +254,8 @@ What this fork adds:
 A minimal example, in your PackSquash options file:
 
 ```toml
-baseline_pack_path = 'vanilla-baseline.jar'
-baseline_pack_version = '1.21.4'
+mcchanges_path = 'mcchanges.jar'
+mcchanges_version = '1.21.4'
 ```
 
 All the options are documented in [Options

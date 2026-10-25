@@ -1,9 +1,9 @@
-//! Support for baseline packs: packs, usually the vanilla game assets, that the pack being
+//! Support for mcchanges packs: packs, usually the vanilla game assets, that the pack being
 //! processed is layered on top of. Pack files that do not change anything relative to the
-//! baseline are redundant, so they can be left out of the result ZIP file to make it smaller.
+//! mcchanges are redundant, so they can be left out of the result ZIP file to make it smaller.
 //!
-//! A baseline pack can also hold the assets of many game versions in a compact way. Such a
-//! versioned baseline pack has a `baseline.json` file at its root with this structure:
+//! A mcchanges pack can also hold the assets of many game versions in a compact way. Such a
+//! versioned mcchanges pack has a `mcchanges.json` file at its root with this structure:
 //!
 //! ```json
 //! {
@@ -39,8 +39,8 @@ mod zip_reader;
 #[cfg(test)]
 pub(crate) mod tests;
 
-/// The name of the file that marks a baseline pack as versioned.
-const VERSION_INDEX_FILE: &str = "baseline.json";
+/// The name of the file that marks a mcchanges pack as versioned.
+const VERSION_INDEX_FILE: &str = "mcchanges.json";
 
 /// The PNG file signature, followed by the length and type of the IHDR chunk, which
 /// always is the first chunk of a PNG file.
@@ -52,43 +52,43 @@ const PNG_HEADER: [u8; 16] = [
 /// memory needed to decode them.
 const MAX_PIXEL_COMPARISON_PIXELS: u64 = 4096 * 4096;
 
-/// An error that may occur while loading a baseline pack.
+/// An error that may occur while loading a mcchanges pack.
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum BaselinePackError {
-	/// Thrown when an I/O error occurs while reading the baseline pack.
+pub enum McChangesError {
+	/// Thrown when an I/O error occurs while reading the mcchanges pack.
 	#[error("I/O error: {0}")]
 	IoError(#[from] io::Error),
-	/// Thrown when the baseline pack is a file, but not a valid ZIP archive.
-	#[error("the baseline pack is neither a directory nor a valid ZIP file: {0}")]
+	/// Thrown when the mcchanges pack is a file, but not a valid ZIP archive.
+	#[error("the mcchanges pack is neither a directory nor a valid ZIP file: {0}")]
 	InvalidArchive(#[from] ZipReadError),
-	/// Thrown when the version index of a versioned baseline pack is not valid.
-	#[error("the baseline pack version index is not valid: {0}")]
+	/// Thrown when the version index of a versioned mcchanges pack is not valid.
+	#[error("the mcchanges pack version index is not valid: {0}")]
 	InvalidVersionIndex(String),
-	/// Thrown when the baseline pack holds several game versions, but none was selected.
-	#[error("the baseline pack holds several game versions, so baseline_pack_version must be set to one of: {0}")]
+	/// Thrown when the mcchanges pack holds several game versions, but none was selected.
+	#[error("the mcchanges pack holds several game versions, so mcchanges_version must be set to one of: {0}")]
 	VersionRequired(String),
-	/// Thrown when the selected game version is not in the baseline pack.
-	#[error("the baseline pack does not hold the game version {version}. It holds: {available}")]
+	/// Thrown when the selected game version is not in the mcchanges pack.
+	#[error("the mcchanges pack does not hold the game version {version}. It holds: {available}")]
 	UnknownVersion {
 		/// The version that was selected.
 		version: String,
-		/// The comma-separated versions that the baseline pack holds.
+		/// The comma-separated versions that the mcchanges pack holds.
 		available: String
 	},
-	/// Thrown when a game version was selected, but the baseline pack is not versioned.
-	#[error("baseline_pack_version is set, but the baseline pack does not hold several game versions")]
+	/// Thrown when a game version was selected, but the mcchanges pack is not versioned.
+	#[error("mcchanges_version is set, but the mcchanges pack does not hold several game versions")]
 	NotVersioned
 }
 
-enum BaselineSource {
-	/// A directory in the virtual filesystem that holds the baseline pack files.
+enum McChangesSource {
+	/// A directory in the virtual filesystem that holds the mcchanges pack files.
 	Directory(PathBuf),
 	/// A ZIP archive (e.g. a vanilla client JAR) that was loaded in memory.
 	Archive(ZipArchive)
 }
 
-/// The contents of the `baseline.json` file.
+/// The contents of the `mcchanges.json` file.
 #[derive(Deserialize)]
 struct VersionIndexFile {
 	format: u32,
@@ -97,75 +97,75 @@ struct VersionIndexFile {
 	removed: HashMap<String, Vec<String>>
 }
 
-/// A game version of a versioned baseline pack, and the files that it deleted
+/// A game version of a versioned mcchanges pack, and the files that it deleted
 /// relative to the previous version.
 struct VersionLayer {
 	version: String,
 	removed_files: HashSet<String>
 }
 
-/// A loaded baseline pack, ready to be used to find redundant pack files.
-pub(crate) struct BaselinePack {
-	source: BaselineSource,
-	/// For versioned baseline packs, the layers of the selected version and all the
+/// A loaded mcchanges pack, ready to be used to find redundant pack files.
+pub(crate) struct McChanges {
+	source: McChangesSource,
+	/// For versioned mcchanges packs, the layers of the selected version and all the
 	/// previous ones, from the newest to the oldest.
 	layers: Option<Vec<VersionLayer>>
 }
 
-/// The result of removing the language keys that a baseline pack already provides from
+/// The result of removing the language keys that a mcchanges pack already provides from
 /// a language file.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum LanguageFileReduction {
 	/// There is nothing to remove, or the file can't be safely reduced.
 	Unchanged,
-	/// Every key is already provided by the baseline pack, so the file is not needed.
+	/// Every key is already provided by the mcchanges pack, so the file is not needed.
 	Redundant,
 	/// Some keys were removed. The reduced file contents are provided.
 	Reduced { data: Vec<u8> }
 }
 
-impl BaselinePack {
-	/// Loads the baseline pack at the given path, which can be either a directory or a
-	/// ZIP archive such as a vanilla client JAR. If the baseline pack holds the assets of
+impl McChanges {
+	/// Loads the mcchanges pack at the given path, which can be either a directory or a
+	/// ZIP archive such as a vanilla client JAR. If the mcchanges pack holds the assets of
 	/// several game versions, `version` selects which one is used.
 	pub(crate) async fn open<V: VirtualFileSystem>(
 		vfs: &V,
 		path: &Path,
 		version: Option<&str>
-	) -> Result<Self, BaselinePackError> {
+	) -> Result<Self, McChangesError> {
 		let source = if vfs.file_type(path)?.is_dir() {
-			BaselineSource::Directory(path.to_path_buf())
+			McChangesSource::Directory(path.to_path_buf())
 		} else {
 			let file = vfs.open(path)?;
 			let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
 
-			BaselineSource::Archive(ZipArchive::parse(archive_data)?)
+			McChangesSource::Archive(ZipArchive::parse(archive_data)?)
 		};
 
-		let mut baseline_pack = Self {
+		let mut mcchanges = Self {
 			source,
 			layers: None
 		};
 
-		baseline_pack.layers = match (baseline_pack.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
+		mcchanges.layers = match (mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
 			(Some(index), version) => Some(Self::select_version(&index, version)?),
 			(None, None) => None,
-			(None, Some(_)) => return Err(BaselinePackError::NotVersioned)
+			(None, Some(_)) => return Err(McChangesError::NotVersioned)
 		};
 
-		Ok(baseline_pack)
+		Ok(mcchanges)
 	}
 
 	/// Parses the version index and returns the layers of the selected version.
 	fn select_version(
 		index: &[u8],
 		version: Option<&str>
-	) -> Result<Vec<VersionLayer>, BaselinePackError> {
+	) -> Result<Vec<VersionLayer>, McChangesError> {
 		let index = serde_json::from_slice::<VersionIndexFile>(index)
-			.map_err(|err| BaselinePackError::InvalidVersionIndex(err.to_string()))?;
+			.map_err(|err| McChangesError::InvalidVersionIndex(err.to_string()))?;
 
 		if index.format != 1 {
-			return Err(BaselinePackError::InvalidVersionIndex(format!(
+			return Err(McChangesError::InvalidVersionIndex(format!(
 				"unsupported format {}",
 				index.format
 			)));
@@ -173,10 +173,10 @@ impl BaselinePack {
 
 		let available = index.versions.join(", ");
 		let Some(version) = version else {
-			return Err(BaselinePackError::VersionRequired(available));
+			return Err(McChangesError::VersionRequired(available));
 		};
 		let Some(selected_position) = index.versions.iter().position(|v| v == version) else {
-			return Err(BaselinePackError::UnknownVersion {
+			return Err(McChangesError::UnknownVersion {
 				version: version.to_owned(),
 				available
 			});
@@ -197,17 +197,17 @@ impl BaselinePack {
 			.collect())
 	}
 
-	/// Reads a file at the given path, relative to the root of the baseline pack, if it
+	/// Reads a file at the given path, relative to the root of the mcchanges pack, if it
 	/// exists and can be read.
 	async fn read_raw<V: VirtualFileSystem>(&self, vfs: &V, path: &str) -> Option<Vec<u8>> {
 		match &self.source {
-			BaselineSource::Directory(directory) => read_file(vfs, &directory.join(path)).await,
-			BaselineSource::Archive(archive) => archive.read(path)
+			McChangesSource::Directory(directory) => read_file(vfs, &directory.join(path)).await,
+			McChangesSource::Archive(archive) => archive.read(path)
 		}
 	}
 
-	/// Reads the contents of the baseline pack file with the given relative path, if it
-	/// exists and can be read. For versioned baseline packs, this reads the file as it
+	/// Reads the contents of the mcchanges pack file with the given relative path, if it
+	/// exists and can be read. For versioned mcchanges packs, this reads the file as it
 	/// is in the selected game version.
 	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
 		let Some(layers) = &self.layers else {
@@ -231,7 +231,7 @@ impl BaselinePack {
 	}
 
 	/// Checks whether including the given pack file in the result ZIP file is redundant
-	/// because the baseline pack already provides the same data under the same path.
+	/// because the mcchanges pack already provides the same data under the same path.
 	///
 	/// Every doubt is resolved by considering the file not redundant, so files are
 	/// never wrongly dropped: files that cannot be read, or that differ in any way
@@ -281,7 +281,7 @@ impl BaselinePack {
 				.await;
 		}
 
-		let (Some(pack_data), Some(baseline_data)) = (
+		let (Some(pack_data), Some(mcchanges_data)) = (
 			read_file(vfs, &pack_file.file_path).await,
 			self.read(vfs, relative_path).await
 		) else {
@@ -289,28 +289,28 @@ impl BaselinePack {
 		};
 
 		if relative_path.ends_with(".json") {
-			json_is_identical(&pack_data, &baseline_data)
+			json_is_identical(&pack_data, &mcchanges_data)
 		} else {
-			pack_data == baseline_data
+			pack_data == mcchanges_data
 		}
 	}
 
 	/// Checks whether a texture, along with its animation metadata, is the same as the
-	/// baseline one.
+	/// mcchanges one.
 	async fn is_texture_redundant<V: VirtualFileSystem>(
 		&self,
 		vfs: &V,
 		texture_relative_path: &str,
 		texture_file_path: &Path
 	) -> bool {
-		let (Some(pack_texture), Some(baseline_texture)) = (
+		let (Some(pack_texture), Some(mcchanges_texture)) = (
 			read_file(vfs, texture_file_path).await,
 			self.read(vfs, texture_relative_path).await
 		) else {
 			return false;
 		};
 
-		if !png_is_identical(&pack_texture, &baseline_texture) {
+		if !png_is_identical(&pack_texture, &mcchanges_texture) {
 			return false;
 		}
 
@@ -323,18 +323,18 @@ impl BaselinePack {
 				.await
 		) {
 			(None, None) => true,
-			(Some(pack_metadata), Some(baseline_metadata)) => {
-				json_is_identical(&pack_metadata, &baseline_metadata)
+			(Some(pack_metadata), Some(mcchanges_metadata)) => {
+				json_is_identical(&pack_metadata, &mcchanges_metadata)
 			}
 			_ => false
 		}
 	}
 
 	/// Removes the keys of a language file that have the same value in the language file
-	/// of the baseline pack with the same path. As the game falls back to the baseline
+	/// of the mcchanges pack with the same path. As the game falls back to the mcchanges
 	/// pack for the missing keys, the translations the player sees are the same.
 	///
-	/// Files that are not language files, that do not have a counterpart in the baseline pack,
+	/// Files that are not language files, that do not have a counterpart in the mcchanges pack,
 	/// or that can't be parsed are reported as unchanged.
 	pub(crate) async fn reduce_language_file<V: VirtualFileSystem>(
 		&self,
@@ -359,14 +359,14 @@ impl BaselinePack {
 			return LanguageFileReduction::Unchanged;
 		};
 
-		let (Some(pack_data), Some(baseline_data)) = (
+		let (Some(pack_data), Some(mcchanges_data)) = (
 			read_file(vfs, &pack_file.file_path).await,
 			self.read(vfs, relative_path).await
 		) else {
 			return LanguageFileReduction::Unchanged;
 		};
 
-		reduce(&pack_data, &baseline_data)
+		reduce(&pack_data, &mcchanges_data)
 	}
 }
 
@@ -387,20 +387,20 @@ fn json_is_identical(a: &[u8], b: &[u8]) -> bool {
 	matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
-/// Removes the entries of a JSON language file that the baseline language file has with the
+/// Removes the entries of a JSON language file that the mcchanges language file has with the
 /// same value.
-fn reduce_json_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
+fn reduce_json_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
 	let parse = |data: &[u8]| match serde_json::from_slice(strip_bom(data)) {
 		Ok(serde_json::Value::Object(entries)) => Some(entries),
 		_ => None
 	};
 
-	let (Some(mut pack_entries), Some(baseline_entries)) = (parse(pack), parse(baseline)) else {
+	let (Some(mut pack_entries), Some(mcchanges_entries)) = (parse(pack), parse(mcchanges)) else {
 		return LanguageFileReduction::Unchanged;
 	};
 
 	let entry_count = pack_entries.len();
-	pack_entries.retain(|key, value| baseline_entries.get(key) != Some(&*value));
+	pack_entries.retain(|key, value| mcchanges_entries.get(key) != Some(&*value));
 
 	if pack_entries.len() == entry_count {
 		LanguageFileReduction::Unchanged
@@ -414,10 +414,10 @@ fn reduce_json_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduct
 	}
 }
 
-/// Removes the entries of a legacy language file (`key=value` lines) that the baseline
+/// Removes the entries of a legacy language file (`key=value` lines) that the mcchanges
 /// language file has with the same value. Comments, blank lines and line endings are kept.
-fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
-	let (Ok(pack), Ok(baseline)) = (std::str::from_utf8(pack), std::str::from_utf8(baseline))
+fn reduce_legacy_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
+	let (Ok(pack), Ok(mcchanges)) = (std::str::from_utf8(pack), std::str::from_utf8(mcchanges))
 	else {
 		return LanguageFileReduction::Unchanged;
 	};
@@ -436,8 +436,8 @@ fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileRedu
 
 	// When a key appears several times, the game uses the last value, so that is the one
 	// to compare with. A key is only removed if the value the game would use is provided by
-	// the baseline, which means removing every line of that key
-	let baseline_values: HashMap<_, _> = baseline.split_inclusive('\n').filter_map(entry).collect();
+	// the mcchanges, which means removing every line of that key
+	let mcchanges_values: HashMap<_, _> = mcchanges.split_inclusive('\n').filter_map(entry).collect();
 	let pack_values: HashMap<_, _> = pack.split_inclusive('\n').filter_map(entry).collect();
 
 	let mut reduced = String::with_capacity(pack.len());
@@ -445,7 +445,7 @@ fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileRedu
 
 	for line in pack.split_inclusive('\n') {
 		match entry(line) {
-			Some((key, _)) if baseline_values.get(key) == pack_values.get(key) => {
+			Some((key, _)) if mcchanges_values.get(key) == pack_values.get(key) => {
 				removed_entries += 1;
 			}
 			Some(_) => {

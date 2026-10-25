@@ -3,8 +3,8 @@ use std::fs;
 use flate2::Compression;
 
 use super::*;
-use crate::baseline_pack::ZipArchive;
-use crate::baseline_pack::tests::{png, temp_dir, write_file};
+use crate::mcchanges::ZipArchive;
+use crate::mcchanges::tests::{png, temp_dir, write_file};
 use crate::config::{GlobalOptions, MinecraftMod, SquashOptions};
 use crate::vfs::os_fs::OsFilesystem;
 use crate::{PackSquasher, PackSquasherStatus};

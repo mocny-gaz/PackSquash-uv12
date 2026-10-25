@@ -30,7 +30,7 @@ use tokio::sync::Semaphore;
 use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
-use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
+use mcchanges::{McChanges, McChangesError, LanguageFileReduction};
 use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
 #[cfg(feature = "optifine")]
@@ -58,7 +58,7 @@ use crate::vfs::{
 pub mod config;
 pub mod vfs;
 
-mod baseline_pack;
+mod mcchanges;
 mod bedrock_pack;
 mod buffered_async_spooled_temp_file;
 #[cfg(feature = "optifine")]
@@ -285,21 +285,21 @@ impl PackSquasher {
 		));
 		let options_holder = Arc::new(options_holder);
 
-		// Load the baseline pack, if configured, before processing any pack file. Doing
-		// so here makes an unusable baseline pack fail the operation promptly
-		let baseline_pack = options_holder
+		// Load the mcchanges pack, if configured, before processing any pack file. Doing
+		// so here makes an unusable mcchanges pack fail the operation promptly
+		let mcchanges = options_holder
 			.options
 			.global_options
-			.baseline_pack_path
+			.mcchanges_path
 			.as_deref()
-			.map(|baseline_pack_path| {
-				runtime.block_on(BaselinePack::open(
+			.map(|mcchanges_path| {
+				runtime.block_on(McChanges::open(
 					&*vfs,
-					baseline_pack_path,
+					mcchanges_path,
 					options_holder
 						.options
 						.global_options
-						.baseline_pack_version
+						.mcchanges_version
 						.as_deref()
 				))
 			})
@@ -472,7 +472,7 @@ impl PackSquasher {
 				let asset_type_matcher = Arc::clone(&asset_type_matcher);
 				let squash_zip = Arc::clone(&squash_zip);
 				let vfs = Arc::clone(&vfs);
-				let baseline_pack = baseline_pack.clone();
+				let mcchanges = mcchanges.clone();
 				#[cfg(feature = "optifine")]
 				let sky_image_optimizer = sky_image_optimizer.clone();
 
@@ -506,17 +506,17 @@ impl PackSquasher {
 						}
 					};
 
-					// Files that do not change anything relative to the baseline pack are left out
+					// Files that do not change anything relative to the mcchanges pack are left out
 					// of the result ZIP file. Do this before any file is processed to not waste
 					// time optimizing files that are not going to be included anyway
-					if let Some(baseline_pack) = &baseline_pack
-						&& baseline_pack.is_redundant(&*vfs, &pack_file_data).await
+					if let Some(mcchanges) = &mcchanges
+						&& mcchanges.is_redundant(&*vfs, &pack_file_data).await
 					{
 						if let Some(tx) = pack_file_status_sender {
 							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 								path: pack_file_data.relative_path,
 								optimization_strategy: Cow::Borrowed(
-									"Identical to the baseline pack"
+									"Identical to the mcchanges pack"
 								),
 								optimization_error: None,
 								skipped: true,
@@ -529,16 +529,16 @@ impl PackSquasher {
 						return;
 					}
 
-					// Remove the language keys that the baseline pack already provides. This
+					// Remove the language keys that the mcchanges pack already provides. This
 					// replaces the data that is read from the pack file by the reduced data
 					let mut file_data_override: Option<Arc<[u8]>> = None;
-					if let Some(baseline_pack) = &baseline_pack
+					if let Some(mcchanges) = &mcchanges
 						&& options_holder
 							.options
 							.global_options
-							.skip_language_keys_identical_to_baseline
+							.skip_language_keys_identical_to_mcchanges
 					{
-						match baseline_pack
+						match mcchanges
 							.reduce_language_file(&*vfs, &pack_file_data)
 							.await
 						{
@@ -548,7 +548,7 @@ impl PackSquasher {
 									tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 										path: pack_file_data.relative_path,
 										optimization_strategy: Cow::Borrowed(
-											"Every language key is identical to the baseline pack"
+											"Every language key is identical to the mcchanges pack"
 										),
 										optimization_error: None,
 										skipped: true,
@@ -827,10 +827,10 @@ pub enum PackSquasherError {
 	/// which defines some basic characteristics of a pack.
 	#[error("Pack metadata error: {0}")]
 	PackMetadataError(#[from] PackMetadataError),
-	/// Thrown when the baseline pack, which pack files are compared with to leave out
+	/// Thrown when the mcchanges pack, which pack files are compared with to leave out
 	/// redundant ones, could not be loaded.
-	#[error("Baseline pack error: {0}")]
-	BaselinePackError(#[from] BaselinePackError),
+	#[error("McChanges pack error: {0}")]
+	McChangesError(#[from] McChangesError),
 	/// Thrown when the manifest of a Bedrock Edition pack can't be read, or is not valid.
 	#[error("Bedrock pack manifest error: {0}")]
 	BedrockManifestError(#[from] BedrockManifestError),
@@ -927,8 +927,8 @@ impl PackFileStatus {
 
 	/// Checks whether this file was skipped because the squash options ask for files like
 	/// it to be left out of the result ZIP file, for example because it is identical to
-	/// the file with the same path in the baseline pack configured with the
-	/// `baseline_pack_path` option. Unlike other skipped files, which PackSquash did not
+	/// the file with the same path in the mcchanges pack configured with the
+	/// `mcchanges_path` option. Unlike other skipped files, which PackSquash did not
 	/// recognize or deemed unnecessary on its own, these are expected, so they do not hint
 	/// at a problem. If this method returns `true`, [`skipped`](Self::skipped) returns
 	/// `true` too.

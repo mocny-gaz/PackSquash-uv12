@@ -224,43 +224,43 @@ pub struct GlobalOptions {
 	///
 	/// **Default value**: `auto`
 	pub pack_edition: PackEdition,
-	/// The path of a baseline pack that the pack being processed is meant to be layered on top
+	/// The path of a mcchanges pack that the pack being processed is meant to be layered on top
 	/// of. Typically, this is the vanilla game assets: either a directory with the extracted
 	/// contents of a game version client JAR, or the client JAR (or any other ZIP file) itself.
 	///
 	/// When this option is set, pack files that are identical to the file with the same path in
-	/// the baseline pack are left out of the result ZIP file, as the game would load the same
-	/// file from the baseline anyway. This makes packs that only customize a few files of the
-	/// baseline much smaller. Textures are compared by their pixels, so differences in how they
+	/// the mcchanges pack are left out of the result ZIP file, as the game would load the same
+	/// file from the mcchanges anyway. This makes packs that only customize a few files of the
+	/// mcchanges much smaller. Textures are compared by their pixels, so differences in how they
 	/// were encoded do not matter, and the JSON files are compared by their contents, so
 	/// differences in formatting and key ordering do not matter either. A texture is only left
 	/// out if its animation metadata file, if any, is identical too, and vice versa.
 	///
-	/// The baseline pack must match the game version the pack will be used with. The `pack.mcmeta`
+	/// The mcchanges pack must match the game version the pack will be used with. The `pack.mcmeta`
 	/// and `pack.png` files are never left out. Be aware that if the pack is going to be used
 	/// together with other packs that sit below it, leaving out a file that is identical to the
-	/// baseline lets the files of those other packs show through.
+	/// mcchanges lets the files of those other packs show through.
 	///
-	/// **Default value**: not set (do not compare pack files with any baseline pack)
-	pub baseline_pack_path: Option<PathBuf>,
-	/// The game version to use from the baseline pack, if it holds the assets of several game
-	/// versions in a single file or directory. This option is required for those baseline packs
-	/// and not allowed for the others. The `baseline_pack_path` option documents how a
-	/// baseline pack can hold several versions.
+	/// **Default value**: not set (do not compare pack files with any mcchanges pack)
+	pub mcchanges_path: Option<PathBuf>,
+	/// The game version to use from the mcchanges pack, if it holds the assets of several game
+	/// versions in a single file or directory. This option is required for those mcchanges packs
+	/// and not allowed for the others. The `mcchanges_path` option documents how a
+	/// mcchanges pack can hold several versions.
 	///
 	/// **Default value**: not set
-	pub baseline_pack_version: Option<String>,
-	/// When a baseline pack is set with `baseline_pack_path`, this option removes the entries of
+	pub mcchanges_version: Option<String>,
+	/// When a mcchanges pack is set with `mcchanges_path`, this option removes the entries of
 	/// language files (the `.json` files of modern versions and the `.lang` files of old ones, in
 	/// the `lang` directory of each namespace) that have the same value as the entry with the same
-	/// key in the language file of the baseline pack with the same path. The game falls back to the
-	/// baseline pack for the removed entries, so players see the same translations. Language files
+	/// key in the language file of the mcchanges pack with the same path. The game falls back to the
+	/// mcchanges pack for the removed entries, so players see the same translations. Language files
 	/// that end up with no entries are left out of the result ZIP file.
 	///
-	/// This option has no effect if `baseline_pack_path` is not set.
+	/// This option has no effect if `mcchanges_path` is not set.
 	///
 	/// **Default value**: `true`
-	pub skip_language_keys_identical_to_baseline: bool,
+	pub skip_language_keys_identical_to_mcchanges: bool,
 	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
 	/// use. Packs sometimes ship sky images that no entry names, either because they are
 	/// leftovers or because the entries that used them were removed. When this option is
@@ -359,9 +359,9 @@ impl Default for GlobalOptions {
 			automatic_asset_types_mask_detection: true,
 			ignore_system_and_hidden_files: true,
 			pack_edition: PackEdition::Auto,
-			baseline_pack_path: None,
-			baseline_pack_version: None,
-			skip_language_keys_identical_to_baseline: true,
+			mcchanges_path: None,
+			mcchanges_version: None,
+			skip_language_keys_identical_to_mcchanges: true,
 			#[cfg(feature = "optifine")]
 			skip_unused_optifine_sky_images: false,
 			#[cfg(feature = "optifine")]

@@ -27,9 +27,9 @@
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
   - [`pack_edition`](#pack_edition)
-  - [`baseline_pack_path`](#baseline_pack_path)
-  - [`baseline_pack_version`](#baseline_pack_version)
-  - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
+  - [`mcchanges_path`](#mcchanges_path)
+  - [`mcchanges_version`](#mcchanges_version)
+  - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
@@ -514,7 +514,7 @@ pack_edition = 'bedrock'
 output_file_path = 'pack.mcpack'
 ```
 
-### `baseline_pack_path`
+### `mcchanges_path`
 
 **Type**: [String](https://toml.io/en/v1.0.0#string)
 
@@ -522,16 +522,16 @@ output_file_path = 'pack.mcpack'
 
 Most packs customize a few files of the vanilla game and leave the rest as they
 were, but are often built from a full copy of the vanilla assets. This option
-tells PackSquash where to find a baseline pack, usually the vanilla assets of
+tells PackSquash where to find a mcchanges pack, usually the vanilla assets of
 the game version the pack targets, to leave out of the result ZIP file every
-pack file that is identical to the file with the same path in the baseline. The
-game loads those files from the baseline anyway, so the result ZIP file is
+pack file that is identical to the file with the same path in the mcchanges. The
+game loads those files from the mcchanges anyway, so the result ZIP file is
 smaller and behaves the same.
 
-The path can point to a directory with the extracted contents of the baseline,
-or to a ZIP file, such as the `.jar` file of a game version client. A baseline
+The path can point to a directory with the extracted contents of the mcchanges,
+or to a ZIP file, such as the `.jar` file of a game version client. A mcchanges
 can also hold many game versions, as described in
-[`baseline_pack_version`](#baseline_pack_version). Pack
+[`mcchanges_version`](#mcchanges_version). Pack
 files are compared like this:
 
 - Textures are compared by their size and pixels, so it does not matter how they
@@ -548,32 +548,32 @@ files are compared like this:
 
 Please note that:
 
-- The baseline must be the same game version the pack is used with. Otherwise,
+- The mcchanges must be the same game version the pack is used with. Otherwise,
   the pack may lose files that differ between versions.
 - If your pack will be used together with other packs that sit below it,
   leaving out a file that is identical to the vanilla one lets the file of the
   other pack show through, instead of restoring the vanilla look.
-- Files in pack overlay directories are never compared with the baseline.
+- Files in pack overlay directories are never compared with the mcchanges.
 - Files that are left out are reported as skipped. The command-line interface
   only prints them in the trace log level.
 
 Example:
 
 ```toml
-baseline_pack_path = 'C:\path\to\1.8.9.jar'
+mcchanges_path = 'C:\path\to\1.8.9.jar'
 ```
 
-### `baseline_pack_version`
+### `mcchanges_version`
 
 **Type**: [String](https://toml.io/en/v1.0.0#string)
 
 **Default value**: not set
 
-A baseline pack can hold the assets of many game versions in a single file or
+A mcchanges pack can hold the assets of many game versions in a single file or
 directory. This option selects which version PackSquash compares the pack with.
-It is required for those baseline packs, and an error for the others.
+It is required for those mcchanges packs, and an error for the others.
 
-A baseline pack holds several versions if it has a `baseline.json` file at its
+A mcchanges pack holds several versions if it has a `mcchanges.json` file at its
 root, with this structure:
 
 ```json
@@ -594,27 +594,39 @@ root, with this structure:
 
 To look up a file in the selected version, PackSquash checks the directory of
 that version first, then the directories of the previous versions, and stops at
-the first version that has the file or deleted it. This keeps a baseline pack
+the first version that has the file or deleted it. This keeps a mcchanges pack
 for many versions close to the size of a few full versions.
+
+The fork includes a script that downloads the files and builds such a file for you,
+for Java Edition and for Bedrock Edition. It compares each version with the version
+right before it, and it can update an existing file when new game versions come out:
+
+```
+python tools/mcchanges-jar/build_mcchanges_jar.py java --output mcchanges-java.jar
+python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar
+```
+
+The files inside belong to Mojang, so build the file on your computer and do not
+publish it. Archives with more than 65535 entries are supported.
 
 Example:
 
 ```toml
-baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
-baseline_pack_version = '1.21.4'
+mcchanges_path = 'C:\path\to\mcchanges.jar'
+mcchanges_version = '1.21.4'
 ```
 
-### `skip_language_keys_identical_to_baseline`
+### `skip_language_keys_identical_to_mcchanges`
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
 **Default value**: `true`
 
-If a [baseline pack](#baseline_pack_path) is set, language files lose the
+If a [mcchanges pack](#mcchanges_path) is set, language files lose the
 entries that have the same value as the entry with the same key in the language
-file of the baseline pack with the same path. This applies to the `.json` files
+file of the mcchanges pack with the same path. This applies to the `.json` files
 of modern versions and the `.lang` files of old ones, in the `lang` directory of
-each namespace. The game falls back to the baseline pack for the removed
+each namespace. The game falls back to the mcchanges pack for the removed
 entries, so players see the same translations. Language files that end up with
 no entries are left out of the result ZIP file.
 
@@ -623,12 +635,12 @@ Please note that:
 - The remaining JSON entries are written without formatting, in their original
   order. Comments and blank lines of `.lang` files are kept.
 - When a `.lang` file repeats a key, the game uses its last value, and so does
-  PackSquash when deciding whether the key is identical to the baseline.
+  PackSquash when deciding whether the key is identical to the mcchanges.
 - Files that are not valid language files are left as they are.
 - PackSquash may reuse files from a previous result ZIP file if they did not
-  change. If you change the baseline pack, delete the previous ZIP file first.
+  change. If you change the mcchanges pack, delete the previous ZIP file first.
 
-This option has no effect if `baseline_pack_path` is not set.
+This option has no effect if `mcchanges_path` is not set.
 
 ### `skip_unused_optifine_sky_images`
 
@@ -2006,9 +2018,9 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 skip_pack_icon = true
 validate_pack_metadata_file = true
 ignore_system_and_hidden_files = false
-baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
-baseline_pack_version = '1.8.9'
-skip_language_keys_identical_to_baseline = true
+mcchanges_path = 'C:\path\to\mcchanges.jar'
+mcchanges_version = '1.8.9'
+skip_language_keys_identical_to_mcchanges = true
 skip_unused_optifine_sky_images = true
 merge_identical_optifine_sky_images = true
 zip_spec_conformance_level = 'high'

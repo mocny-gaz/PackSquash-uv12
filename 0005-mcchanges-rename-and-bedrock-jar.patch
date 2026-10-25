@@ -1,0 +1,2798 @@
+From 9d619aeac9eb569431d01580b00d6d0a159f7a1e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 24 Oct 2026 19:54:25 +0000
+Subject: [PATCH] feat: rename baseline packs to mcchanges and add Bedrock
+ Edition mcchanges jars
+
+Rename the baseline pack feature to mcchanges: the options are now
+mcchanges_path, mcchanges_version and skip_language_keys_identical_to_mcchanges,
+and the version index of a jar with many versions is mcchanges.json.
+
+Rewrite build_mcchanges_jar.py so that one command downloads, packs and
+verifies the jar. It supports Java Edition (Mojang releases and asset index)
+and Bedrock Edition (Mojang/bedrock-samples releases), and --update appends
+new versions with the same result as a full rebuild. Each version is compared
+with the version before it.
+
+Support ZIP64 archives in the ZIP reader, so a jar with more than 65535
+entries can be read. Update the documentation.
+---
+ CHANGELOG.md                                  |  13 +-
+ README.md                                     |  21 +-
+ docs/wiki/Bedrock-Edition-packs.md            |  26 +-
+ docs/wiki/Options-files.md                    |  72 ++-
+ packages/packsquash/src/bedrock_pack/tests.rs |   4 +-
+ packages/packsquash/src/config/mod.rs         |  42 +-
+ packages/packsquash/src/lib.rs                |  50 +-
+ .../src/{baseline_pack.rs => mcchanges.rs}    | 146 ++---
+ .../src/{baseline_pack => mcchanges}/tests.rs | 342 ++++++++----
+ .../zip_reader.rs                             | 129 ++++-
+ packages/packsquash/src/optifine_sky/tests.rs |   4 +-
+ tools/baseline-jar/baseline-jar-prompt.md     |  97 ----
+ tools/baseline-jar/build_baseline_jar.py      | 195 -------
+ tools/mcchanges-jar/build_mcchanges_jar.py    | 520 ++++++++++++++++++
+ tools/mcchanges-jar/mcchanges-jar-prompt.md   |  66 +++
+ 15 files changed, 1136 insertions(+), 591 deletions(-)
+ rename packages/packsquash/src/{baseline_pack.rs => mcchanges.rs} (72%)
+ rename packages/packsquash/src/{baseline_pack => mcchanges}/tests.rs (66%)
+ rename packages/packsquash/src/{baseline_pack => mcchanges}/zip_reader.rs (56%)
+ delete mode 100644 tools/baseline-jar/baseline-jar-prompt.md
+ delete mode 100644 tools/baseline-jar/build_baseline_jar.py
+ create mode 100644 tools/mcchanges-jar/build_mcchanges_jar.py
+ create mode 100644 tools/mcchanges-jar/mcchanges-jar-prompt.md
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index af066b7..72bf2bd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -52,10 +52,10 @@ the `pack.mcmeta` file is no longer needed.
+ - When automatically detecting the mask of asset types to process, only asset
+ types belonging to the specific pack type being processed are now considered.
+ This means that resource packs now skip data- pack-only files, and vice versa.
+-- The new `baseline_pack_path` global option lets you specify a baseline pack,
++- The new `mcchanges_path` global option lets you specify a mcchanges pack,
+ such as the vanilla game assets of the targeted game version, as a directory or
+ a ZIP file like a client `.jar`. Pack files that are identical to the file with
+-the same path in the baseline pack are left out of the result ZIP file, which
++the same path in the mcchanges pack are left out of the result ZIP file, which
+ makes packs that only change a few vanilla files much smaller. Textures are
+ compared by their pixels, JSON files by their contents, and other files byte by
+ byte. Textures and their animation metadata are only left out together. For more
+@@ -69,12 +69,13 @@ audio are optimized, and every other file is copied as-is. Generated ZIP files
+ must use the `pedantic` conformance level. For more details, please see
+ [#266](https://github.com/ComunidadAylas/PackSquash/issues/266) and the new
+ Bedrock Edition packs wiki page.
+-- The new `baseline_pack_version` global option selects the game version to use
+-from a baseline pack that holds many versions, described by a `baseline.json`
++- Archives with more than 65535 entries (ZIP64) can be used as mcchanges files.
++- The new `mcchanges_version` global option selects the game version to use
++from a mcchanges pack that holds many versions, described by a `mcchanges.json`
+ file at its root. Versions only store the files they added or changed.
+-- The new `skip_language_keys_identical_to_baseline` global option, enabled by
++- The new `skip_language_keys_identical_to_mcchanges` global option, enabled by
+ default, removes the entries of `.json` and `.lang` language files that have the
+-same value in the language file of the baseline pack, and leaves out the files
++same value in the language file of the mcchanges pack, and leaves out the files
+ that end up empty. For more details, please see
+ [#197](https://github.com/ComunidadAylas/PackSquash/issues/197).
+ - The new `skip_unused_optifine_sky_images` global option leaves OptiFine
+diff --git a/README.md b/README.md
+index 2be3713..364ce94 100644
+--- a/README.md
++++ b/README.md
+@@ -224,20 +224,21 @@ Bedrock Edition pack.
+ 
+ What this fork adds:
+ 
+-- **Baseline packs** (original issue
++- **McChanges packs** (original issue
+   [#402](https://github.com/ComunidadAylas/PackSquash/issues/402)). With
+-  `baseline_pack_path`, files that are identical to the vanilla assets (a folder,
++  `mcchanges_path`, files that are identical to the vanilla assets (a folder,
+   a ZIP, or a client `.jar`) are left out of the result ZIP file. Textures are
+   compared by pixels, and JSON files by contents.
+-- **Many versions in one baseline file.** `baseline_pack_version` selects a game
+-  version from a single baseline jar that stores each version as a small delta.
+-  The `tools/baseline-jar` folder has a script and an AI prompt to build that jar
+-  and to update it when new game versions come out.
++- **Many versions in one mcchanges file.** `mcchanges_version` selects a game
++  version from a single mcchanges jar that stores each version as a small delta.
++  The `tools/mcchanges-jar` folder has a script that downloads the files and builds
++  that jar for Java Edition and for Bedrock Edition, and updates it when new game
++  versions come out. It also has an AI prompt for it.
+ - **Language files** (original issue
+   [#197](https://github.com/ComunidadAylas/PackSquash/issues/197)). With a
+-  baseline, entries that have the same value as vanilla are removed from `.json`
++  mcchanges, entries that have the same value as vanilla are removed from `.json`
+   and `.lang` language files. The game uses the vanilla value for them.
+-  Option: `skip_language_keys_identical_to_baseline`.
++  Option: `skip_language_keys_identical_to_mcchanges`.
+ - **Bedrock Edition packs** (original issue
+   [#266](https://github.com/ComunidadAylas/PackSquash/issues/266)). PackSquash
+   validates `manifest.json`, optimizes textures, JSON files and Ogg audio, and
+@@ -253,8 +254,8 @@ What this fork adds:
+ A minimal example, in your PackSquash options file:
+ 
+ ```toml
+-baseline_pack_path = 'vanilla-baseline.jar'
+-baseline_pack_version = '1.21.4'
++mcchanges_path = 'mcchanges.jar'
++mcchanges_version = '1.21.4'
+ ```
+ 
+ All the options are documented in [Options
+diff --git a/docs/wiki/Bedrock-Edition-packs.md b/docs/wiki/Bedrock-Edition-packs.md
+index 3c990e3..a2005f6 100644
+--- a/docs/wiki/Bedrock-Edition-packs.md
++++ b/docs/wiki/Bedrock-Edition-packs.md
+@@ -87,10 +87,24 @@ PackSquash only warns if `min_engine_version` is missing, if there is no
+ - **Pack layers and mods:** pack overlays, quirks, OptiFine and Minecraft Transit
+   Railway options do not apply.
+ 
+-## Using a baseline pack
++## Using an mcchanges file
+ 
+-[`baseline_pack_path`](Options-files.md#baseline_pack_path) also works with Bedrock
+-Edition packs. For example, you can point it to the official sample resource pack
+-to leave out the files you did not change. The `manifest.json`, `pack_icon.png`
+-and `bug_pack_icon.png` files are never left out. Language key removal only works
+-for Java Edition language files.
++[`mcchanges_path`](Options-files.md#mcchanges_path) also works with Bedrock Edition
++packs. It leaves out the files that are identical to the vanilla ones, which makes
++the pack smaller. The fork has a script that builds an mcchanges jar for Bedrock
++Edition from the official `Mojang/bedrock-samples` releases:
++
++```
++python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --count 5
++```
++
++Then add it to your options file, with one of the versions that it has:
++
++```toml
++mcchanges_path = 'mcchanges-bedrock.jar'
++mcchanges_version = '1.26.50.4'
++```
++
++The `manifest.json`, `pack_icon.png` and `bug_pack_icon.png` files are never left
++out. Language key removal only works for Java Edition language files. Sound files
++(`.ogg` and `.fsb`) are not in the jar unless you build it with `--include-audio`.
+diff --git a/docs/wiki/Options-files.md b/docs/wiki/Options-files.md
+index 70f8dce..b08188f 100644
+--- a/docs/wiki/Options-files.md
++++ b/docs/wiki/Options-files.md
+@@ -27,9 +27,9 @@
+   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
+   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
+   - [`pack_edition`](#pack_edition)
+-  - [`baseline_pack_path`](#baseline_pack_path)
+-  - [`baseline_pack_version`](#baseline_pack_version)
+-  - [`skip_language_keys_identical_to_baseline`](#skip_language_keys_identical_to_baseline)
++  - [`mcchanges_path`](#mcchanges_path)
++  - [`mcchanges_version`](#mcchanges_version)
++  - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
+   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
+   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
+@@ -514,7 +514,7 @@ pack_edition = 'bedrock'
+ output_file_path = 'pack.mcpack'
+ ```
+ 
+-### `baseline_pack_path`
++### `mcchanges_path`
+ 
+ **Type**: [String](https://toml.io/en/v1.0.0#string)
+ 
+@@ -522,16 +522,16 @@ output_file_path = 'pack.mcpack'
+ 
+ Most packs customize a few files of the vanilla game and leave the rest as they
+ were, but are often built from a full copy of the vanilla assets. This option
+-tells PackSquash where to find a baseline pack, usually the vanilla assets of
++tells PackSquash where to find a mcchanges pack, usually the vanilla assets of
+ the game version the pack targets, to leave out of the result ZIP file every
+-pack file that is identical to the file with the same path in the baseline. The
+-game loads those files from the baseline anyway, so the result ZIP file is
++pack file that is identical to the file with the same path in the mcchanges. The
++game loads those files from the mcchanges anyway, so the result ZIP file is
+ smaller and behaves the same.
+ 
+-The path can point to a directory with the extracted contents of the baseline,
+-or to a ZIP file, such as the `.jar` file of a game version client. A baseline
++The path can point to a directory with the extracted contents of the mcchanges,
++or to a ZIP file, such as the `.jar` file of a game version client. A mcchanges
+ can also hold many game versions, as described in
+-[`baseline_pack_version`](#baseline_pack_version). Pack
++[`mcchanges_version`](#mcchanges_version). Pack
+ files are compared like this:
+ 
+ - Textures are compared by their size and pixels, so it does not matter how they
+@@ -548,32 +548,32 @@ files are compared like this:
+ 
+ Please note that:
+ 
+-- The baseline must be the same game version the pack is used with. Otherwise,
++- The mcchanges must be the same game version the pack is used with. Otherwise,
+   the pack may lose files that differ between versions.
+ - If your pack will be used together with other packs that sit below it,
+   leaving out a file that is identical to the vanilla one lets the file of the
+   other pack show through, instead of restoring the vanilla look.
+-- Files in pack overlay directories are never compared with the baseline.
++- Files in pack overlay directories are never compared with the mcchanges.
+ - Files that are left out are reported as skipped. The command-line interface
+   only prints them in the trace log level.
+ 
+ Example:
+ 
+ ```toml
+-baseline_pack_path = 'C:\path\to\1.8.9.jar'
++mcchanges_path = 'C:\path\to\1.8.9.jar'
+ ```
+ 
+-### `baseline_pack_version`
++### `mcchanges_version`
+ 
+ **Type**: [String](https://toml.io/en/v1.0.0#string)
+ 
+ **Default value**: not set
+ 
+-A baseline pack can hold the assets of many game versions in a single file or
++A mcchanges pack can hold the assets of many game versions in a single file or
+ directory. This option selects which version PackSquash compares the pack with.
+-It is required for those baseline packs, and an error for the others.
++It is required for those mcchanges packs, and an error for the others.
+ 
+-A baseline pack holds several versions if it has a `baseline.json` file at its
++A mcchanges pack holds several versions if it has a `mcchanges.json` file at its
+ root, with this structure:
+ 
+ ```json
+@@ -594,27 +594,39 @@ root, with this structure:
+ 
+ To look up a file in the selected version, PackSquash checks the directory of
+ that version first, then the directories of the previous versions, and stops at
+-the first version that has the file or deleted it. This keeps a baseline pack
++the first version that has the file or deleted it. This keeps a mcchanges pack
+ for many versions close to the size of a few full versions.
+ 
++The fork includes a script that downloads the files and builds such a file for you,
++for Java Edition and for Bedrock Edition. It compares each version with the version
++right before it, and it can update an existing file when new game versions come out:
++
++```
++python tools/mcchanges-jar/build_mcchanges_jar.py java --output mcchanges-java.jar
++python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar
++```
++
++The files inside belong to Mojang, so build the file on your computer and do not
++publish it. Archives with more than 65535 entries are supported.
++
+ Example:
+ 
+ ```toml
+-baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
+-baseline_pack_version = '1.21.4'
++mcchanges_path = 'C:\path\to\mcchanges.jar'
++mcchanges_version = '1.21.4'
+ ```
+ 
+-### `skip_language_keys_identical_to_baseline`
++### `skip_language_keys_identical_to_mcchanges`
+ 
+ **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+ 
+ **Default value**: `true`
+ 
+-If a [baseline pack](#baseline_pack_path) is set, language files lose the
++If a [mcchanges pack](#mcchanges_path) is set, language files lose the
+ entries that have the same value as the entry with the same key in the language
+-file of the baseline pack with the same path. This applies to the `.json` files
++file of the mcchanges pack with the same path. This applies to the `.json` files
+ of modern versions and the `.lang` files of old ones, in the `lang` directory of
+-each namespace. The game falls back to the baseline pack for the removed
++each namespace. The game falls back to the mcchanges pack for the removed
+ entries, so players see the same translations. Language files that end up with
+ no entries are left out of the result ZIP file.
+ 
+@@ -623,12 +635,12 @@ Please note that:
+ - The remaining JSON entries are written without formatting, in their original
+   order. Comments and blank lines of `.lang` files are kept.
+ - When a `.lang` file repeats a key, the game uses its last value, and so does
+-  PackSquash when deciding whether the key is identical to the baseline.
++  PackSquash when deciding whether the key is identical to the mcchanges.
+ - Files that are not valid language files are left as they are.
+ - PackSquash may reuse files from a previous result ZIP file if they did not
+-  change. If you change the baseline pack, delete the previous ZIP file first.
++  change. If you change the mcchanges pack, delete the previous ZIP file first.
+ 
+-This option has no effect if `baseline_pack_path` is not set.
++This option has no effect if `mcchanges_path` is not set.
+ 
+ ### `skip_unused_optifine_sky_images`
+ 
+@@ -2006,9 +2018,9 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
+ skip_pack_icon = true
+ validate_pack_metadata_file = true
+ ignore_system_and_hidden_files = false
+-baseline_pack_path = 'C:\path\to\vanilla-baseline.jar'
+-baseline_pack_version = '1.8.9'
+-skip_language_keys_identical_to_baseline = true
++mcchanges_path = 'C:\path\to\mcchanges.jar'
++mcchanges_version = '1.8.9'
++skip_language_keys_identical_to_mcchanges = true
+ skip_unused_optifine_sky_images = true
+ merge_identical_optifine_sky_images = true
+ zip_spec_conformance_level = 'high'
+diff --git a/packages/packsquash/src/bedrock_pack/tests.rs b/packages/packsquash/src/bedrock_pack/tests.rs
+index 3c69922..47b203e 100644
+--- a/packages/packsquash/src/bedrock_pack/tests.rs
++++ b/packages/packsquash/src/bedrock_pack/tests.rs
+@@ -6,8 +6,8 @@ use serde_json::json;
+ use spng::{ContextFlags, DecodeFlags, Format};
+ 
+ use super::*;
+-use crate::baseline_pack::ZipArchive;
+-use crate::baseline_pack::tests::{png, temp_dir, write_file};
++use crate::mcchanges::ZipArchive;
++use crate::mcchanges::tests::{png, temp_dir, write_file};
+ use crate::config::{GlobalOptions, SquashOptions, ZipSpecConformanceLevel};
+ use crate::vfs::os_fs::OsFilesystem;
+ use crate::{PackSquasher, PackSquasherError, PackSquasherStatus};
+diff --git a/packages/packsquash/src/config/mod.rs b/packages/packsquash/src/config/mod.rs
+index 37da29c..346915b 100644
+--- a/packages/packsquash/src/config/mod.rs
++++ b/packages/packsquash/src/config/mod.rs
+@@ -224,43 +224,43 @@ pub struct GlobalOptions {
+ 	///
+ 	/// **Default value**: `auto`
+ 	pub pack_edition: PackEdition,
+-	/// The path of a baseline pack that the pack being processed is meant to be layered on top
++	/// The path of a mcchanges pack that the pack being processed is meant to be layered on top
+ 	/// of. Typically, this is the vanilla game assets: either a directory with the extracted
+ 	/// contents of a game version client JAR, or the client JAR (or any other ZIP file) itself.
+ 	///
+ 	/// When this option is set, pack files that are identical to the file with the same path in
+-	/// the baseline pack are left out of the result ZIP file, as the game would load the same
+-	/// file from the baseline anyway. This makes packs that only customize a few files of the
+-	/// baseline much smaller. Textures are compared by their pixels, so differences in how they
++	/// the mcchanges pack are left out of the result ZIP file, as the game would load the same
++	/// file from the mcchanges anyway. This makes packs that only customize a few files of the
++	/// mcchanges much smaller. Textures are compared by their pixels, so differences in how they
+ 	/// were encoded do not matter, and the JSON files are compared by their contents, so
+ 	/// differences in formatting and key ordering do not matter either. A texture is only left
+ 	/// out if its animation metadata file, if any, is identical too, and vice versa.
+ 	///
+-	/// The baseline pack must match the game version the pack will be used with. The `pack.mcmeta`
++	/// The mcchanges pack must match the game version the pack will be used with. The `pack.mcmeta`
+ 	/// and `pack.png` files are never left out. Be aware that if the pack is going to be used
+ 	/// together with other packs that sit below it, leaving out a file that is identical to the
+-	/// baseline lets the files of those other packs show through.
++	/// mcchanges lets the files of those other packs show through.
+ 	///
+-	/// **Default value**: not set (do not compare pack files with any baseline pack)
+-	pub baseline_pack_path: Option<PathBuf>,
+-	/// The game version to use from the baseline pack, if it holds the assets of several game
+-	/// versions in a single file or directory. This option is required for those baseline packs
+-	/// and not allowed for the others. The `baseline_pack_path` option documents how a
+-	/// baseline pack can hold several versions.
++	/// **Default value**: not set (do not compare pack files with any mcchanges pack)
++	pub mcchanges_path: Option<PathBuf>,
++	/// The game version to use from the mcchanges pack, if it holds the assets of several game
++	/// versions in a single file or directory. This option is required for those mcchanges packs
++	/// and not allowed for the others. The `mcchanges_path` option documents how a
++	/// mcchanges pack can hold several versions.
+ 	///
+ 	/// **Default value**: not set
+-	pub baseline_pack_version: Option<String>,
+-	/// When a baseline pack is set with `baseline_pack_path`, this option removes the entries of
++	pub mcchanges_version: Option<String>,
++	/// When a mcchanges pack is set with `mcchanges_path`, this option removes the entries of
+ 	/// language files (the `.json` files of modern versions and the `.lang` files of old ones, in
+ 	/// the `lang` directory of each namespace) that have the same value as the entry with the same
+-	/// key in the language file of the baseline pack with the same path. The game falls back to the
+-	/// baseline pack for the removed entries, so players see the same translations. Language files
++	/// key in the language file of the mcchanges pack with the same path. The game falls back to the
++	/// mcchanges pack for the removed entries, so players see the same translations. Language files
+ 	/// that end up with no entries are left out of the result ZIP file.
+ 	///
+-	/// This option has no effect if `baseline_pack_path` is not set.
++	/// This option has no effect if `mcchanges_path` is not set.
+ 	///
+ 	/// **Default value**: `true`
+-	pub skip_language_keys_identical_to_baseline: bool,
++	pub skip_language_keys_identical_to_mcchanges: bool,
+ 	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
+ 	/// use. Packs sometimes ship sky images that no entry names, either because they are
+ 	/// leftovers or because the entries that used them were removed. When this option is
+@@ -359,9 +359,9 @@ impl Default for GlobalOptions {
+ 			automatic_asset_types_mask_detection: true,
+ 			ignore_system_and_hidden_files: true,
+ 			pack_edition: PackEdition::Auto,
+-			baseline_pack_path: None,
+-			baseline_pack_version: None,
+-			skip_language_keys_identical_to_baseline: true,
++			mcchanges_path: None,
++			mcchanges_version: None,
++			skip_language_keys_identical_to_mcchanges: true,
+ 			#[cfg(feature = "optifine")]
+ 			skip_unused_optifine_sky_images: false,
+ 			#[cfg(feature = "optifine")]
+diff --git a/packages/packsquash/src/lib.rs b/packages/packsquash/src/lib.rs
+index e0bf2ad..447956a 100644
+--- a/packages/packsquash/src/lib.rs
++++ b/packages/packsquash/src/lib.rs
+@@ -30,7 +30,7 @@ use tokio::sync::Semaphore;
+ use tokio::sync::mpsc::Sender;
+ use tokio::{fs::File, io::AsyncRead, runtime::Builder};
+ 
+-use baseline_pack::{BaselinePack, BaselinePackError, LanguageFileReduction};
++use mcchanges::{McChanges, McChangesError, LanguageFileReduction};
+ use bedrock_pack::{BedrockFileKind, BedrockManifestError};
+ use config::ProcessedSquashOptions;
+ #[cfg(feature = "optifine")]
+@@ -58,7 +58,7 @@ use crate::vfs::{
+ pub mod config;
+ pub mod vfs;
+ 
+-mod baseline_pack;
++mod mcchanges;
+ mod bedrock_pack;
+ mod buffered_async_spooled_temp_file;
+ #[cfg(feature = "optifine")]
+@@ -285,21 +285,21 @@ impl PackSquasher {
+ 		));
+ 		let options_holder = Arc::new(options_holder);
+ 
+-		// Load the baseline pack, if configured, before processing any pack file. Doing
+-		// so here makes an unusable baseline pack fail the operation promptly
+-		let baseline_pack = options_holder
++		// Load the mcchanges pack, if configured, before processing any pack file. Doing
++		// so here makes an unusable mcchanges pack fail the operation promptly
++		let mcchanges = options_holder
+ 			.options
+ 			.global_options
+-			.baseline_pack_path
++			.mcchanges_path
+ 			.as_deref()
+-			.map(|baseline_pack_path| {
+-				runtime.block_on(BaselinePack::open(
++			.map(|mcchanges_path| {
++				runtime.block_on(McChanges::open(
+ 					&*vfs,
+-					baseline_pack_path,
++					mcchanges_path,
+ 					options_holder
+ 						.options
+ 						.global_options
+-						.baseline_pack_version
++						.mcchanges_version
+ 						.as_deref()
+ 				))
+ 			})
+@@ -472,7 +472,7 @@ impl PackSquasher {
+ 				let asset_type_matcher = Arc::clone(&asset_type_matcher);
+ 				let squash_zip = Arc::clone(&squash_zip);
+ 				let vfs = Arc::clone(&vfs);
+-				let baseline_pack = baseline_pack.clone();
++				let mcchanges = mcchanges.clone();
+ 				#[cfg(feature = "optifine")]
+ 				let sky_image_optimizer = sky_image_optimizer.clone();
+ 
+@@ -506,17 +506,17 @@ impl PackSquasher {
+ 						}
+ 					};
+ 
+-					// Files that do not change anything relative to the baseline pack are left out
++					// Files that do not change anything relative to the mcchanges pack are left out
+ 					// of the result ZIP file. Do this before any file is processed to not waste
+ 					// time optimizing files that are not going to be included anyway
+-					if let Some(baseline_pack) = &baseline_pack
+-						&& baseline_pack.is_redundant(&*vfs, &pack_file_data).await
++					if let Some(mcchanges) = &mcchanges
++						&& mcchanges.is_redundant(&*vfs, &pack_file_data).await
+ 					{
+ 						if let Some(tx) = pack_file_status_sender {
+ 							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+ 								path: pack_file_data.relative_path,
+ 								optimization_strategy: Cow::Borrowed(
+-									"Identical to the baseline pack"
++									"Identical to the mcchanges pack"
+ 								),
+ 								optimization_error: None,
+ 								skipped: true,
+@@ -529,16 +529,16 @@ impl PackSquasher {
+ 						return;
+ 					}
+ 
+-					// Remove the language keys that the baseline pack already provides. This
++					// Remove the language keys that the mcchanges pack already provides. This
+ 					// replaces the data that is read from the pack file by the reduced data
+ 					let mut file_data_override: Option<Arc<[u8]>> = None;
+-					if let Some(baseline_pack) = &baseline_pack
++					if let Some(mcchanges) = &mcchanges
+ 						&& options_holder
+ 							.options
+ 							.global_options
+-							.skip_language_keys_identical_to_baseline
++							.skip_language_keys_identical_to_mcchanges
+ 					{
+-						match baseline_pack
++						match mcchanges
+ 							.reduce_language_file(&*vfs, &pack_file_data)
+ 							.await
+ 						{
+@@ -548,7 +548,7 @@ impl PackSquasher {
+ 									tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+ 										path: pack_file_data.relative_path,
+ 										optimization_strategy: Cow::Borrowed(
+-											"Every language key is identical to the baseline pack"
++											"Every language key is identical to the mcchanges pack"
+ 										),
+ 										optimization_error: None,
+ 										skipped: true,
+@@ -827,10 +827,10 @@ pub enum PackSquasherError {
+ 	/// which defines some basic characteristics of a pack.
+ 	#[error("Pack metadata error: {0}")]
+ 	PackMetadataError(#[from] PackMetadataError),
+-	/// Thrown when the baseline pack, which pack files are compared with to leave out
++	/// Thrown when the mcchanges pack, which pack files are compared with to leave out
+ 	/// redundant ones, could not be loaded.
+-	#[error("Baseline pack error: {0}")]
+-	BaselinePackError(#[from] BaselinePackError),
++	#[error("McChanges pack error: {0}")]
++	McChangesError(#[from] McChangesError),
+ 	/// Thrown when the manifest of a Bedrock Edition pack can't be read, or is not valid.
+ 	#[error("Bedrock pack manifest error: {0}")]
+ 	BedrockManifestError(#[from] BedrockManifestError),
+@@ -927,8 +927,8 @@ impl PackFileStatus {
+ 
+ 	/// Checks whether this file was skipped because the squash options ask for files like
+ 	/// it to be left out of the result ZIP file, for example because it is identical to
+-	/// the file with the same path in the baseline pack configured with the
+-	/// `baseline_pack_path` option. Unlike other skipped files, which PackSquash did not
++	/// the file with the same path in the mcchanges pack configured with the
++	/// `mcchanges_path` option. Unlike other skipped files, which PackSquash did not
+ 	/// recognize or deemed unnecessary on its own, these are expected, so they do not hint
+ 	/// at a problem. If this method returns `true`, [`skipped`](Self::skipped) returns
+ 	/// `true` too.
+diff --git a/packages/packsquash/src/baseline_pack.rs b/packages/packsquash/src/mcchanges.rs
+similarity index 72%
+rename from packages/packsquash/src/baseline_pack.rs
+rename to packages/packsquash/src/mcchanges.rs
+index b131c58..be82e8c 100644
+--- a/packages/packsquash/src/baseline_pack.rs
++++ b/packages/packsquash/src/mcchanges.rs
+@@ -1,9 +1,9 @@
+-//! Support for baseline packs: packs, usually the vanilla game assets, that the pack being
++//! Support for mcchanges packs: packs, usually the vanilla game assets, that the pack being
+ //! processed is layered on top of. Pack files that do not change anything relative to the
+-//! baseline are redundant, so they can be left out of the result ZIP file to make it smaller.
++//! mcchanges are redundant, so they can be left out of the result ZIP file to make it smaller.
+ //!
+-//! A baseline pack can also hold the assets of many game versions in a compact way. Such a
+-//! versioned baseline pack has a `baseline.json` file at its root with this structure:
++//! A mcchanges pack can also hold the assets of many game versions in a compact way. Such a
++//! versioned mcchanges pack has a `mcchanges.json` file at its root with this structure:
+ //!
+ //! ```json
+ //! {
+@@ -39,8 +39,8 @@ mod zip_reader;
+ #[cfg(test)]
+ pub(crate) mod tests;
+ 
+-/// The name of the file that marks a baseline pack as versioned.
+-const VERSION_INDEX_FILE: &str = "baseline.json";
++/// The name of the file that marks a mcchanges pack as versioned.
++const VERSION_INDEX_FILE: &str = "mcchanges.json";
+ 
+ /// The PNG file signature, followed by the length and type of the IHDR chunk, which
+ /// always is the first chunk of a PNG file.
+@@ -52,43 +52,43 @@ const PNG_HEADER: [u8; 16] = [
+ /// memory needed to decode them.
+ const MAX_PIXEL_COMPARISON_PIXELS: u64 = 4096 * 4096;
+ 
+-/// An error that may occur while loading a baseline pack.
++/// An error that may occur while loading a mcchanges pack.
+ #[derive(Error, Debug)]
+ #[non_exhaustive]
+-pub enum BaselinePackError {
+-	/// Thrown when an I/O error occurs while reading the baseline pack.
++pub enum McChangesError {
++	/// Thrown when an I/O error occurs while reading the mcchanges pack.
+ 	#[error("I/O error: {0}")]
+ 	IoError(#[from] io::Error),
+-	/// Thrown when the baseline pack is a file, but not a valid ZIP archive.
+-	#[error("the baseline pack is neither a directory nor a valid ZIP file: {0}")]
++	/// Thrown when the mcchanges pack is a file, but not a valid ZIP archive.
++	#[error("the mcchanges pack is neither a directory nor a valid ZIP file: {0}")]
+ 	InvalidArchive(#[from] ZipReadError),
+-	/// Thrown when the version index of a versioned baseline pack is not valid.
+-	#[error("the baseline pack version index is not valid: {0}")]
++	/// Thrown when the version index of a versioned mcchanges pack is not valid.
++	#[error("the mcchanges pack version index is not valid: {0}")]
+ 	InvalidVersionIndex(String),
+-	/// Thrown when the baseline pack holds several game versions, but none was selected.
+-	#[error("the baseline pack holds several game versions, so baseline_pack_version must be set to one of: {0}")]
++	/// Thrown when the mcchanges pack holds several game versions, but none was selected.
++	#[error("the mcchanges pack holds several game versions, so mcchanges_version must be set to one of: {0}")]
+ 	VersionRequired(String),
+-	/// Thrown when the selected game version is not in the baseline pack.
+-	#[error("the baseline pack does not hold the game version {version}. It holds: {available}")]
++	/// Thrown when the selected game version is not in the mcchanges pack.
++	#[error("the mcchanges pack does not hold the game version {version}. It holds: {available}")]
+ 	UnknownVersion {
+ 		/// The version that was selected.
+ 		version: String,
+-		/// The comma-separated versions that the baseline pack holds.
++		/// The comma-separated versions that the mcchanges pack holds.
+ 		available: String
+ 	},
+-	/// Thrown when a game version was selected, but the baseline pack is not versioned.
+-	#[error("baseline_pack_version is set, but the baseline pack does not hold several game versions")]
++	/// Thrown when a game version was selected, but the mcchanges pack is not versioned.
++	#[error("mcchanges_version is set, but the mcchanges pack does not hold several game versions")]
+ 	NotVersioned
+ }
+ 
+-enum BaselineSource {
+-	/// A directory in the virtual filesystem that holds the baseline pack files.
++enum McChangesSource {
++	/// A directory in the virtual filesystem that holds the mcchanges pack files.
+ 	Directory(PathBuf),
+ 	/// A ZIP archive (e.g. a vanilla client JAR) that was loaded in memory.
+ 	Archive(ZipArchive)
+ }
+ 
+-/// The contents of the `baseline.json` file.
++/// The contents of the `mcchanges.json` file.
+ #[derive(Deserialize)]
+ struct VersionIndexFile {
+ 	format: u32,
+@@ -97,75 +97,75 @@ struct VersionIndexFile {
+ 	removed: HashMap<String, Vec<String>>
+ }
+ 
+-/// A game version of a versioned baseline pack, and the files that it deleted
++/// A game version of a versioned mcchanges pack, and the files that it deleted
+ /// relative to the previous version.
+ struct VersionLayer {
+ 	version: String,
+ 	removed_files: HashSet<String>
+ }
+ 
+-/// A loaded baseline pack, ready to be used to find redundant pack files.
+-pub(crate) struct BaselinePack {
+-	source: BaselineSource,
+-	/// For versioned baseline packs, the layers of the selected version and all the
++/// A loaded mcchanges pack, ready to be used to find redundant pack files.
++pub(crate) struct McChanges {
++	source: McChangesSource,
++	/// For versioned mcchanges packs, the layers of the selected version and all the
+ 	/// previous ones, from the newest to the oldest.
+ 	layers: Option<Vec<VersionLayer>>
+ }
+ 
+-/// The result of removing the language keys that a baseline pack already provides from
++/// The result of removing the language keys that a mcchanges pack already provides from
+ /// a language file.
+ #[derive(Debug, PartialEq, Eq)]
+ pub(crate) enum LanguageFileReduction {
+ 	/// There is nothing to remove, or the file can't be safely reduced.
+ 	Unchanged,
+-	/// Every key is already provided by the baseline pack, so the file is not needed.
++	/// Every key is already provided by the mcchanges pack, so the file is not needed.
+ 	Redundant,
+ 	/// Some keys were removed. The reduced file contents are provided.
+ 	Reduced { data: Vec<u8> }
+ }
+ 
+-impl BaselinePack {
+-	/// Loads the baseline pack at the given path, which can be either a directory or a
+-	/// ZIP archive such as a vanilla client JAR. If the baseline pack holds the assets of
++impl McChanges {
++	/// Loads the mcchanges pack at the given path, which can be either a directory or a
++	/// ZIP archive such as a vanilla client JAR. If the mcchanges pack holds the assets of
+ 	/// several game versions, `version` selects which one is used.
+ 	pub(crate) async fn open<V: VirtualFileSystem>(
+ 		vfs: &V,
+ 		path: &Path,
+ 		version: Option<&str>
+-	) -> Result<Self, BaselinePackError> {
++	) -> Result<Self, McChangesError> {
+ 		let source = if vfs.file_type(path)?.is_dir() {
+-			BaselineSource::Directory(path.to_path_buf())
++			McChangesSource::Directory(path.to_path_buf())
+ 		} else {
+ 			let file = vfs.open(path)?;
+ 			let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
+ 
+-			BaselineSource::Archive(ZipArchive::parse(archive_data)?)
++			McChangesSource::Archive(ZipArchive::parse(archive_data)?)
+ 		};
+ 
+-		let mut baseline_pack = Self {
++		let mut mcchanges = Self {
+ 			source,
+ 			layers: None
+ 		};
+ 
+-		baseline_pack.layers = match (baseline_pack.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
++		mcchanges.layers = match (mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
+ 			(Some(index), version) => Some(Self::select_version(&index, version)?),
+ 			(None, None) => None,
+-			(None, Some(_)) => return Err(BaselinePackError::NotVersioned)
++			(None, Some(_)) => return Err(McChangesError::NotVersioned)
+ 		};
+ 
+-		Ok(baseline_pack)
++		Ok(mcchanges)
+ 	}
+ 
+ 	/// Parses the version index and returns the layers of the selected version.
+ 	fn select_version(
+ 		index: &[u8],
+ 		version: Option<&str>
+-	) -> Result<Vec<VersionLayer>, BaselinePackError> {
++	) -> Result<Vec<VersionLayer>, McChangesError> {
+ 		let index = serde_json::from_slice::<VersionIndexFile>(index)
+-			.map_err(|err| BaselinePackError::InvalidVersionIndex(err.to_string()))?;
++			.map_err(|err| McChangesError::InvalidVersionIndex(err.to_string()))?;
+ 
+ 		if index.format != 1 {
+-			return Err(BaselinePackError::InvalidVersionIndex(format!(
++			return Err(McChangesError::InvalidVersionIndex(format!(
+ 				"unsupported format {}",
+ 				index.format
+ 			)));
+@@ -173,10 +173,10 @@ impl BaselinePack {
+ 
+ 		let available = index.versions.join(", ");
+ 		let Some(version) = version else {
+-			return Err(BaselinePackError::VersionRequired(available));
++			return Err(McChangesError::VersionRequired(available));
+ 		};
+ 		let Some(selected_position) = index.versions.iter().position(|v| v == version) else {
+-			return Err(BaselinePackError::UnknownVersion {
++			return Err(McChangesError::UnknownVersion {
+ 				version: version.to_owned(),
+ 				available
+ 			});
+@@ -197,17 +197,17 @@ impl BaselinePack {
+ 			.collect())
+ 	}
+ 
+-	/// Reads a file at the given path, relative to the root of the baseline pack, if it
++	/// Reads a file at the given path, relative to the root of the mcchanges pack, if it
+ 	/// exists and can be read.
+ 	async fn read_raw<V: VirtualFileSystem>(&self, vfs: &V, path: &str) -> Option<Vec<u8>> {
+ 		match &self.source {
+-			BaselineSource::Directory(directory) => read_file(vfs, &directory.join(path)).await,
+-			BaselineSource::Archive(archive) => archive.read(path)
++			McChangesSource::Directory(directory) => read_file(vfs, &directory.join(path)).await,
++			McChangesSource::Archive(archive) => archive.read(path)
+ 		}
+ 	}
+ 
+-	/// Reads the contents of the baseline pack file with the given relative path, if it
+-	/// exists and can be read. For versioned baseline packs, this reads the file as it
++	/// Reads the contents of the mcchanges pack file with the given relative path, if it
++	/// exists and can be read. For versioned mcchanges packs, this reads the file as it
+ 	/// is in the selected game version.
+ 	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
+ 		let Some(layers) = &self.layers else {
+@@ -231,7 +231,7 @@ impl BaselinePack {
+ 	}
+ 
+ 	/// Checks whether including the given pack file in the result ZIP file is redundant
+-	/// because the baseline pack already provides the same data under the same path.
++	/// because the mcchanges pack already provides the same data under the same path.
+ 	///
+ 	/// Every doubt is resolved by considering the file not redundant, so files are
+ 	/// never wrongly dropped: files that cannot be read, or that differ in any way
+@@ -281,7 +281,7 @@ impl BaselinePack {
+ 				.await;
+ 		}
+ 
+-		let (Some(pack_data), Some(baseline_data)) = (
++		let (Some(pack_data), Some(mcchanges_data)) = (
+ 			read_file(vfs, &pack_file.file_path).await,
+ 			self.read(vfs, relative_path).await
+ 		) else {
+@@ -289,28 +289,28 @@ impl BaselinePack {
+ 		};
+ 
+ 		if relative_path.ends_with(".json") {
+-			json_is_identical(&pack_data, &baseline_data)
++			json_is_identical(&pack_data, &mcchanges_data)
+ 		} else {
+-			pack_data == baseline_data
++			pack_data == mcchanges_data
+ 		}
+ 	}
+ 
+ 	/// Checks whether a texture, along with its animation metadata, is the same as the
+-	/// baseline one.
++	/// mcchanges one.
+ 	async fn is_texture_redundant<V: VirtualFileSystem>(
+ 		&self,
+ 		vfs: &V,
+ 		texture_relative_path: &str,
+ 		texture_file_path: &Path
+ 	) -> bool {
+-		let (Some(pack_texture), Some(baseline_texture)) = (
++		let (Some(pack_texture), Some(mcchanges_texture)) = (
+ 			read_file(vfs, texture_file_path).await,
+ 			self.read(vfs, texture_relative_path).await
+ 		) else {
+ 			return false;
+ 		};
+ 
+-		if !png_is_identical(&pack_texture, &baseline_texture) {
++		if !png_is_identical(&pack_texture, &mcchanges_texture) {
+ 			return false;
+ 		}
+ 
+@@ -323,18 +323,18 @@ impl BaselinePack {
+ 				.await
+ 		) {
+ 			(None, None) => true,
+-			(Some(pack_metadata), Some(baseline_metadata)) => {
+-				json_is_identical(&pack_metadata, &baseline_metadata)
++			(Some(pack_metadata), Some(mcchanges_metadata)) => {
++				json_is_identical(&pack_metadata, &mcchanges_metadata)
+ 			}
+ 			_ => false
+ 		}
+ 	}
+ 
+ 	/// Removes the keys of a language file that have the same value in the language file
+-	/// of the baseline pack with the same path. As the game falls back to the baseline
++	/// of the mcchanges pack with the same path. As the game falls back to the mcchanges
+ 	/// pack for the missing keys, the translations the player sees are the same.
+ 	///
+-	/// Files that are not language files, that do not have a counterpart in the baseline pack,
++	/// Files that are not language files, that do not have a counterpart in the mcchanges pack,
+ 	/// or that can't be parsed are reported as unchanged.
+ 	pub(crate) async fn reduce_language_file<V: VirtualFileSystem>(
+ 		&self,
+@@ -359,14 +359,14 @@ impl BaselinePack {
+ 			return LanguageFileReduction::Unchanged;
+ 		};
+ 
+-		let (Some(pack_data), Some(baseline_data)) = (
++		let (Some(pack_data), Some(mcchanges_data)) = (
+ 			read_file(vfs, &pack_file.file_path).await,
+ 			self.read(vfs, relative_path).await
+ 		) else {
+ 			return LanguageFileReduction::Unchanged;
+ 		};
+ 
+-		reduce(&pack_data, &baseline_data)
++		reduce(&pack_data, &mcchanges_data)
+ 	}
+ }
+ 
+@@ -387,20 +387,20 @@ fn json_is_identical(a: &[u8], b: &[u8]) -> bool {
+ 	matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
+ }
+ 
+-/// Removes the entries of a JSON language file that the baseline language file has with the
++/// Removes the entries of a JSON language file that the mcchanges language file has with the
+ /// same value.
+-fn reduce_json_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
++fn reduce_json_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
+ 	let parse = |data: &[u8]| match serde_json::from_slice(strip_bom(data)) {
+ 		Ok(serde_json::Value::Object(entries)) => Some(entries),
+ 		_ => None
+ 	};
+ 
+-	let (Some(mut pack_entries), Some(baseline_entries)) = (parse(pack), parse(baseline)) else {
++	let (Some(mut pack_entries), Some(mcchanges_entries)) = (parse(pack), parse(mcchanges)) else {
+ 		return LanguageFileReduction::Unchanged;
+ 	};
+ 
+ 	let entry_count = pack_entries.len();
+-	pack_entries.retain(|key, value| baseline_entries.get(key) != Some(&*value));
++	pack_entries.retain(|key, value| mcchanges_entries.get(key) != Some(&*value));
+ 
+ 	if pack_entries.len() == entry_count {
+ 		LanguageFileReduction::Unchanged
+@@ -414,10 +414,10 @@ fn reduce_json_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduct
+ 	}
+ }
+ 
+-/// Removes the entries of a legacy language file (`key=value` lines) that the baseline
++/// Removes the entries of a legacy language file (`key=value` lines) that the mcchanges
+ /// language file has with the same value. Comments, blank lines and line endings are kept.
+-fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileReduction {
+-	let (Ok(pack), Ok(baseline)) = (std::str::from_utf8(pack), std::str::from_utf8(baseline))
++fn reduce_legacy_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
++	let (Ok(pack), Ok(mcchanges)) = (std::str::from_utf8(pack), std::str::from_utf8(mcchanges))
+ 	else {
+ 		return LanguageFileReduction::Unchanged;
+ 	};
+@@ -436,8 +436,8 @@ fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileRedu
+ 
+ 	// When a key appears several times, the game uses the last value, so that is the one
+ 	// to compare with. A key is only removed if the value the game would use is provided by
+-	// the baseline, which means removing every line of that key
+-	let baseline_values: HashMap<_, _> = baseline.split_inclusive('\n').filter_map(entry).collect();
++	// the mcchanges, which means removing every line of that key
++	let mcchanges_values: HashMap<_, _> = mcchanges.split_inclusive('\n').filter_map(entry).collect();
+ 	let pack_values: HashMap<_, _> = pack.split_inclusive('\n').filter_map(entry).collect();
+ 
+ 	let mut reduced = String::with_capacity(pack.len());
+@@ -445,7 +445,7 @@ fn reduce_legacy_language_file(pack: &[u8], baseline: &[u8]) -> LanguageFileRedu
+ 
+ 	for line in pack.split_inclusive('\n') {
+ 		match entry(line) {
+-			Some((key, _)) if baseline_values.get(key) == pack_values.get(key) => {
++			Some((key, _)) if mcchanges_values.get(key) == pack_values.get(key) => {
+ 				removed_entries += 1;
+ 			}
+ 			Some(_) => {
+diff --git a/packages/packsquash/src/baseline_pack/tests.rs b/packages/packsquash/src/mcchanges/tests.rs
+similarity index 66%
+rename from packages/packsquash/src/baseline_pack/tests.rs
+rename to packages/packsquash/src/mcchanges/tests.rs
+index 2c125f6..676ea8c 100644
+--- a/packages/packsquash/src/baseline_pack/tests.rs
++++ b/packages/packsquash/src/mcchanges/tests.rs
+@@ -13,7 +13,7 @@ use crate::{PackSquasher, PackSquasherStatus, RelativePath};
+ 
+ pub(crate) fn temp_dir() -> TempDir {
+ 	Builder::new()
+-		.prefix("ps-baseline-test")
++		.prefix("ps-mcchanges-test")
+ 		.tempdir()
+ 		.expect("I/O operations are assumed not to fail during tests")
+ }
+@@ -125,21 +125,21 @@ fn zip(entries: &[(&str, &[u8], bool)], comment: &[u8]) -> Vec<u8> {
+ 	archive
+ }
+ 
+-async fn baseline_directory(directory: &TempDir) -> BaselinePack {
+-	BaselinePack::open(&OsFilesystem, directory.path(), None)
++async fn mcchanges_directory(directory: &TempDir) -> McChanges {
++	McChanges::open(&OsFilesystem, directory.path(), None)
+ 		.await
+ 		.unwrap()
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+ async fn identical_files_are_redundant() {
+-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 	let file = "assets/minecraft/lang/en_us.lang";
+ 
+-	write_file(baseline_dir.path(), file, b"a=b\n");
++	write_file(mcchanges_dir.path(), file, b"a=b\n");
+ 	write_file(pack_dir.path(), file, b"a=b\n");
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/lang/es_es.lang",
+ 		b"a=b\n"
+ 	);
+@@ -150,11 +150,11 @@ async fn identical_files_are_redundant() {
+ 	);
+ 	write_file(pack_dir.path(), "assets/minecraft/lang/new.lang", b"a=b\n");
+ 
+-	let baseline = baseline_directory(&baseline_dir).await;
++	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 	let is_redundant = |file: &str| {
+ 		let pack_file = pack_file(pack_dir.path(), file);
+-		let baseline = &baseline;
+-		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
++		let mcchanges = &mcchanges;
++		async move { mcchanges.is_redundant(&OsFilesystem, &pack_file).await }
+ 	};
+ 
+ 	assert!(is_redundant(file).await);
+@@ -164,18 +164,18 @@ async fn identical_files_are_redundant() {
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+ async fn pack_metadata_is_never_redundant() {
+-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 
+ 	for file in ["pack.mcmeta", "pack.png"] {
+-		write_file(baseline_dir.path(), file, b"same");
++		write_file(mcchanges_dir.path(), file, b"same");
+ 		write_file(pack_dir.path(), file, b"same");
+ 	}
+ 
+-	let baseline = baseline_directory(&baseline_dir).await;
++	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 
+ 	for file in ["pack.mcmeta", "pack.png"] {
+ 		assert!(
+-			!baseline
++			!mcchanges
+ 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
+ 				.await
+ 		);
+@@ -184,10 +184,10 @@ async fn pack_metadata_is_never_redundant() {
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+ async fn json_files_are_compared_by_contents() {
+-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/models/item/a.json",
+ 		br#"{"parent": "item/generated", "textures": {"layer0": "items/a"}}"#
+ 	);
+@@ -198,7 +198,7 @@ async fn json_files_are_compared_by_contents() {
+ 		b"\xEF\xBB\xBF{\"textures\":{\"layer0\":\"items/a\"},\"parent\":\"item/generated\"}"
+ 	);
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/models/item/b.json",
+ 		br#"{"parent": "item/generated"}"#
+ 	);
+@@ -208,10 +208,10 @@ async fn json_files_are_compared_by_contents() {
+ 		br#"{"parent": "item/handheld"}"#
+ 	);
+ 
+-	let baseline = baseline_directory(&baseline_dir).await;
++	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 
+ 	assert!(
+-		baseline
++		mcchanges
+ 			.is_redundant(
+ 				&OsFilesystem,
+ 				&pack_file(pack_dir.path(), "assets/minecraft/models/item/a.json")
+@@ -219,7 +219,7 @@ async fn json_files_are_compared_by_contents() {
+ 			.await
+ 	);
+ 	assert!(
+-		!baseline
++		!mcchanges
+ 			.is_redundant(
+ 				&OsFilesystem,
+ 				&pack_file(pack_dir.path(), "assets/minecraft/models/item/b.json")
+@@ -230,26 +230,26 @@ async fn json_files_are_compared_by_contents() {
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+ async fn textures_are_compared_by_pixels() {
+-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 
+-	let baseline_pixels = [
++	let mcchanges_pixels = [
+ 		1, 2, 3, 255, 0, 0, 0, 0, //
+ 		9, 8, 7, 255, 4, 5, 6, 128
+ 	];
+ 	// The color of the fully transparent pixel is not visible
+-	let mut same_pixels = baseline_pixels;
++	let mut same_pixels = mcchanges_pixels;
+ 	same_pixels[4..7].copy_from_slice(&[10, 20, 30]);
+-	let mut other_pixels = baseline_pixels;
++	let mut other_pixels = mcchanges_pixels;
+ 	other_pixels[0] = 200;
+ 
+-	let baseline_png = png(2, 2, &baseline_pixels, Compression::best());
++	let mcchanges_png = png(2, 2, &mcchanges_pixels, Compression::best());
+ 	let reencoded_png = png(2, 2, &same_pixels, Compression::none());
+-	assert_ne!(baseline_png, reencoded_png);
++	assert_ne!(mcchanges_png, reencoded_png);
+ 
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/a.png",
+-		&baseline_png
++		&mcchanges_png
+ 	);
+ 	write_file(
+ 		pack_dir.path(),
+@@ -257,9 +257,9 @@ async fn textures_are_compared_by_pixels() {
+ 		&reencoded_png
+ 	);
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/b.png",
+-		&baseline_png
++		&mcchanges_png
+ 	);
+ 	write_file(
+ 		pack_dir.path(),
+@@ -267,19 +267,19 @@ async fn textures_are_compared_by_pixels() {
+ 		&png(2, 2, &other_pixels, Compression::best())
+ 	);
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/c.png",
+-		&baseline_png
++		&mcchanges_png
+ 	);
+ 	write_file(
+ 		pack_dir.path(),
+ 		"assets/minecraft/textures/c.png",
+-		&png(4, 1, &baseline_pixels, Compression::best())
++		&png(4, 1, &mcchanges_pixels, Compression::best())
+ 	);
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/d.png",
+-		&baseline_png
++		&mcchanges_png
+ 	);
+ 	write_file(
+ 		pack_dir.path(),
+@@ -287,14 +287,14 @@ async fn textures_are_compared_by_pixels() {
+ 		b"not a PNG"
+ 	);
+ 
+-	let baseline = baseline_directory(&baseline_dir).await;
++	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 	let is_redundant = |name: &str| {
+ 		let pack_file = pack_file(
+ 			pack_dir.path(),
+ 			&format!("assets/minecraft/textures/{name}.png")
+ 		);
+-		let baseline = &baseline;
+-		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
++		let mcchanges = &mcchanges;
++		async move { mcchanges.is_redundant(&OsFilesystem, &pack_file).await }
+ 	};
+ 
+ 	assert!(is_redundant("a").await, "re-encoded texture");
+@@ -311,7 +311,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
+ 	let reformatted_metadata = b"{\"animation\":{\"frametime\":2}}";
+ 	let other_metadata = br#"{"animation": {"frametime": 5}}"#;
+ 
+-	// (pack texture, pack metadata, baseline metadata, are the texture and metadata redundant)
++	// (pack texture, pack metadata, mcchanges metadata, are the texture and metadata redundant)
+ 	type TextureCase<'a> = (&'a [u8], Option<&'a [u8]>, Option<&'a [u8]>, bool);
+ 	let cases: [TextureCase; 6] = [
+ 		(&texture, Some(reformatted_metadata), Some(metadata), true),
+@@ -322,17 +322,17 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
+ 		(&texture, Some(metadata), None, false)
+ 	];
+ 
+-	for (case, (pack_texture, pack_metadata, baseline_metadata, expected)) in cases.iter().enumerate()
++	for (case, (pack_texture, pack_metadata, mcchanges_metadata, expected)) in cases.iter().enumerate()
+ 	{
+-		let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++		let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 		let texture_path = "assets/minecraft/textures/blocks/lava_flow.png";
+ 
+-		write_file(baseline_dir.path(), texture_path, &texture);
++		write_file(mcchanges_dir.path(), texture_path, &texture);
+ 		write_file(pack_dir.path(), texture_path, pack_texture);
+ 
+-		if let Some(metadata) = baseline_metadata {
++		if let Some(metadata) = mcchanges_metadata {
+ 			write_file(
+-				baseline_dir.path(),
++				mcchanges_dir.path(),
+ 				&format!("{texture_path}.mcmeta"),
+ 				metadata
+ 			);
+@@ -341,10 +341,10 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
+ 			write_file(pack_dir.path(), &format!("{texture_path}.mcmeta"), metadata);
+ 		}
+ 
+-		let baseline = baseline_directory(&baseline_dir).await;
++		let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 
+ 		assert_eq!(
+-			baseline
++			mcchanges
+ 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), texture_path))
+ 				.await,
+ 			*expected,
+@@ -353,7 +353,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
+ 
+ 		if pack_metadata.is_some() {
+ 			assert_eq!(
+-				baseline
++				mcchanges
+ 					.is_redundant(
+ 						&OsFilesystem,
+ 						&pack_file(pack_dir.path(), &format!("{texture_path}.mcmeta"))
+@@ -367,7 +367,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn archives_can_be_baseline_packs() {
++async fn archives_can_be_mcchangess() {
+ 	let (archive_dir, pack_dir) = (temp_dir(), temp_dir());
+ 	let texture = png(1, 1, &[1, 2, 3, 255], Compression::best());
+ 
+@@ -395,7 +395,7 @@ async fn archives_can_be_baseline_packs() {
+ 	);
+ 	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &texture);
+ 
+-	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
++	let mcchanges = McChanges::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
+ 		.await
+ 		.unwrap();
+ 
+@@ -406,7 +406,7 @@ async fn archives_can_be_baseline_packs() {
+ 		("assets/minecraft/textures/b.png", false)
+ 	] {
+ 		assert_eq!(
+-			baseline
++			mcchanges
+ 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
+ 				.await,
+ 			expected,
+@@ -416,17 +416,17 @@ async fn archives_can_be_baseline_packs() {
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn unusable_baseline_packs_are_rejected() {
++async fn unusable_mcchangess_are_rejected() {
+ 	let dir = temp_dir();
+ 	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
+ 
+ 	assert!(matches!(
+-		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
+-		Err(BaselinePackError::InvalidArchive(_))
++		McChanges::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
++		Err(McChangesError::InvalidArchive(_))
+ 	));
+ 	assert!(matches!(
+-		BaselinePack::open(&OsFilesystem, &dir.path().join("missing"), None).await,
+-		Err(BaselinePackError::IoError(_))
++		McChanges::open(&OsFilesystem, &dir.path().join("missing"), None).await,
++		Err(McChangesError::IoError(_))
+ 	));
+ }
+ 
+@@ -487,20 +487,20 @@ fn zip_reader_rejects_corrupt_data() {
+ 
+ /// Not async because `PackSquasher::run` starts its own runtime.
+ #[test]
+-fn squashing_leaves_out_files_identical_to_the_baseline() {
+-	let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
++fn squashing_leaves_out_files_identical_to_the_mcchanges() {
++	let (mcchanges_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+ 
+ 	let stone = png(2, 1, &[1, 2, 3, 255, 4, 5, 6, 255], Compression::best());
+ 	let dirt = png(2, 1, &[7, 7, 7, 255, 8, 8, 8, 255], Compression::best());
+ 	let modified_dirt = png(2, 1, &[7, 7, 7, 255, 9, 9, 9, 255], Compression::best());
+ 
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/blocks/stone.png",
+ 		&stone
+ 	);
+ 	write_file(
+-		baseline_dir.path(),
++		mcchanges_dir.path(),
+ 		"assets/minecraft/textures/blocks/dirt.png",
+ 		&dirt
+ 	);
+@@ -510,7 +510,7 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
+ 		"pack.mcmeta",
+ 		br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
+ 	);
+-	// Re-encoded, but with the same pixels as the baseline
++	// Re-encoded, but with the same pixels as the mcchanges
+ 	write_file(
+ 		pack_dir.path(),
+ 		"assets/minecraft/textures/blocks/stone.png",
+@@ -524,7 +524,7 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
+ 
+ 	let output_path = output_dir.path().join("pack.zip");
+ 	let mut global_options = GlobalOptions {
+-		baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
++		mcchanges_path: Some(mcchanges_dir.path().to_path_buf()),
+ 		output_file_path: output_path.clone(),
+ 		..GlobalOptions::default()
+ 	};
+@@ -544,19 +544,19 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
+ 		)
+ 		.expect("Squashing a valid pack should succeed");
+ 
+-	let mut skipped_due_to_baseline = Vec::new();
++	let mut skipped_due_to_mcchanges = Vec::new();
+ 	while let Ok(status) = receiver.try_recv() {
+ 		if let PackSquasherStatus::PackFileProcessed(status) = status {
+ 			assert!(status.optimization_error().is_none());
+ 
+ 			if status.intentionally_skipped() {
+ 				assert!(status.skipped());
+-				skipped_due_to_baseline.push(status.path().as_str().to_owned());
++				skipped_due_to_mcchanges.push(status.path().as_str().to_owned());
+ 			}
+ 		}
+ 	}
+ 	assert_eq!(
+-		skipped_due_to_baseline,
++		skipped_due_to_mcchanges,
+ 		["assets/minecraft/textures/blocks/stone.png"]
+ 	);
+ 
+@@ -566,23 +566,23 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
+ 	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
+ }
+ 
+-fn language_entry(root: &Path, file: &str, pack_data: &[u8], baseline_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
+-	let baseline_dir = temp_dir();
+-	write_file(baseline_dir.path(), file, baseline_data);
++fn language_entry(root: &Path, file: &str, pack_data: &[u8], mcchanges_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
++	let mcchanges_dir = temp_dir();
++	write_file(mcchanges_dir.path(), file, mcchanges_data);
+ 	write_file(root, file, pack_data);
+ 
+-	(baseline_dir, pack_file(root, file))
++	(mcchanges_dir, pack_file(root, file))
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn json_language_keys_identical_to_the_baseline_are_removed() {
++async fn json_language_keys_identical_to_the_mcchanges_are_removed() {
+ 	let file = "assets/minecraft/lang/es_es.json";
+-	let baseline = br#"{"a": "1", "b": "2", "c": "3"}"#;
++	let mcchanges = br#"{"a": "1", "b": "2", "c": "3"}"#;
+ 
+ 	let reduce = |pack: &'static [u8]| async move {
+ 		let pack_dir = temp_dir();
+-		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
+-		baseline_directory(&baseline_dir)
++		let (mcchanges_dir, entry) = language_entry(pack_dir.path(), file, pack, mcchanges);
++		mcchanges_directory(&mcchanges_dir)
+ 			.await
+ 			.reduce_language_file(&OsFilesystem, &entry)
+ 			.await
+@@ -612,14 +612,14 @@ async fn json_language_keys_identical_to_the_baseline_are_removed() {
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
++async fn legacy_language_keys_identical_to_the_mcchanges_are_removed() {
+ 	let file = "assets/minecraft/lang/en_US.lang";
+-	let baseline = b"a=1\nb=2\nc=3 \nd=\n";
++	let mcchanges = b"a=1\nb=2\nc=3 \nd=\n";
+ 
+ 	let reduce = |pack: &'static [u8]| async move {
+ 		let pack_dir = temp_dir();
+-		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
+-		baseline_directory(&baseline_dir)
++		let (mcchanges_dir, entry) = language_entry(pack_dir.path(), file, pack, mcchanges);
++		mcchanges_directory(&mcchanges_dir)
+ 			.await
+ 			.reduce_language_file(&OsFilesystem, &entry)
+ 			.await
+@@ -655,18 +655,18 @@ async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+ async fn language_files_are_only_reduced_when_they_are_language_files() {
+-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
++	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+ 
+ 	for file in [
+ 		"assets/minecraft/texts/credits.json",
+ 		"assets/minecraft/lang/notes.txt",
+ 		"lang/es_es.json"
+ 	] {
+-		write_file(baseline_dir.path(), file, br#"{"a": "1"}"#);
++		write_file(mcchanges_dir.path(), file, br#"{"a": "1"}"#);
+ 		write_file(pack_dir.path(), file, br#"{"a": "1", "b": "2"}"#);
+ 	}
+ 
+-	let baseline = baseline_directory(&baseline_dir).await;
++	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
+ 
+ 	for file in [
+ 		"assets/minecraft/texts/credits.json",
+@@ -674,7 +674,7 @@ async fn language_files_are_only_reduced_when_they_are_language_files() {
+ 		"lang/es_es.json"
+ 	] {
+ 		assert_eq!(
+-			baseline
++			mcchanges
+ 				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file))
+ 				.await,
+ 			LanguageFileReduction::Unchanged,
+@@ -686,7 +686,7 @@ async fn language_files_are_only_reduced_when_they_are_language_files() {
+ fn versioned_jar(index: &str) -> Vec<u8> {
+ 	zip(
+ 		&[
+-			("baseline.json", index.as_bytes(), true),
++			("mcchanges.json", index.as_bytes(), true),
+ 			("1.0/assets/minecraft/texts/a.txt", b"a from 1.0", true),
+ 			("1.0/assets/minecraft/texts/b.txt", b"b from 1.0", true),
+ 			("1.1/assets/minecraft/texts/a.txt", b"a from 1.1", true),
+@@ -703,7 +703,7 @@ const VERSION_INDEX: &str = r#"{
+ }"#;
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
++async fn versioned_mcchangess_provide_the_files_of_the_selected_version() {
+ 	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+ 	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+ 
+@@ -723,7 +723,7 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
+ 		("1.1", [false, true, false]),
+ 		("1.2", [false, false, true])
+ 	] {
+-		let baseline = BaselinePack::open(
++		let mcchanges = McChanges::open(
+ 			&OsFilesystem,
+ 			&jar_dir.path().join("vanilla.jar"),
+ 			Some(version)
+@@ -733,7 +733,7 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
+ 
+ 		for (name, expected) in ["a", "b", "c"].into_iter().zip(expected) {
+ 			assert_eq!(
+-				baseline
++				mcchanges
+ 					.is_redundant(
+ 						&OsFilesystem,
+ 						&pack_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"))
+@@ -747,21 +747,21 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn versioned_baseline_packs_can_be_directories() {
+-	let baseline_dir = temp_dir();
+-	write_file(baseline_dir.path(), "baseline.json", VERSION_INDEX.as_bytes());
+-	write_file(baseline_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
+-	write_file(baseline_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
++async fn versioned_mcchangess_can_be_directories() {
++	let mcchanges_dir = temp_dir();
++	write_file(mcchanges_dir.path(), "mcchanges.json", VERSION_INDEX.as_bytes());
++	write_file(mcchanges_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
++	write_file(mcchanges_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
+ 
+ 	let pack_dir = temp_dir();
+ 	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt", b"a from 1.1");
+ 
+-	let baseline = BaselinePack::open(&OsFilesystem, baseline_dir.path(), Some("1.2"))
++	let mcchanges = McChanges::open(&OsFilesystem, mcchanges_dir.path(), Some("1.2"))
+ 		.await
+ 		.unwrap();
+ 
+ 	assert!(
+-		baseline
++		mcchanges
+ 			.is_redundant(
+ 				&OsFilesystem,
+ 				&pack_file(pack_dir.path(), "assets/minecraft/texts/a.txt")
+@@ -771,7 +771,7 @@ async fn versioned_baseline_packs_can_be_directories() {
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+-async fn versioned_baseline_packs_reject_wrong_version_selections() {
++async fn versioned_mcchangess_reject_wrong_version_selections() {
+ 	let dir = temp_dir();
+ 	write_file(dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+ 	write_file(dir.path(), "plain.jar", &zip(&[("assets/a.txt", b"a", false)], b""));
+@@ -784,40 +784,40 @@ async fn versioned_baseline_packs_reject_wrong_version_selections() {
+ 
+ 	let open = |file: &'static str, version: Option<&'static str>| {
+ 		let path = dir.path().join(file);
+-		async move { BaselinePack::open(&OsFilesystem, &path, version).await.err() }
++		async move { McChanges::open(&OsFilesystem, &path, version).await.err() }
+ 	};
+ 
+ 	assert!(matches!(
+ 		open("vanilla.jar", None).await,
+-		Some(BaselinePackError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
++		Some(McChangesError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
+ 	));
+ 	assert!(matches!(
+ 		open("vanilla.jar", Some("9.9")).await,
+-		Some(BaselinePackError::UnknownVersion { version, .. }) if version == "9.9"
++		Some(McChangesError::UnknownVersion { version, .. }) if version == "9.9"
+ 	));
+ 	assert!(matches!(
+ 		open("plain.jar", Some("1.0")).await,
+-		Some(BaselinePackError::NotVersioned)
++		Some(McChangesError::NotVersioned)
+ 	));
+ 	assert!(matches!(
+ 		open("bad_format.jar", Some("1.0")).await,
+-		Some(BaselinePackError::InvalidVersionIndex(_))
++		Some(McChangesError::InvalidVersionIndex(_))
+ 	));
+ 	assert!(matches!(
+ 		open("bad_index.jar", Some("1.0")).await,
+-		Some(BaselinePackError::InvalidVersionIndex(_))
++		Some(McChangesError::InvalidVersionIndex(_))
+ 	));
+ 	assert!(open("plain.jar", None).await.is_none());
+ }
+ 
+ /// Not async because `PackSquasher::run` starts its own runtime.
+ #[test]
+-fn squashing_removes_language_keys_identical_to_the_baseline() {
++fn squashing_removes_language_keys_identical_to_the_mcchanges() {
+ 	for skip_language_keys in [true, false] {
+-		let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
++		let (mcchanges_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+ 
+-		write_file(baseline_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
+-		write_file(baseline_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
++		write_file(mcchanges_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
++		write_file(mcchanges_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
+ 
+ 		write_file(
+ 			pack_dir.path(),
+@@ -829,8 +829,8 @@ fn squashing_removes_language_keys_identical_to_the_baseline() {
+ 
+ 		let output_path = output_dir.path().join("pack.zip");
+ 		let mut global_options = GlobalOptions {
+-			baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
+-			skip_language_keys_identical_to_baseline: skip_language_keys,
++			mcchanges_path: Some(mcchanges_dir.path().to_path_buf()),
++			skip_language_keys_identical_to_mcchanges: skip_language_keys,
+ 			output_file_path: output_path.clone(),
+ 			..GlobalOptions::default()
+ 		};
+@@ -876,3 +876,139 @@ fn squashing_removes_language_keys_identical_to_the_baseline() {
+ 		}
+ 	}
+ }
++
++/// Turns an archive that has no comment into one that has the fields of its end of central
++/// directory record maxed out, and the real values in ZIP64 records.
++fn with_zip64_end_records(archive: &[u8]) -> Vec<u8> {
++	let end = archive.len() - 22;
++	let entries = u16::from_le_bytes(archive[end + 10..end + 12].try_into().unwrap());
++	let size = u32::from_le_bytes(archive[end + 12..end + 16].try_into().unwrap());
++	let offset = u32::from_le_bytes(archive[end + 16..end + 20].try_into().unwrap());
++
++	let mut out = archive[..end].to_vec();
++	let record_offset = out.len() as u64;
++
++	out.extend_from_slice(&0x0606_4B50_u32.to_le_bytes());
++	out.extend_from_slice(&44_u64.to_le_bytes());
++	out.extend_from_slice(&[45, 0, 45, 0]); // Versions
++	out.extend_from_slice(&[0; 8]); // Disk numbers
++	out.extend_from_slice(&u64::from(entries).to_le_bytes());
++	out.extend_from_slice(&u64::from(entries).to_le_bytes());
++	out.extend_from_slice(&u64::from(size).to_le_bytes());
++	out.extend_from_slice(&u64::from(offset).to_le_bytes());
++
++	out.extend_from_slice(&0x0706_4B50_u32.to_le_bytes());
++	out.extend_from_slice(&0_u32.to_le_bytes());
++	out.extend_from_slice(&record_offset.to_le_bytes());
++	out.extend_from_slice(&1_u32.to_le_bytes());
++
++	out.extend_from_slice(&0x0605_4B50_u32.to_le_bytes());
++	out.extend_from_slice(&[0; 4]);
++	out.extend_from_slice(&u16::MAX.to_le_bytes());
++	out.extend_from_slice(&u16::MAX.to_le_bytes());
++	out.extend_from_slice(&u32::MAX.to_le_bytes());
++	out.extend_from_slice(&u32::MAX.to_le_bytes());
++	out.extend_from_slice(&0_u16.to_le_bytes());
++
++	out
++}
++
++/// Builds an archive with a single stored entry whose sizes and offset are in a ZIP64 extra field.
++fn zip64_entry_archive(name: &str, data: &[u8]) -> Vec<u8> {
++	let crc32 = crc32fast::hash(data);
++	let mut archive = Vec::new();
++
++	archive.extend_from_slice(&0x0403_4B50_u32.to_le_bytes());
++	archive.extend_from_slice(&[45, 0, 0, 0, 0, 0]); // Version, flags, method
++	archive.extend_from_slice(&[0; 4]);
++	archive.extend_from_slice(&crc32.to_le_bytes());
++	archive.extend_from_slice(&(data.len() as u32).to_le_bytes());
++	archive.extend_from_slice(&(data.len() as u32).to_le_bytes());
++	archive.extend_from_slice(&(name.len() as u16).to_le_bytes());
++	archive.extend_from_slice(&[0, 0]);
++	archive.extend_from_slice(name.as_bytes());
++	archive.extend_from_slice(data);
++
++	let mut central_directory = Vec::new();
++	central_directory.extend_from_slice(&0x0201_4B50_u32.to_le_bytes());
++	central_directory.extend_from_slice(&[45, 0, 45, 0, 0, 0, 0, 0]); // Versions, flags, method
++	central_directory.extend_from_slice(&[0; 4]);
++	central_directory.extend_from_slice(&crc32.to_le_bytes());
++	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
++	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
++	central_directory.extend_from_slice(&(name.len() as u16).to_le_bytes());
++	central_directory.extend_from_slice(&32_u16.to_le_bytes()); // Extra field length
++	central_directory.extend_from_slice(&[0; 10]); // Comment length, disk, attributes
++	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
++	central_directory.extend_from_slice(name.as_bytes());
++	// An unrelated extra field, and then the ZIP64 one
++	central_directory.extend_from_slice(&[0xFF, 0xFF, 0, 0]);
++	central_directory.extend_from_slice(&1_u16.to_le_bytes());
++	central_directory.extend_from_slice(&24_u16.to_le_bytes());
++	central_directory.extend_from_slice(&(data.len() as u64).to_le_bytes());
++	central_directory.extend_from_slice(&(data.len() as u64).to_le_bytes());
++	central_directory.extend_from_slice(&0_u64.to_le_bytes());
++
++	let central_directory_offset = archive.len() as u32;
++	archive.extend_from_slice(&central_directory);
++
++	archive.extend_from_slice(&0x0605_4B50_u32.to_le_bytes());
++	archive.extend_from_slice(&[0; 4]);
++	archive.extend_from_slice(&1_u16.to_le_bytes());
++	archive.extend_from_slice(&1_u16.to_le_bytes());
++	archive.extend_from_slice(&(central_directory.len() as u32).to_le_bytes());
++	archive.extend_from_slice(&central_directory_offset.to_le_bytes());
++	archive.extend_from_slice(&0_u16.to_le_bytes());
++
++	archive
++}
++
++#[test]
++fn zip_reader_supports_zip64_archives() {
++	let archive = ZipArchive::parse(with_zip64_end_records(&zip(
++		&[("a.txt", b"first", false), ("b.txt", b"second", true)],
++		b""
++	)))
++	.unwrap();
++	assert_eq!(archive.read("a.txt").as_deref(), Some(&b"first"[..]));
++	assert_eq!(archive.read("b.txt").as_deref(), Some(&b"second"[..]));
++
++	let archive = ZipArchive::parse(zip64_entry_archive("big.txt", b"zip64 entry")).unwrap();
++	assert_eq!(archive.read("big.txt").as_deref(), Some(&b"zip64 entry"[..]));
++
++	// A maxed out field without ZIP64 records can't be trusted
++	let mut broken = with_zip64_end_records(&zip(&[("a.txt", b"first", false)], b""));
++	let record_start = broken.len() - 22 - 20 - 56;
++	broken[record_start] ^= 0xFF;
++	assert!(matches!(
++		ZipArchive::parse(broken),
++		Err(ZipReadError::Zip64Unsupported)
++	));
++}
++
++#[test]
++fn zip_reader_handles_many_entries() {
++	// More entries than the 16-bit counter of regular archives can hold
++	let names = (0..70_000).map(|i| format!("f/{i}")).collect::<Vec<_>>();
++	let entries = names
++		.iter()
++		.map(|name| (name.as_str(), &b"x"[..], false))
++		.collect::<Vec<_>>();
++	let archive = zip(&entries, b"");
++
++	// The regular helper writes the wrapped counter, so convert it like a ZIP64 writer would
++	let end = archive.len() - 22;
++	let mut fixed = archive[..end].to_vec();
++	fixed.extend_from_slice(&with_zip64_end_records(&{
++		let mut tail = archive.clone();
++		tail[end + 10..end + 12].copy_from_slice(&0_u16.to_le_bytes());
++		tail
++	})[end..]);
++	// Patch the real counts into the ZIP64 record, which starts where the end record was
++	fixed[end + 32..end + 40].copy_from_slice(&70_000_u64.to_le_bytes());
++	fixed[end + 24..end + 32].copy_from_slice(&70_000_u64.to_le_bytes());
++
++	let archive = ZipArchive::parse(fixed).unwrap();
++	assert!(archive.contains("f/0") && archive.contains("f/69999"));
++	assert_eq!(archive.read("f/65536").as_deref(), Some(&b"x"[..]));
++}
+diff --git a/packages/packsquash/src/baseline_pack/zip_reader.rs b/packages/packsquash/src/mcchanges/zip_reader.rs
+similarity index 56%
+rename from packages/packsquash/src/baseline_pack/zip_reader.rs
+rename to packages/packsquash/src/mcchanges/zip_reader.rs
+index 4693810..20134c7 100644
+--- a/packages/packsquash/src/baseline_pack/zip_reader.rs
++++ b/packages/packsquash/src/mcchanges/zip_reader.rs
+@@ -1,8 +1,8 @@
+ //! A minimal, read-only ZIP archive reader, just capable enough to read the files of
+-//! vanilla client JARs and resource pack ZIPs that are used as baseline packs.
++//! vanilla client JARs and resource pack ZIPs that are used as mcchanges packs.
+ //!
+-//! Only stored and deflated entries are supported. ZIP64 archives and encrypted entries
+-//! are not, which is fine for the archives this module is meant to read.
++//! Only stored and deflated entries are supported, and encrypted entries are not. Archives with
++//! more than 65535 entries (ZIP64) are supported.
+ 
+ use std::collections::HashMap;
+ use std::io::Read;
+@@ -13,13 +13,17 @@ use thiserror::Error;
+ const END_OF_CENTRAL_DIRECTORY_SIGNATURE: u32 = 0x0605_4B50;
+ const CENTRAL_DIRECTORY_HEADER_SIGNATURE: u32 = 0x0201_4B50;
+ const LOCAL_FILE_HEADER_SIGNATURE: u32 = 0x0403_4B50;
++const ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE: u32 = 0x0606_4B50;
++const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE: u32 = 0x0706_4B50;
++const ZIP64_EXTRA_FIELD_ID: u16 = 0x0001;
+ 
+ const END_OF_CENTRAL_DIRECTORY_MIN_SIZE: usize = 22;
+ const CENTRAL_DIRECTORY_HEADER_MIN_SIZE: usize = 46;
+ const LOCAL_FILE_HEADER_MIN_SIZE: usize = 30;
++const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE: usize = 20;
+ 
+ /// The maximum size of an uncompressed entry that will be read. This protects against
+-/// decompression bombs. No file of a sane baseline pack comes close to this limit.
++/// decompression bombs. No file of a sane mcchanges pack comes close to this limit.
+ const MAX_ENTRY_SIZE: usize = 256 * 1024 * 1024;
+ 
+ /// An error that may occur while parsing a ZIP archive.
+@@ -32,8 +36,8 @@ pub enum ZipReadError {
+ 	/// The central directory is truncated or has invalid contents.
+ 	#[error("the central directory is truncated or malformed")]
+ 	MalformedCentralDirectory,
+-	/// The archive uses the ZIP64 extensions, which are not supported.
+-	#[error("ZIP64 archives are not supported")]
++	/// The ZIP64 structures of the archive are missing or malformed.
++	#[error("the ZIP64 data of the archive is missing or malformed")]
+ 	Zip64Unsupported
+ }
+ 
+@@ -59,6 +63,12 @@ fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+ 	))
+ }
+ 
++fn read_u64(data: &[u8], offset: usize) -> Option<u64> {
++	Some(u64::from_le_bytes(
++		data.get(offset..offset + 8)?.try_into().ok()?
++	))
++}
++
+ fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+ 	Some(u32::from_le_bytes(
+ 		data.get(offset..offset + 4)?.try_into().ok()?
+@@ -74,22 +84,47 @@ impl ZipArchive {
+ 
+ 		let malformed = || ZipReadError::MalformedCentralDirectory;
+ 
+-		let entry_count = read_u16(&data, end_record_offset + 10).ok_or_else(malformed)?;
+-		let central_directory_size = read_u32(&data, end_record_offset + 12).ok_or_else(malformed)?;
+-		let central_directory_offset =
+-			read_u32(&data, end_record_offset + 16).ok_or_else(malformed)?;
+-
+-		if entry_count == u16::MAX
+-			|| central_directory_size == u32::MAX
+-			|| central_directory_offset == u32::MAX
++		let mut entry_count = u64::from(read_u16(&data, end_record_offset + 10).ok_or_else(malformed)?);
++		let central_directory_size =
++			u64::from(read_u32(&data, end_record_offset + 12).ok_or_else(malformed)?);
++		let mut central_directory_offset =
++			u64::from(read_u32(&data, end_record_offset + 16).ok_or_else(malformed)?);
++
++		// Maxed out fields mean that the real values are in the ZIP64 end of central directory
++		// record, which is found with a locator that goes right before the end record
++		if entry_count == u64::from(u16::MAX)
++			|| central_directory_size == u64::from(u32::MAX)
++			|| central_directory_offset == u64::from(u32::MAX)
+ 		{
+-			return Err(ZipReadError::Zip64Unsupported);
++			let zip64_record_offset = end_record_offset
++				.checked_sub(ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE)
++				.filter(|&locator_offset| {
++					read_u32(&data, locator_offset)
++						== Some(ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE)
++				})
++				.and_then(|locator_offset| read_u64(&data, locator_offset + 8))
++				.and_then(|offset| usize::try_from(offset).ok());
++
++			// An archive with exactly 65535 entries has no ZIP64 data, as the values fit
++			if let Some(zip64_record_offset) = zip64_record_offset {
++				if read_u32(&data, zip64_record_offset)
++					!= Some(ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE)
++				{
++					return Err(ZipReadError::Zip64Unsupported);
++				}
++
++				let zip64 = |offset: usize| read_u64(&data, zip64_record_offset + offset);
++				(entry_count, central_directory_offset) = (
++					zip64(32).ok_or(ZipReadError::Zip64Unsupported)?,
++					zip64(48).ok_or(ZipReadError::Zip64Unsupported)?
++				);
++			}
+ 		}
+ 
+-		let mut entries = HashMap::with_capacity(entry_count.into());
+-		let mut offset = central_directory_offset as usize;
++		let mut entries = HashMap::with_capacity(usize::try_from(entry_count).unwrap_or(0).min(1 << 20));
++		let mut offset = usize::try_from(central_directory_offset).map_err(|_| malformed())?;
+ 
+-		for _ in 0..entry_count {
++		for _ in 0..usize::try_from(entry_count).map_err(|_| malformed())? {
+ 			if read_u32(&data, offset).ok_or_else(malformed)? != CENTRAL_DIRECTORY_HEADER_SIGNATURE
+ 				|| data.len() < offset + CENTRAL_DIRECTORY_HEADER_MIN_SIZE
+ 			{
+@@ -99,12 +134,12 @@ impl ZipArchive {
+ 			let flags = read_u16(&data, offset + 8).ok_or_else(malformed)?;
+ 			let compression_method = read_u16(&data, offset + 10).ok_or_else(malformed)?;
+ 			let crc32 = read_u32(&data, offset + 16).ok_or_else(malformed)?;
+-			let compressed_size = read_u32(&data, offset + 20).ok_or_else(malformed)? as usize;
+-			let uncompressed_size = read_u32(&data, offset + 24).ok_or_else(malformed)? as usize;
++			let mut compressed_size = u64::from(read_u32(&data, offset + 20).ok_or_else(malformed)?);
++			let mut uncompressed_size = u64::from(read_u32(&data, offset + 24).ok_or_else(malformed)?);
+ 			let name_length = read_u16(&data, offset + 28).ok_or_else(malformed)? as usize;
+ 			let extra_length = read_u16(&data, offset + 30).ok_or_else(malformed)? as usize;
+ 			let comment_length = read_u16(&data, offset + 32).ok_or_else(malformed)? as usize;
+-			let local_header_offset = read_u32(&data, offset + 42).ok_or_else(malformed)? as usize;
++			let mut local_header_offset = u64::from(read_u32(&data, offset + 42).ok_or_else(malformed)?);
+ 
+ 			let name_start = offset + CENTRAL_DIRECTORY_HEADER_MIN_SIZE;
+ 			let name_bytes = data
+@@ -112,6 +147,41 @@ impl ZipArchive {
+ 				.ok_or_else(malformed)?;
+ 			let name = String::from_utf8_lossy(name_bytes).into_owned();
+ 
++			// Fields that do not fit in 32 bits have their real value in the ZIP64 extra
++			// field. It has the values of the maxed out fields only, in this order
++			if [uncompressed_size, compressed_size, local_header_offset]
++				.contains(&u64::from(u32::MAX))
++			{
++				let extra = data
++					.get(name_start + name_length..name_start + name_length + extra_length)
++					.ok_or_else(malformed)?;
++
++				let mut zip64_values = Self::find_extra_field(extra, ZIP64_EXTRA_FIELD_ID)
++					.ok_or(ZipReadError::Zip64Unsupported)?
++					.as_chunks::<8>()
++					.0
++					.iter()
++					.map(|value| u64::from_le_bytes(*value));
++
++				for field in [
++					&mut uncompressed_size,
++					&mut compressed_size,
++					&mut local_header_offset
++				] {
++					if *field == u64::from(u32::MAX) {
++						*field = zip64_values.next().ok_or(ZipReadError::Zip64Unsupported)?;
++					}
++				}
++			}
++
++			let (Ok(compressed_size), Ok(uncompressed_size), Ok(local_header_offset)) = (
++				usize::try_from(compressed_size),
++				usize::try_from(uncompressed_size),
++				usize::try_from(local_header_offset)
++			) else {
++				return Err(ZipReadError::MalformedCentralDirectory);
++			};
++
+ 			// Skip directories and encrypted entries (bit 0 of the flags), which cannot be
+ 			// read anyway. Not having them in the entry map makes them be treated as
+ 			// missing files
+@@ -134,6 +204,23 @@ impl ZipArchive {
+ 		Ok(Self { data, entries })
+ 	}
+ 
++	/// Finds the data of an extra field with the given ID in a list of extra fields.
++	fn find_extra_field(mut extra: &[u8], id: u16) -> Option<&[u8]> {
++		while extra.len() >= 4 {
++			let field_id = read_u16(extra, 0)?;
++			let field_length = usize::from(read_u16(extra, 2)?);
++			let field_data = extra.get(4..4 + field_length)?;
++
++			if field_id == id {
++				return Some(field_data);
++			}
++
++			extra = &extra[4 + field_length..];
++		}
++
++		None
++	}
++
+ 	/// Looks for the end of central directory record, which is at the end of the archive,
+ 	/// optionally followed by a comment of up to 65535 bytes.
+ 	fn find_end_of_central_directory(data: &[u8]) -> Option<usize> {
+diff --git a/packages/packsquash/src/optifine_sky/tests.rs b/packages/packsquash/src/optifine_sky/tests.rs
+index db70683..42c3a3c 100644
+--- a/packages/packsquash/src/optifine_sky/tests.rs
++++ b/packages/packsquash/src/optifine_sky/tests.rs
+@@ -3,8 +3,8 @@ use std::fs;
+ use flate2::Compression;
+ 
+ use super::*;
+-use crate::baseline_pack::ZipArchive;
+-use crate::baseline_pack::tests::{png, temp_dir, write_file};
++use crate::mcchanges::ZipArchive;
++use crate::mcchanges::tests::{png, temp_dir, write_file};
+ use crate::config::{GlobalOptions, MinecraftMod, SquashOptions};
+ use crate::vfs::os_fs::OsFilesystem;
+ use crate::{PackSquasher, PackSquasherStatus};
+diff --git a/tools/baseline-jar/baseline-jar-prompt.md b/tools/baseline-jar/baseline-jar-prompt.md
+deleted file mode 100644
+index 6e4c839..0000000
+--- a/tools/baseline-jar/baseline-jar-prompt.md
++++ /dev/null
+@@ -1,97 +0,0 @@
+-# Task: build or update the PackSquash baseline jar
+-
+-You build one jar file that holds the vanilla Minecraft Java Edition assets of many release versions in a compact way. PackSquash reads it with `baseline_pack_path` and `baseline_pack_version`. Follow this document exactly. Do not improvise the output format.
+-
+-## Inputs you receive
+-
+-- `build_baseline_jar.py`, attached. It packs version jars into the output format and verifies the result. Do not rewrite it. If it fails, report the error text.
+-- Optionally, an existing `vanilla-baseline.jar`. If it is attached, run in UPDATE MODE. Otherwise run in BUILD MODE.
+-
+-## Requirements
+-
+-- Python 3 and network access to `piston-meta.mojang.com`, `piston-data.mojang.com` (or whatever host the manifest URLs use) and `resources.download.minecraft.net`. If a host is blocked, stop and tell the user which one to allow. Do not invent data.
+-- Use only URLs that appear in the manifest, version JSON files and asset index. Do not guess URLs.
+-
+-## Output format (already implemented by the script, listed so you can check it)
+-
+-```
+-vanilla-baseline.jar
+-  baseline.json                 {"format": 1, "versions": ["1.6.1", ...], "removed": {"<id>": ["path", ...]}}
+-  1.6.1/assets/...              every wanted file of the oldest version
+-  1.7.2/assets/...              only files added or changed since the previous version
+-```
+-
+-- `versions` runs from the oldest to the newest release, in release order. Never sort ids as text.
+-- A version directory never repeats a file that is unchanged from the previous version.
+-- `removed` lists files a version deleted relative to the previous version.
+-- Included: everything under `assets/` except `.ogg` and `.class` files. Add `--include-data` only if the user asks for data pack support.
+-
+-## Step 1: choose the versions
+-
+-1. Download `https://piston-meta.mojang.com/mc/game/version_manifest_v2.json`.
+-2. Keep entries with `"type": "release"`. Drop snapshots, betas and alphas.
+-3. Sort by `releaseTime`, oldest first.
+-4. Keep releases from `1.6.1` (the first version with resource packs) up to the newest release.
+-5. In UPDATE MODE, read `baseline.json` from the existing jar and keep only releases that are newer than its last version and not already in its `versions` list.
+-6. Write all ids, oldest first, one per line, to `order.txt`. In UPDATE MODE, the file starts with the ids already in the jar, then the new ones.
+-
+-## Step 2: download each version you still need
+-
+-Work in a folder `versions/`. For every id that is new (all of them in BUILD MODE):
+-
+-1. Fetch the `url` of its manifest entry. This is the version JSON.
+-2. Download `downloads.client.url`. Check its SHA-1 against `downloads.client.sha1`. If it differs, retry once, then stop and report.
+-3. Save it as `versions/<id>.jar`.
+-4. Fetch the asset index from `assetIndex.url`. From its `objects` map, take keys that match `^minecraft/(lang/.+|sounds\.json)$`. These files are not in the client jar.
+-5. For each of those keys, download `https://resources.download.minecraft.net/<first two characters of hash>/<hash>`. Check the SHA-1 equals the hash. Save it to `versions/<id>.extra/assets/<key>`, for example `versions/1.21.4.extra/assets/minecraft/lang/de_de.json`.
+-6. If an asset index has no keys that match, do not fail. Print the first 20 key names so the user can see what the index holds, and continue.
+-7. Download politely: one request at a time, retry with a short delay on HTTP 429 or 5xx.
+-
+-To save disk space, you may replace each downloaded jar by a copy that only keeps entries under `assets/`. The script filters anyway.
+-
+-## Step 3: run the script
+-
+-BUILD MODE:
+-
+-```
+-python build_baseline_jar.py --versions-dir versions --order order.txt --output vanilla-baseline.jar
+-```
+-
+-UPDATE MODE (the existing jar must be at the output path):
+-
+-```
+-python build_baseline_jar.py --versions-dir versions --order order.txt --output vanilla-baseline.jar --update
+-```
+-
+-The script verifies the result by rebuilding every processed version from the output jar and comparing it with the input. A message that starts with `error:` means the build failed. Do not deliver the jar in that case.
+-
+-## Step 4: sanity checks before you deliver
+-
+-Run these and include the results in your report:
+-
+-1. The `versions` list in `baseline.json` has no duplicates and ends with the newest release.
+-2. The jar size in MB, and the three versions that added the most data (largest `<id>/` directory in bytes).
+-3. For the newest version, count the files that resolve (walk from the newest version to the oldest, take the first directory that has the path, stop at a `removed` entry). The count must be larger than zero and in the same range as the file count the script printed for that version.
+-4. A file that exists in the oldest version and in the newest version with the same content must appear only once in the jar.
+-
+-## Step 5: deliver
+-
+-- Deliver `vanilla-baseline.jar` as a file.
+-- Print the list of versions that are now in it, and in UPDATE MODE the versions you added.
+-- Print this PackSquash configuration, with the newest version filled in:
+-
+-```toml
+-baseline_pack_path = 'path/to/vanilla-baseline.jar'
+-baseline_pack_version = '<newest id>'
+-```
+-
+-## Rules
+-
+-- Never edit the jar by hand. Never add a version by copying files yourself. The script is the only writer.
+-- Never reorder or drop versions that are already in the jar.
+-- If anything fails, stop, report the exact error and which step it happened in. Do not continue with partial data.
+-- Do not include snapshots or pre-releases, even if the user asks for them in passing. Ask first.
+-
+-## UPDATE MODE prompt the user can paste later
+-
+-> Update the PackSquash baseline jar. The current jar and `build_baseline_jar.py` are attached. Follow `baseline-jar-prompt.md` in UPDATE MODE.
+diff --git a/tools/baseline-jar/build_baseline_jar.py b/tools/baseline-jar/build_baseline_jar.py
+deleted file mode 100644
+index 90b25ad..0000000
+--- a/tools/baseline-jar/build_baseline_jar.py
++++ /dev/null
+@@ -1,195 +0,0 @@
+-#!/usr/bin/env python3
+-"""Packs the assets of many Minecraft versions into one baseline jar for PackSquash.
+-
+-Usage:
+-  build_baseline_jar.py --versions-dir DIR --order versions.txt --output baseline.jar
+-  build_baseline_jar.py --versions-dir DIR --order versions.txt --output baseline.jar --update
+-
+-Inputs:
+-  versions.txt   One version id per line, from the OLDEST to the NEWEST release.
+-  DIR/<id>.jar   The client jar of each version in versions.txt.
+-  DIR/<id>.extra/ Optional. Files that are not in the client jar, such as the language
+-                 files of the asset index. Same layout as the jar, for example
+-                 DIR/1.21.4.extra/assets/minecraft/lang/de_de.json. They take
+-                 precedence over the jar files with the same path.
+-
+-Output layout (what PackSquash reads with baseline_pack_path and baseline_pack_version):
+-  baseline.json         {"format": 1, "versions": [...], "removed": {"<id>": [paths]}}
+-  <oldest id>/assets/...  every file of the oldest version
+-  <other id>/assets/...   only files that the version added or changed
+-  "removed" lists the files each version deleted relative to the previous one.
+-
+---update keeps the versions already in the output file and only appends the ids of
+-versions.txt that are not in it. The versions already in the file must be a prefix of
+-versions.txt, in the same order.
+-
+-Only the Python standard library is used.
+-"""
+-
+-import argparse
+-import hashlib
+-import json
+-import os
+-import sys
+-import tempfile
+-import zipfile
+-
+-INDEX_NAME = "baseline.json"
+-EXCLUDED_SUFFIXES = (".ogg", ".class")
+-# A fixed timestamp makes the output reproducible
+-FIXED_DATE = (1980, 1, 1, 0, 0, 0)
+-
+-
+-def is_wanted(path, include_data):
+-    if path.endswith("/") or path.endswith(EXCLUDED_SUFFIXES):
+-        return False
+-    return path.startswith("assets/") or (include_data and path.startswith("data/"))
+-
+-
+-def load_version(versions_dir, version, include_data):
+-    """Returns {path: bytes} for the wanted files of a version."""
+-    jar_path = os.path.join(versions_dir, version + ".jar")
+-    if not os.path.isfile(jar_path):
+-        sys.exit(f"error: missing {jar_path}")
+-
+-    files = {}
+-    with zipfile.ZipFile(jar_path) as jar:
+-        for info in jar.infolist():
+-            if is_wanted(info.filename, include_data):
+-                files[info.filename] = jar.read(info)
+-
+-    extra_dir = os.path.join(versions_dir, version + ".extra")
+-    if os.path.isdir(extra_dir):
+-        for root, _, names in os.walk(extra_dir):
+-            for name in names:
+-                full = os.path.join(root, name)
+-                path = os.path.relpath(full, extra_dir).replace(os.sep, "/")
+-                if is_wanted(path, include_data):
+-                    with open(full, "rb") as f:
+-                        files[path] = f.read()
+-    return files
+-
+-
+-def digest(data):
+-    return hashlib.sha256(data).hexdigest()
+-
+-
+-def read_existing(path):
+-    """Returns (index, effective hashes of the newest version, kept entries)."""
+-    with zipfile.ZipFile(path) as jar:
+-        index = json.loads(jar.read(INDEX_NAME))
+-        if index.get("format") != 1:
+-            sys.exit(f"error: {path} has an unsupported format")
+-        entries = {i.filename: jar.read(i) for i in jar.infolist() if not i.filename.endswith("/")}
+-
+-    effective = {}
+-    for version in index["versions"]:
+-        for removed in index.get("removed", {}).get(version, []):
+-            effective.pop(removed, None)
+-        prefix = version + "/"
+-        for name, data in entries.items():
+-            if name.startswith(prefix):
+-                effective[name[len(prefix):]] = digest(data)
+-    return index, effective, entries
+-
+-
+-def write_jar(output, entries):
+-    """Writes {name: bytes} sorted by name, to a temporary file first."""
+-    directory = os.path.dirname(os.path.abspath(output))
+-    handle, temporary = tempfile.mkstemp(suffix=".tmp", dir=directory)
+-    os.close(handle)
+-    try:
+-        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as jar:
+-            for name in sorted(entries):
+-                info = zipfile.ZipInfo(name, FIXED_DATE)
+-                info.compress_type = zipfile.ZIP_DEFLATED
+-                info.external_attr = 0o644 << 16
+-                jar.writestr(info, entries[name], compresslevel=9)
+-        os.replace(temporary, output)
+-    except BaseException:
+-        os.unlink(temporary)
+-        raise
+-
+-
+-def verify(output, expected_hashes):
+-    """Rebuilds each processed version from the output and compares it with the input."""
+-    with zipfile.ZipFile(output) as jar:
+-        index = json.loads(jar.read(INDEX_NAME))
+-        names = [i.filename for i in jar.infolist() if not i.filename.endswith("/")]
+-        effective = {}
+-        for version in index["versions"]:
+-            for removed in index.get("removed", {}).get(version, []):
+-                effective.pop(removed, None)
+-            prefix = version + "/"
+-            for name in names:
+-                if name.startswith(prefix):
+-                    effective[name[len(prefix):]] = digest(jar.read(name))
+-            if version in expected_hashes and effective != expected_hashes[version]:
+-                missing = set(expected_hashes[version]) - set(effective)
+-                extra = set(effective) - set(expected_hashes[version])
+-                sys.exit(
+-                    f"error: verification failed for {version}: {len(missing)} missing, "
+-                    f"{len(extra)} extra, "
+-                    f"{sum(1 for p in effective if p in expected_hashes[version] and effective[p] != expected_hashes[version][p])} different"
+-                )
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument("--versions-dir", required=True)
+-    parser.add_argument("--order", required=True, help="text file with one version id per line, oldest first")
+-    parser.add_argument("--output", required=True)
+-    parser.add_argument("--update", action="store_true", help="append new versions to the existing output")
+-    parser.add_argument("--include-data", action="store_true", help="also include data/ (data packs)")
+-    args = parser.parse_args()
+-
+-    with open(args.order, encoding="utf-8") as f:
+-        order = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+-    if len(order) != len(set(order)):
+-        sys.exit("error: duplicate version ids in the order file")
+-    if any("/" in v or "\\" in v or v in (".", "..") for v in order):
+-        sys.exit("error: invalid version id")
+-
+-    if args.update:
+-        index, previous, entries = read_existing(args.output)
+-        existing = index["versions"]
+-        if order[: len(existing)] != existing:
+-            sys.exit("error: the versions already in the output are not a prefix of the order file")
+-        removed_map = index.get("removed", {})
+-    else:
+-        existing, previous, entries, removed_map = [], {}, {}, {}
+-
+-    new_versions = order[len(existing):]
+-    if not new_versions:
+-        print("nothing to add")
+-        return
+-
+-    expected_hashes = {}
+-    for version in new_versions:
+-        files = load_version(args.versions_dir, version, args.include_data)
+-        if not files:
+-            sys.exit(f"error: no assets found for {version}")
+-        hashes = {path: digest(data) for path, data in files.items()}
+-        expected_hashes[version] = hashes
+-
+-        changed = [p for p in files if previous.get(p) != hashes[p]]
+-        for path in changed:
+-            entries[f"{version}/{path}"] = files[path]
+-        removed = sorted(p for p in previous if p not in files)
+-        if removed:
+-            removed_map[version] = removed
+-        print(f"{version}: {len(changed)} added or changed, {len(removed)} removed, {len(files)} total")
+-        previous = hashes
+-
+-    index = {"format": 1, "versions": order[: len(existing)] + new_versions}
+-    if removed_map:
+-        index["removed"] = removed_map
+-    entries[INDEX_NAME] = json.dumps(index, indent=1, sort_keys=True).encode("utf-8")
+-
+-    write_jar(args.output, entries)
+-    verify(args.output, expected_hashes)
+-    print(f"wrote {args.output} ({os.path.getsize(args.output)} bytes), verified {len(new_versions)} version(s)")
+-
+-
+-if __name__ == "__main__":
+-    main()
+diff --git a/tools/mcchanges-jar/build_mcchanges_jar.py b/tools/mcchanges-jar/build_mcchanges_jar.py
+new file mode 100644
+index 0000000..7cd8142
+--- /dev/null
++++ b/tools/mcchanges-jar/build_mcchanges_jar.py
+@@ -0,0 +1,520 @@
++#!/usr/bin/env python3
++"""Builds the mcchanges jar that PackSquash reads with mcchanges_path and mcchanges_version.
++
++An mcchanges jar holds the vanilla files of many Minecraft versions in a compact way.
++Every version is compared with the version BEFORE it, and only the files that the
++version added or changed are stored, plus a list of the files that it deleted.
++
++Commands (Python 3, no extra packages):
++
++  Java Edition, downloads the releases from Mojang:
++    python build_mcchanges_jar.py java --output mcchanges-java.jar
++    python build_mcchanges_jar.py java --output mcchanges-java.jar --update
++
++  Bedrock Edition, downloads the Mojang/bedrock-samples releases from GitHub:
++    python build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar
++    python build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --update
++
++  Offline, from files that you already have (DIR/<id>.jar and an order file):
++    python build_mcchanges_jar.py pack --edition java --versions-dir DIR --order order.txt --output out.jar
++
++  Add --dry-run to any download command to see what it would do.
++
++--update keeps the versions that are already in the output file and appends the
++releases that came out after them. The result is identical to a full rebuild.
++
++Output layout:
++  mcchanges.json            {"format": 1, "edition": "...", "versions": [...], "removed": {...}}
++  <oldest id>/...           every file of the oldest version
++  <next id>/...             only files added or changed since the version before it
++  "removed" lists, for each version, the files it deleted compared with the version before.
++
++The files inside belong to Mojang. Build the jar on your own computer and do not publish it.
++"""
++
++import argparse
++import hashlib
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++import time
++import urllib.error
++import urllib.request
++import zipfile
++
++INDEX_NAME = "mcchanges.json"
++FORMAT = 1
++FIXED_DATE = (1980, 1, 1, 0, 0, 0)  # makes the output reproducible
++USER_AGENT = "mcchanges-jar-builder (PackSquash fork)"
++
++JAVA_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
++JAVA_RESOURCES_URL = "https://resources.download.minecraft.net"
++# Files that are not in the client jar, but are in the asset index
++JAVA_EXTRA_KEY = re.compile(r"^minecraft/(lang/.+|sounds\.json)$")
++
++BEDROCK_REPO = "Mojang/bedrock-samples"
++BEDROCK_TAG = re.compile(r"^v(\d+(?:\.\d+)+)(-preview)?$")
++
++
++def log(message):
++    print(message, flush=True)
++
++
++def fail(message):
++    sys.exit(f"error: {message}")
++
++
++# ----------------------------------------------------------------------------
++# Which files go in the jar
++# ----------------------------------------------------------------------------
++
++class Filter:
++    def __init__(self, edition, include_data=False, include_audio=False):
++        self.edition = edition
++        self.include_data = include_data
++        self.include_audio = include_audio
++
++    def wanted(self, path):
++        if not path or path.endswith("/") or path.endswith(".class"):
++            return False
++        if not self.include_audio and path.endswith((".ogg", ".fsb")):
++            return False
++        if self.edition == "java":
++            return path.startswith("assets/") or (self.include_data and path.startswith("data/"))
++        return True
++
++
++# ----------------------------------------------------------------------------
++# Network
++# ----------------------------------------------------------------------------
++
++def open_url(url, token=None, retries=4):
++    headers = {"User-Agent": USER_AGENT}
++    if token:
++        headers["Authorization"] = f"Bearer {token}"
++    for attempt in range(retries):
++        try:
++            return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60)
++        except urllib.error.HTTPError as err:
++            if err.code not in (429, 500, 502, 503, 504) or attempt == retries - 1:
++                fail(f"{url} answered HTTP {err.code}")
++        except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
++            if attempt == retries - 1:
++                fail(f"could not reach {url}: {err}")
++        time.sleep(2 * (attempt + 1))
++
++
++def fetch_json(url, token=None):
++    with open_url(url, token) as response:
++        return json.load(response)
++
++
++def download(url, destination, sha1=None, token=None):
++    """Downloads a file, checking its SHA-1 if it is known, and replaces the destination."""
++    part = destination + ".part"
++    for attempt in range(2):
++        digest = hashlib.sha1()
++        with open_url(url, token) as response, open(part, "wb") as out:
++            while chunk := response.read(1 << 20):
++                digest.update(chunk)
++                out.write(chunk)
++        if sha1 is None or digest.hexdigest() == sha1:
++            os.replace(part, destination)
++            return
++        log(f"  SHA-1 mismatch for {url}, retrying")
++    os.unlink(part)
++    fail(f"the SHA-1 of {url} does not match after a retry")
++
++
++# ----------------------------------------------------------------------------
++# Reading and writing jars
++# ----------------------------------------------------------------------------
++
++def sha256(data):
++    return hashlib.sha256(data).hexdigest()
++
++
++def read_zip(path, flt, prefix=""):
++    """Returns {path: bytes} for the wanted files of a ZIP file, without the prefix."""
++    files = {}
++    with zipfile.ZipFile(path) as archive:
++        for info in archive.infolist():
++            name = info.filename
++            # Directories are skipped, including the one that the prefix names
++            if not name.endswith("/") and name.startswith(prefix) and flt.wanted(name[len(prefix):]):
++                files[name[len(prefix):]] = archive.read(info)
++    return files
++
++
++def write_zip(destination, entries):
++    """Writes {name: bytes} sorted by name through a temporary file."""
++    directory = os.path.dirname(os.path.abspath(destination))
++    handle, temporary = tempfile.mkstemp(suffix=".tmp", dir=directory)
++    os.close(handle)
++    try:
++        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
++            for name in sorted(entries):
++                info = zipfile.ZipInfo(name, FIXED_DATE)
++                info.compress_type = zipfile.ZIP_DEFLATED
++                info.external_attr = 0o644 << 16
++                archive.writestr(info, entries[name], compresslevel=9)
++        os.replace(temporary, destination)
++    except BaseException:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
++        raise
++
++
++def load_version(versions_dir, version, flt):
++    """Returns {path: bytes} of a version from DIR/<id>.jar and the optional DIR/<id>.extra."""
++    jar_path = os.path.join(versions_dir, version + ".jar")
++    if not os.path.isfile(jar_path):
++        fail(f"missing {jar_path}")
++    files = read_zip(jar_path, flt)
++
++    extra_dir = os.path.join(versions_dir, version + ".extra")
++    for root, _, names in os.walk(extra_dir):
++        for name in names:
++            full = os.path.join(root, name)
++            path = os.path.relpath(full, extra_dir).replace(os.sep, "/")
++            if flt.wanted(path):
++                with open(full, "rb") as f:
++                    files[path] = f.read()
++    return files
++
++
++def read_existing(path):
++    """Returns (index, effective hashes of the newest version, all entries)."""
++    with zipfile.ZipFile(path) as archive:
++        if INDEX_NAME not in archive.namelist():
++            fail(f"{path} has no {INDEX_NAME}, so it is not an mcchanges jar")
++        index = json.loads(archive.read(INDEX_NAME))
++        if index.get("format") != FORMAT:
++            fail(f"{path} has an unsupported format")
++        entries = {i.filename: archive.read(i) for i in archive.infolist() if not i.filename.endswith("/")}
++
++    effective = {}
++    for version in index["versions"]:
++        for removed in index.get("removed", {}).get(version, []):
++            effective.pop(removed, None)
++        prefix = version + "/"
++        for name, data in entries.items():
++            if name.startswith(prefix):
++                effective[name[len(prefix):]] = sha256(data)
++    return index, effective, entries
++
++
++def verify(output, expected):
++    """Rebuilds each processed version from the output file and compares it with its input."""
++    with zipfile.ZipFile(output) as archive:
++        index = json.loads(archive.read(INDEX_NAME))
++        names = [i.filename for i in archive.infolist() if not i.filename.endswith("/")]
++        effective = {}
++        for version in index["versions"]:
++            for removed in index.get("removed", {}).get(version, []):
++                effective.pop(removed, None)
++            prefix = version + "/"
++            for name in names:
++                if name.startswith(prefix):
++                    effective[name[len(prefix):]] = sha256(archive.read(name))
++            if version in expected and effective != expected[version]:
++                want = expected[version]
++                fail(
++                    f"verification failed for {version}: {len(set(want) - set(effective))} missing, "
++                    f"{len(set(effective) - set(want))} extra, "
++                    f"{sum(1 for p in effective if p in want and effective[p] != want[p])} different"
++                )
++
++
++def pack(edition, flt, versions_dir, order, output, update):
++    """Packs the versions of `order` that are not in the output yet. Returns nothing."""
++    if len(order) != len(set(order)):
++        fail("duplicate version ids")
++    if any("/" in v or "\\" in v or v in (".", "..") for v in order):
++        fail("invalid version id")
++
++    if update and os.path.exists(output):
++        index, previous, entries = read_existing(output)
++        existing = index["versions"]
++        if order[: len(existing)] != existing:
++            fail("the versions already in the output are not the start of the version list")
++        removed_map = index.get("removed", {})
++    else:
++        existing, previous, entries, removed_map = [], {}, {}, {}
++
++    new_versions = order[len(existing):]
++    if not new_versions:
++        log("nothing to add")
++        return
++
++    expected = {}
++    for version in new_versions:
++        files = load_version(versions_dir, version, flt)
++        if not files:
++            fail(f"no files found for {version}")
++        hashes = {path: sha256(data) for path, data in files.items()}
++        expected[version] = hashes
++
++        # Each version is compared with the version right before it
++        changed = [p for p in files if previous.get(p) != hashes[p]]
++        for path in changed:
++            entries[f"{version}/{path}"] = files[path]
++        removed = sorted(p for p in previous if p not in files)
++        if removed:
++            removed_map[version] = removed
++        log(f"{version}: {len(changed)} added or changed, {len(removed)} removed, {len(files)} total")
++        previous = hashes
++
++    index = {"format": FORMAT, "edition": edition, "versions": existing + new_versions}
++    if removed_map:
++        index["removed"] = removed_map
++    entries[INDEX_NAME] = json.dumps(index, indent=1, sort_keys=True).encode("utf-8")
++
++    write_zip(output, entries)
++    verify(output, expected)
++    log(f"wrote {output} ({os.path.getsize(output) / 1e6:.1f} MB), verified {len(new_versions)} version(s)")
++
++
++def existing_versions(output, update):
++    if update and os.path.exists(output):
++        return read_existing(output)[0]["versions"]
++    return []
++
++
++# ----------------------------------------------------------------------------
++# Java Edition
++# ----------------------------------------------------------------------------
++
++def java_releases(manifest_url):
++    manifest = fetch_json(manifest_url)
++    releases = [v for v in manifest["versions"] if v.get("type") == "release"]
++    releases.sort(key=lambda v: v["releaseTime"])
++    return releases
++
++
++def fetch_java_version(entry, work_dir, flt, resources_url):
++    version = entry["id"]
++    ready = os.path.join(work_dir, version + ".ready")
++    if os.path.exists(ready):
++        return
++    log(f"{version}: downloading")
++
++    data = fetch_json(entry["url"])
++    client = data["downloads"]["client"]
++    raw = os.path.join(work_dir, version + ".download")
++    download(client["url"], raw, client.get("sha1"))
++    # Keep only what is needed, to save disk space
++    write_zip(os.path.join(work_dir, version + ".jar"), read_zip(raw, flt))
++    os.unlink(raw)
++
++    # Language files and sounds.json are not in the client jar, but in the asset index
++    index = fetch_json(data["assetIndex"]["url"])
++    objects_dir = os.path.join(work_dir, "objects")
++    os.makedirs(objects_dir, exist_ok=True)
++    extra_dir = os.path.join(work_dir, version + ".extra")
++    found = 0
++    for key, obj in sorted(index.get("objects", {}).items()):
++        if not JAVA_EXTRA_KEY.match(key) or not flt.wanted("assets/" + key):
++            continue
++        cached = os.path.join(objects_dir, obj["hash"])
++        if not os.path.exists(cached):
++            download(f"{resources_url}/{obj['hash'][:2]}/{obj['hash']}", cached, obj["hash"])
++        target = os.path.join(extra_dir, "assets", *key.split("/"))
++        os.makedirs(os.path.dirname(target), exist_ok=True)
++        shutil.copyfile(cached, target)
++        found += 1
++    if not found:
++        sample = ", ".join(sorted(index.get("objects", {}))[:8])
++        log(f"  note: no language files in the asset index of {version}. It has keys like: {sample}")
++
++    open(ready, "w").close()
++
++
++def cmd_java(args):
++    flt = Filter("java", args.include_data, args.include_audio)
++    releases = java_releases(args.manifest_url)
++    ids = [r["id"] for r in releases]
++
++    if args.last:
++        selected = releases[-args.last:]
++    else:
++        if args.first not in ids:
++            fail(f"the release {args.first} was not found")
++        selected = releases[ids.index(args.first):]
++
++    existing = existing_versions(args.output, args.update)
++    if existing:
++        if existing[-1] not in ids:
++            fail(f"{existing[-1]} is not a release in the Mojang version list")
++        if existing != [i for i in ids if i in set(existing)]:
++            fail("the versions in the output file are not in release order")
++        # Continue after the last version that the file has
++        selected = releases[ids.index(existing[-1]) + 1:]
++    new = selected
++    order = existing + [r["id"] for r in new]
++
++    log(f"{len(existing)} version(s) in the file, {len(new)} to add: {', '.join(r['id'] for r in new) or '-'}")
++    if args.dry_run or not new:
++        return
++
++    os.makedirs(args.work_dir, exist_ok=True)
++    for entry in new:
++        fetch_java_version(entry, args.work_dir, flt, args.resources_url)
++    pack("java", flt, args.work_dir, order, args.output, args.update)
++    if args.clean_work:
++        shutil.rmtree(args.work_dir, ignore_errors=True)
++
++
++# ----------------------------------------------------------------------------
++# Bedrock Edition
++# ----------------------------------------------------------------------------
++
++def bedrock_tag_names(api_url, token):
++    """Lists the tags of the repository. Git is tried first, as it has no rate limits."""
++    if shutil.which("git"):
++        result = subprocess.run(
++            ["git", "ls-remote", "--tags", "--refs", f"https://github.com/{BEDROCK_REPO}.git"],
++            capture_output=True, text=True
++        )
++        if result.returncode == 0 and result.stdout.strip():
++            return [line.split("refs/tags/", 1)[1] for line in result.stdout.splitlines() if "refs/tags/" in line]
++
++    tags, page = [], 1
++    while True:
++        batch = fetch_json(f"{api_url}/repos/{BEDROCK_REPO}/tags?per_page=100&page={page}", token)
++        tags += [t["name"] for t in batch]
++        if len(batch) < 100:
++            return tags
++        page += 1
++
++
++def bedrock_releases(api_url, include_previews, token):
++    """Returns [(version id, tag)] from the oldest to the newest."""
++    found = []
++    for tag in bedrock_tag_names(api_url, token):
++        match = BEDROCK_TAG.match(tag)
++        if match and (include_previews or not match.group(2)):
++            key = tuple(int(part) for part in match.group(1).split("."))
++            found.append((key, tag[1:], tag))
++    found.sort()
++    return [(version, tag) for _, version, tag in found]
++
++
++def fetch_bedrock_version(version, tag, work_dir, flt, token):
++    ready = os.path.join(work_dir, version + ".ready")
++    if os.path.exists(ready):
++        return
++    log(f"{version}: downloading (this file is big, around 150 MB)")
++
++    raw = os.path.join(work_dir, version + ".download")
++    download(f"https://codeload.github.com/{BEDROCK_REPO}/zip/refs/tags/{tag}", raw, None, token)
++
++    with zipfile.ZipFile(raw) as archive:
++        roots = {n.split("/")[0] for n in archive.namelist()}
++    if len(roots) != 1:
++        fail(f"unexpected layout in the download of {tag}")
++    prefix = roots.pop() + "/resource_pack/"
++    files = read_zip(raw, flt, prefix)
++    if not files:
++        fail(f"{tag} has no resource_pack folder")
++    write_zip(os.path.join(work_dir, version + ".jar"), files)
++    os.unlink(raw)
++    open(ready, "w").close()
++
++
++def cmd_bedrock(args):
++    flt = Filter("bedrock", False, args.include_audio)
++    token = args.github_token or os.environ.get("GITHUB_TOKEN")
++    releases = bedrock_releases(args.api_url, args.include_previews, token)
++    ids = [v for v, _ in releases]
++    if not ids:
++        fail("no releases were found")
++
++    existing = existing_versions(args.output, args.update)
++    if existing:
++        if existing[-1] not in ids:
++            fail(f"{existing[-1]} is not in the release list. Use --include-previews if it was a preview")
++        start = ids.index(existing[-1]) + 1
++    elif args.first:
++        if args.first not in ids:
++            fail(f"{args.first} was not found. Releases: {', '.join(ids[-10:])}...")
++        start = ids.index(args.first)
++    else:
++        start = max(0, len(ids) - args.count)
++    new = releases[start:]
++    order = existing + [v for v, _ in new]
++
++    log(f"{len(existing)} version(s) in the file, {len(new)} to add: {', '.join(v for v, _ in new) or '-'}")
++    if args.dry_run or not new:
++        return
++
++    os.makedirs(args.work_dir, exist_ok=True)
++    for version, tag in new:
++        fetch_bedrock_version(version, tag, args.work_dir, flt, token)
++    pack("bedrock", flt, args.work_dir, order, args.output, args.update)
++    if args.clean_work:
++        shutil.rmtree(args.work_dir, ignore_errors=True)
++
++
++# ----------------------------------------------------------------------------
++# Offline packing
++# ----------------------------------------------------------------------------
++
++def cmd_pack(args):
++    flt = Filter(args.edition, args.include_data, args.include_audio)
++    with open(args.order, encoding="utf-8") as f:
++        order = [line.strip() for line in f if line.strip() and not line.startswith("#")]
++    pack(args.edition, flt, args.versions_dir, order, args.output, args.update)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    sub = parser.add_subparsers(dest="command", required=True)
++
++    def common(p):
++        p.add_argument("--output", required=True, help="the mcchanges jar to write")
++        p.add_argument("--update", action="store_true", help="append new versions to the existing output")
++        p.add_argument("--include-audio", action="store_true", help="also include .ogg and .fsb files (big)")
++
++    def downloading(p):
++        common(p)
++        p.add_argument("--work-dir", default="mcchanges-work", help="where downloads are kept (default: %(default)s)")
++        p.add_argument("--clean-work", action="store_true", help="delete the work directory when done")
++        p.add_argument("--dry-run", action="store_true", help="only show what would be done")
++
++    java = sub.add_parser("java", help="build from the Mojang Java Edition releases")
++    downloading(java)
++    java.add_argument("--first", default="1.6.1", help="oldest release to include (default: %(default)s)")
++    java.add_argument("--last", type=int, help="only the newest N releases, instead of --first")
++    java.add_argument("--include-data", action="store_true", help="also include data/ (data packs)")
++    java.add_argument("--manifest-url", default=JAVA_MANIFEST_URL, help=argparse.SUPPRESS)
++    java.add_argument("--resources-url", default=JAVA_RESOURCES_URL, help=argparse.SUPPRESS)
++    java.set_defaults(run=cmd_java)
++
++    bedrock = sub.add_parser("bedrock", help="build from the Mojang/bedrock-samples releases")
++    downloading(bedrock)
++    bedrock.add_argument("--count", type=int, default=5, help="how many of the newest releases (default: %(default)s)")
++    bedrock.add_argument("--first", help="oldest release to include, for example 1.21.50.7, instead of --count")
++    bedrock.add_argument("--include-previews", action="store_true", help="also include preview releases")
++    bedrock.add_argument("--github-token", help="GitHub token (or set GITHUB_TOKEN), raises the API rate limit")
++    bedrock.add_argument("--api-url", default="https://api.github.com", help=argparse.SUPPRESS)
++    bedrock.set_defaults(run=cmd_bedrock)
++
++    packing = sub.add_parser("pack", help="build from version files that you already have")
++    common(packing)
++    packing.add_argument("--edition", choices=["java", "bedrock"], required=True)
++    packing.add_argument("--versions-dir", required=True, help="has <id>.jar and optional <id>.extra/ per version")
++    packing.add_argument("--order", required=True, help="text file with one version id per line, oldest first")
++    packing.add_argument("--include-data", action="store_true")
++    packing.set_defaults(run=cmd_pack)
++
++    args = parser.parse_args()
++    args.run(args)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/mcchanges-jar/mcchanges-jar-prompt.md b/tools/mcchanges-jar/mcchanges-jar-prompt.md
+new file mode 100644
+index 0000000..6218f84
+--- /dev/null
++++ b/tools/mcchanges-jar/mcchanges-jar-prompt.md
+@@ -0,0 +1,66 @@
++# Task: build or update an mcchanges jar for PackSquash
++
++You build one jar that holds the vanilla files of many Minecraft versions in a compact way. PackSquash reads it with `mcchanges_path` and `mcchanges_version`. You do not write the packing code. The script `build_mcchanges_jar.py` does all of it, including the downloads and the verification. Your job is to run it correctly, check the result, and report.
++
++## Rules
++
++- Never edit the jar by hand and never reimplement the script. If it fails, report the exact error text and the command.
++- Never upload the jar anywhere public. Its files belong to Mojang. Keep it on the user's computer.
++- Use only the commands below. Do not guess other URLs.
++- Needs Python 3 and network access to `piston-meta.mojang.com`, `piston-data.mojang.com`, `resources.download.minecraft.net` (Java) or `github.com` and `codeload.github.com` (Bedrock). If a host is blocked, tell the user which one to allow and stop.
++
++## Java Edition
++
++Build, from release 1.6.1 (the first version with resource packs) to the newest release:
++
++```
++python build_mcchanges_jar.py java --output mcchanges-java.jar
++```
++
++Only the newest releases (faster):
++
++```
++python build_mcchanges_jar.py java --output mcchanges-java.jar --last 10
++```
++
++Update after Mojang released a new version. It downloads only the new releases and gives the same file as a full rebuild:
++
++```
++python build_mcchanges_jar.py java --output mcchanges-java.jar --update
++```
++
++## Bedrock Edition
++
++The files come from the official `Mojang/bedrock-samples` repository, one release per version. Each download is about 150 MB.
++
++```
++python build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --count 5
++python build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --update
++```
++
++Add `--include-previews` only if the user asks for preview releases.
++
++## Before you run
++
++1. Add `--dry-run` once. It prints the versions that would be added and downloads nothing. Show it to the user if the list looks wrong.
++2. The first build of Java takes a while. The script keeps its downloads in `mcchanges-work/`, so running it again continues where it stopped.
++
++## After you run
++
++The script ends with `wrote <file> (<size> MB), verified <n> version(s)`. That line means every version was rebuilt from the jar and compared with its source. Any line that starts with `error:` means the build failed. Do not deliver a jar after an error.
++
++Report:
++
++1. The command that you ran.
++2. The size of the jar, and the first and last version in it. Read them from `mcchanges.json` inside the jar.
++3. For an update, the versions that were added.
++4. This PackSquash configuration with the newest version filled in:
++
++```toml
++mcchanges_path = 'mcchanges-java.jar'
++mcchanges_version = '<newest version>'
++```
++
++## Prompt to paste later for updates
++
++> Update my PackSquash mcchanges jar. `build_mcchanges_jar.py` and the current jar are attached. Follow `mcchanges-jar-prompt.md`, use the Java (or Bedrock) update command, and report what was added.
+-- 
+2.43.0
+

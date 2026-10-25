@@ -13,7 +13,7 @@ use crate::{PackSquasher, PackSquasherStatus, RelativePath};
 
 pub(crate) fn temp_dir() -> TempDir {
 	Builder::new()
-		.prefix("ps-baseline-test")
+		.prefix("ps-mcchanges-test")
 		.tempdir()
 		.expect("I/O operations are assumed not to fail during tests")
 }
@@ -125,21 +125,21 @@ fn zip(entries: &[(&str, &[u8], bool)], comment: &[u8]) -> Vec<u8> {
 	archive
 }
 
-async fn baseline_directory(directory: &TempDir) -> BaselinePack {
-	BaselinePack::open(&OsFilesystem, directory.path(), None)
+async fn mcchanges_directory(directory: &TempDir) -> McChanges {
+	McChanges::open(&OsFilesystem, directory.path(), None)
 		.await
 		.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn identical_files_are_redundant() {
-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 	let file = "assets/minecraft/lang/en_us.lang";
 
-	write_file(baseline_dir.path(), file, b"a=b\n");
+	write_file(mcchanges_dir.path(), file, b"a=b\n");
 	write_file(pack_dir.path(), file, b"a=b\n");
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/lang/es_es.lang",
 		b"a=b\n"
 	);
@@ -150,11 +150,11 @@ async fn identical_files_are_redundant() {
 	);
 	write_file(pack_dir.path(), "assets/minecraft/lang/new.lang", b"a=b\n");
 
-	let baseline = baseline_directory(&baseline_dir).await;
+	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 	let is_redundant = |file: &str| {
 		let pack_file = pack_file(pack_dir.path(), file);
-		let baseline = &baseline;
-		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
+		let mcchanges = &mcchanges;
+		async move { mcchanges.is_redundant(&OsFilesystem, &pack_file).await }
 	};
 
 	assert!(is_redundant(file).await);
@@ -164,18 +164,18 @@ async fn identical_files_are_redundant() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn pack_metadata_is_never_redundant() {
-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 
 	for file in ["pack.mcmeta", "pack.png"] {
-		write_file(baseline_dir.path(), file, b"same");
+		write_file(mcchanges_dir.path(), file, b"same");
 		write_file(pack_dir.path(), file, b"same");
 	}
 
-	let baseline = baseline_directory(&baseline_dir).await;
+	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 
 	for file in ["pack.mcmeta", "pack.png"] {
 		assert!(
-			!baseline
+			!mcchanges
 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
 				.await
 		);
@@ -184,10 +184,10 @@ async fn pack_metadata_is_never_redundant() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn json_files_are_compared_by_contents() {
-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/models/item/a.json",
 		br#"{"parent": "item/generated", "textures": {"layer0": "items/a"}}"#
 	);
@@ -198,7 +198,7 @@ async fn json_files_are_compared_by_contents() {
 		b"\xEF\xBB\xBF{\"textures\":{\"layer0\":\"items/a\"},\"parent\":\"item/generated\"}"
 	);
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/models/item/b.json",
 		br#"{"parent": "item/generated"}"#
 	);
@@ -208,10 +208,10 @@ async fn json_files_are_compared_by_contents() {
 		br#"{"parent": "item/handheld"}"#
 	);
 
-	let baseline = baseline_directory(&baseline_dir).await;
+	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 
 	assert!(
-		baseline
+		mcchanges
 			.is_redundant(
 				&OsFilesystem,
 				&pack_file(pack_dir.path(), "assets/minecraft/models/item/a.json")
@@ -219,7 +219,7 @@ async fn json_files_are_compared_by_contents() {
 			.await
 	);
 	assert!(
-		!baseline
+		!mcchanges
 			.is_redundant(
 				&OsFilesystem,
 				&pack_file(pack_dir.path(), "assets/minecraft/models/item/b.json")
@@ -230,26 +230,26 @@ async fn json_files_are_compared_by_contents() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn textures_are_compared_by_pixels() {
-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 
-	let baseline_pixels = [
+	let mcchanges_pixels = [
 		1, 2, 3, 255, 0, 0, 0, 0, //
 		9, 8, 7, 255, 4, 5, 6, 128
 	];
 	// The color of the fully transparent pixel is not visible
-	let mut same_pixels = baseline_pixels;
+	let mut same_pixels = mcchanges_pixels;
 	same_pixels[4..7].copy_from_slice(&[10, 20, 30]);
-	let mut other_pixels = baseline_pixels;
+	let mut other_pixels = mcchanges_pixels;
 	other_pixels[0] = 200;
 
-	let baseline_png = png(2, 2, &baseline_pixels, Compression::best());
+	let mcchanges_png = png(2, 2, &mcchanges_pixels, Compression::best());
 	let reencoded_png = png(2, 2, &same_pixels, Compression::none());
-	assert_ne!(baseline_png, reencoded_png);
+	assert_ne!(mcchanges_png, reencoded_png);
 
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/a.png",
-		&baseline_png
+		&mcchanges_png
 	);
 	write_file(
 		pack_dir.path(),
@@ -257,9 +257,9 @@ async fn textures_are_compared_by_pixels() {
 		&reencoded_png
 	);
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/b.png",
-		&baseline_png
+		&mcchanges_png
 	);
 	write_file(
 		pack_dir.path(),
@@ -267,19 +267,19 @@ async fn textures_are_compared_by_pixels() {
 		&png(2, 2, &other_pixels, Compression::best())
 	);
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/c.png",
-		&baseline_png
+		&mcchanges_png
 	);
 	write_file(
 		pack_dir.path(),
 		"assets/minecraft/textures/c.png",
-		&png(4, 1, &baseline_pixels, Compression::best())
+		&png(4, 1, &mcchanges_pixels, Compression::best())
 	);
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/d.png",
-		&baseline_png
+		&mcchanges_png
 	);
 	write_file(
 		pack_dir.path(),
@@ -287,14 +287,14 @@ async fn textures_are_compared_by_pixels() {
 		b"not a PNG"
 	);
 
-	let baseline = baseline_directory(&baseline_dir).await;
+	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 	let is_redundant = |name: &str| {
 		let pack_file = pack_file(
 			pack_dir.path(),
 			&format!("assets/minecraft/textures/{name}.png")
 		);
-		let baseline = &baseline;
-		async move { baseline.is_redundant(&OsFilesystem, &pack_file).await }
+		let mcchanges = &mcchanges;
+		async move { mcchanges.is_redundant(&OsFilesystem, &pack_file).await }
 	};
 
 	assert!(is_redundant("a").await, "re-encoded texture");
@@ -311,7 +311,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 	let reformatted_metadata = b"{\"animation\":{\"frametime\":2}}";
 	let other_metadata = br#"{"animation": {"frametime": 5}}"#;
 
-	// (pack texture, pack metadata, baseline metadata, are the texture and metadata redundant)
+	// (pack texture, pack metadata, mcchanges metadata, are the texture and metadata redundant)
 	type TextureCase<'a> = (&'a [u8], Option<&'a [u8]>, Option<&'a [u8]>, bool);
 	let cases: [TextureCase; 6] = [
 		(&texture, Some(reformatted_metadata), Some(metadata), true),
@@ -322,17 +322,17 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 		(&texture, Some(metadata), None, false)
 	];
 
-	for (case, (pack_texture, pack_metadata, baseline_metadata, expected)) in cases.iter().enumerate()
+	for (case, (pack_texture, pack_metadata, mcchanges_metadata, expected)) in cases.iter().enumerate()
 	{
-		let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+		let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 		let texture_path = "assets/minecraft/textures/blocks/lava_flow.png";
 
-		write_file(baseline_dir.path(), texture_path, &texture);
+		write_file(mcchanges_dir.path(), texture_path, &texture);
 		write_file(pack_dir.path(), texture_path, pack_texture);
 
-		if let Some(metadata) = baseline_metadata {
+		if let Some(metadata) = mcchanges_metadata {
 			write_file(
-				baseline_dir.path(),
+				mcchanges_dir.path(),
 				&format!("{texture_path}.mcmeta"),
 				metadata
 			);
@@ -341,10 +341,10 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 			write_file(pack_dir.path(), &format!("{texture_path}.mcmeta"), metadata);
 		}
 
-		let baseline = baseline_directory(&baseline_dir).await;
+		let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 
 		assert_eq!(
-			baseline
+			mcchanges
 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), texture_path))
 				.await,
 			*expected,
@@ -353,7 +353,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 
 		if pack_metadata.is_some() {
 			assert_eq!(
-				baseline
+				mcchanges
 					.is_redundant(
 						&OsFilesystem,
 						&pack_file(pack_dir.path(), &format!("{texture_path}.mcmeta"))
@@ -367,7 +367,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn archives_can_be_baseline_packs() {
+async fn archives_can_be_mcchangess() {
 	let (archive_dir, pack_dir) = (temp_dir(), temp_dir());
 	let texture = png(1, 1, &[1, 2, 3, 255], Compression::best());
 
@@ -395,7 +395,7 @@ async fn archives_can_be_baseline_packs() {
 	);
 	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &texture);
 
-	let baseline = BaselinePack::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
+	let mcchanges = McChanges::open(&OsFilesystem, &archive_dir.path().join("client.jar"), None)
 		.await
 		.unwrap();
 
@@ -406,7 +406,7 @@ async fn archives_can_be_baseline_packs() {
 		("assets/minecraft/textures/b.png", false)
 	] {
 		assert_eq!(
-			baseline
+			mcchanges
 				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file))
 				.await,
 			expected,
@@ -416,17 +416,17 @@ async fn archives_can_be_baseline_packs() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn unusable_baseline_packs_are_rejected() {
+async fn unusable_mcchangess_are_rejected() {
 	let dir = temp_dir();
 	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
 
 	assert!(matches!(
-		BaselinePack::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
-		Err(BaselinePackError::InvalidArchive(_))
+		McChanges::open(&OsFilesystem, &dir.path().join("not_a_zip.jar"), None).await,
+		Err(McChangesError::InvalidArchive(_))
 	));
 	assert!(matches!(
-		BaselinePack::open(&OsFilesystem, &dir.path().join("missing"), None).await,
-		Err(BaselinePackError::IoError(_))
+		McChanges::open(&OsFilesystem, &dir.path().join("missing"), None).await,
+		Err(McChangesError::IoError(_))
 	));
 }
 
@@ -487,20 +487,20 @@ fn zip_reader_rejects_corrupt_data() {
 
 /// Not async because `PackSquasher::run` starts its own runtime.
 #[test]
-fn squashing_leaves_out_files_identical_to_the_baseline() {
-	let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+fn squashing_leaves_out_files_identical_to_the_mcchanges() {
+	let (mcchanges_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
 
 	let stone = png(2, 1, &[1, 2, 3, 255, 4, 5, 6, 255], Compression::best());
 	let dirt = png(2, 1, &[7, 7, 7, 255, 8, 8, 8, 255], Compression::best());
 	let modified_dirt = png(2, 1, &[7, 7, 7, 255, 9, 9, 9, 255], Compression::best());
 
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/blocks/stone.png",
 		&stone
 	);
 	write_file(
-		baseline_dir.path(),
+		mcchanges_dir.path(),
 		"assets/minecraft/textures/blocks/dirt.png",
 		&dirt
 	);
@@ -510,7 +510,7 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
 		"pack.mcmeta",
 		br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
 	);
-	// Re-encoded, but with the same pixels as the baseline
+	// Re-encoded, but with the same pixels as the mcchanges
 	write_file(
 		pack_dir.path(),
 		"assets/minecraft/textures/blocks/stone.png",
@@ -524,7 +524,7 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
 
 	let output_path = output_dir.path().join("pack.zip");
 	let mut global_options = GlobalOptions {
-		baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
+		mcchanges_path: Some(mcchanges_dir.path().to_path_buf()),
 		output_file_path: output_path.clone(),
 		..GlobalOptions::default()
 	};
@@ -544,19 +544,19 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
 		)
 		.expect("Squashing a valid pack should succeed");
 
-	let mut skipped_due_to_baseline = Vec::new();
+	let mut skipped_due_to_mcchanges = Vec::new();
 	while let Ok(status) = receiver.try_recv() {
 		if let PackSquasherStatus::PackFileProcessed(status) = status {
 			assert!(status.optimization_error().is_none());
 
 			if status.intentionally_skipped() {
 				assert!(status.skipped());
-				skipped_due_to_baseline.push(status.path().as_str().to_owned());
+				skipped_due_to_mcchanges.push(status.path().as_str().to_owned());
 			}
 		}
 	}
 	assert_eq!(
-		skipped_due_to_baseline,
+		skipped_due_to_mcchanges,
 		["assets/minecraft/textures/blocks/stone.png"]
 	);
 
@@ -566,23 +566,23 @@ fn squashing_leaves_out_files_identical_to_the_baseline() {
 	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
 }
 
-fn language_entry(root: &Path, file: &str, pack_data: &[u8], baseline_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
-	let baseline_dir = temp_dir();
-	write_file(baseline_dir.path(), file, baseline_data);
+fn language_entry(root: &Path, file: &str, pack_data: &[u8], mcchanges_data: &[u8]) -> (TempDir, VfsPackFileIterEntry) {
+	let mcchanges_dir = temp_dir();
+	write_file(mcchanges_dir.path(), file, mcchanges_data);
 	write_file(root, file, pack_data);
 
-	(baseline_dir, pack_file(root, file))
+	(mcchanges_dir, pack_file(root, file))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn json_language_keys_identical_to_the_baseline_are_removed() {
+async fn json_language_keys_identical_to_the_mcchanges_are_removed() {
 	let file = "assets/minecraft/lang/es_es.json";
-	let baseline = br#"{"a": "1", "b": "2", "c": "3"}"#;
+	let mcchanges = br#"{"a": "1", "b": "2", "c": "3"}"#;
 
 	let reduce = |pack: &'static [u8]| async move {
 		let pack_dir = temp_dir();
-		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
-		baseline_directory(&baseline_dir)
+		let (mcchanges_dir, entry) = language_entry(pack_dir.path(), file, pack, mcchanges);
+		mcchanges_directory(&mcchanges_dir)
 			.await
 			.reduce_language_file(&OsFilesystem, &entry)
 			.await
@@ -612,14 +612,14 @@ async fn json_language_keys_identical_to_the_baseline_are_removed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
+async fn legacy_language_keys_identical_to_the_mcchanges_are_removed() {
 	let file = "assets/minecraft/lang/en_US.lang";
-	let baseline = b"a=1\nb=2\nc=3 \nd=\n";
+	let mcchanges = b"a=1\nb=2\nc=3 \nd=\n";
 
 	let reduce = |pack: &'static [u8]| async move {
 		let pack_dir = temp_dir();
-		let (baseline_dir, entry) = language_entry(pack_dir.path(), file, pack, baseline);
-		baseline_directory(&baseline_dir)
+		let (mcchanges_dir, entry) = language_entry(pack_dir.path(), file, pack, mcchanges);
+		mcchanges_directory(&mcchanges_dir)
 			.await
 			.reduce_language_file(&OsFilesystem, &entry)
 			.await
@@ -655,18 +655,18 @@ async fn legacy_language_keys_identical_to_the_baseline_are_removed() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn language_files_are_only_reduced_when_they_are_language_files() {
-	let (baseline_dir, pack_dir) = (temp_dir(), temp_dir());
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
 
 	for file in [
 		"assets/minecraft/texts/credits.json",
 		"assets/minecraft/lang/notes.txt",
 		"lang/es_es.json"
 	] {
-		write_file(baseline_dir.path(), file, br#"{"a": "1"}"#);
+		write_file(mcchanges_dir.path(), file, br#"{"a": "1"}"#);
 		write_file(pack_dir.path(), file, br#"{"a": "1", "b": "2"}"#);
 	}
 
-	let baseline = baseline_directory(&baseline_dir).await;
+	let mcchanges = mcchanges_directory(&mcchanges_dir).await;
 
 	for file in [
 		"assets/minecraft/texts/credits.json",
@@ -674,7 +674,7 @@ async fn language_files_are_only_reduced_when_they_are_language_files() {
 		"lang/es_es.json"
 	] {
 		assert_eq!(
-			baseline
+			mcchanges
 				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file))
 				.await,
 			LanguageFileReduction::Unchanged,
@@ -686,7 +686,7 @@ async fn language_files_are_only_reduced_when_they_are_language_files() {
 fn versioned_jar(index: &str) -> Vec<u8> {
 	zip(
 		&[
-			("baseline.json", index.as_bytes(), true),
+			("mcchanges.json", index.as_bytes(), true),
 			("1.0/assets/minecraft/texts/a.txt", b"a from 1.0", true),
 			("1.0/assets/minecraft/texts/b.txt", b"b from 1.0", true),
 			("1.1/assets/minecraft/texts/a.txt", b"a from 1.1", true),
@@ -703,7 +703,7 @@ const VERSION_INDEX: &str = r#"{
 }"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
+async fn versioned_mcchangess_provide_the_files_of_the_selected_version() {
 	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
 	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
 
@@ -723,7 +723,7 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
 		("1.1", [false, true, false]),
 		("1.2", [false, false, true])
 	] {
-		let baseline = BaselinePack::open(
+		let mcchanges = McChanges::open(
 			&OsFilesystem,
 			&jar_dir.path().join("vanilla.jar"),
 			Some(version)
@@ -733,7 +733,7 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
 
 		for (name, expected) in ["a", "b", "c"].into_iter().zip(expected) {
 			assert_eq!(
-				baseline
+				mcchanges
 					.is_redundant(
 						&OsFilesystem,
 						&pack_file(pack_dir.path(), &format!("assets/minecraft/texts/{name}.txt"))
@@ -747,21 +747,21 @@ async fn versioned_baseline_packs_provide_the_files_of_the_selected_version() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_baseline_packs_can_be_directories() {
-	let baseline_dir = temp_dir();
-	write_file(baseline_dir.path(), "baseline.json", VERSION_INDEX.as_bytes());
-	write_file(baseline_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
-	write_file(baseline_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
+async fn versioned_mcchangess_can_be_directories() {
+	let mcchanges_dir = temp_dir();
+	write_file(mcchanges_dir.path(), "mcchanges.json", VERSION_INDEX.as_bytes());
+	write_file(mcchanges_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
+	write_file(mcchanges_dir.path(), "1.1/assets/minecraft/texts/a.txt", b"a from 1.1");
 
 	let pack_dir = temp_dir();
 	write_file(pack_dir.path(), "assets/minecraft/texts/a.txt", b"a from 1.1");
 
-	let baseline = BaselinePack::open(&OsFilesystem, baseline_dir.path(), Some("1.2"))
+	let mcchanges = McChanges::open(&OsFilesystem, mcchanges_dir.path(), Some("1.2"))
 		.await
 		.unwrap();
 
 	assert!(
-		baseline
+		mcchanges
 			.is_redundant(
 				&OsFilesystem,
 				&pack_file(pack_dir.path(), "assets/minecraft/texts/a.txt")
@@ -771,7 +771,7 @@ async fn versioned_baseline_packs_can_be_directories() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_baseline_packs_reject_wrong_version_selections() {
+async fn versioned_mcchangess_reject_wrong_version_selections() {
 	let dir = temp_dir();
 	write_file(dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
 	write_file(dir.path(), "plain.jar", &zip(&[("assets/a.txt", b"a", false)], b""));
@@ -784,40 +784,40 @@ async fn versioned_baseline_packs_reject_wrong_version_selections() {
 
 	let open = |file: &'static str, version: Option<&'static str>| {
 		let path = dir.path().join(file);
-		async move { BaselinePack::open(&OsFilesystem, &path, version).await.err() }
+		async move { McChanges::open(&OsFilesystem, &path, version).await.err() }
 	};
 
 	assert!(matches!(
 		open("vanilla.jar", None).await,
-		Some(BaselinePackError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
+		Some(McChangesError::VersionRequired(versions)) if versions == "1.0, 1.1, 1.2"
 	));
 	assert!(matches!(
 		open("vanilla.jar", Some("9.9")).await,
-		Some(BaselinePackError::UnknownVersion { version, .. }) if version == "9.9"
+		Some(McChangesError::UnknownVersion { version, .. }) if version == "9.9"
 	));
 	assert!(matches!(
 		open("plain.jar", Some("1.0")).await,
-		Some(BaselinePackError::NotVersioned)
+		Some(McChangesError::NotVersioned)
 	));
 	assert!(matches!(
 		open("bad_format.jar", Some("1.0")).await,
-		Some(BaselinePackError::InvalidVersionIndex(_))
+		Some(McChangesError::InvalidVersionIndex(_))
 	));
 	assert!(matches!(
 		open("bad_index.jar", Some("1.0")).await,
-		Some(BaselinePackError::InvalidVersionIndex(_))
+		Some(McChangesError::InvalidVersionIndex(_))
 	));
 	assert!(open("plain.jar", None).await.is_none());
 }
 
 /// Not async because `PackSquasher::run` starts its own runtime.
 #[test]
-fn squashing_removes_language_keys_identical_to_the_baseline() {
+fn squashing_removes_language_keys_identical_to_the_mcchanges() {
 	for skip_language_keys in [true, false] {
-		let (baseline_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+		let (mcchanges_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
 
-		write_file(baseline_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
-		write_file(baseline_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
+		write_file(mcchanges_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\nb=2\nc=3\n");
+		write_file(mcchanges_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"a=1\nb=2\n");
 
 		write_file(
 			pack_dir.path(),
@@ -829,8 +829,8 @@ fn squashing_removes_language_keys_identical_to_the_baseline() {
 
 		let output_path = output_dir.path().join("pack.zip");
 		let mut global_options = GlobalOptions {
-			baseline_pack_path: Some(baseline_dir.path().to_path_buf()),
-			skip_language_keys_identical_to_baseline: skip_language_keys,
+			mcchanges_path: Some(mcchanges_dir.path().to_path_buf()),
+			skip_language_keys_identical_to_mcchanges: skip_language_keys,
 			output_file_path: output_path.clone(),
 			..GlobalOptions::default()
 		};
@@ -875,4 +875,140 @@ fn squashing_removes_language_keys_identical_to_the_baseline() {
 			assert!(english.contains("a=1") && english.contains("c=3"));
 		}
 	}
+}
+
+/// Turns an archive that has no comment into one that has the fields of its end of central
+/// directory record maxed out, and the real values in ZIP64 records.
+fn with_zip64_end_records(archive: &[u8]) -> Vec<u8> {
+	let end = archive.len() - 22;
+	let entries = u16::from_le_bytes(archive[end + 10..end + 12].try_into().unwrap());
+	let size = u32::from_le_bytes(archive[end + 12..end + 16].try_into().unwrap());
+	let offset = u32::from_le_bytes(archive[end + 16..end + 20].try_into().unwrap());
+
+	let mut out = archive[..end].to_vec();
+	let record_offset = out.len() as u64;
+
+	out.extend_from_slice(&0x0606_4B50_u32.to_le_bytes());
+	out.extend_from_slice(&44_u64.to_le_bytes());
+	out.extend_from_slice(&[45, 0, 45, 0]); // Versions
+	out.extend_from_slice(&[0; 8]); // Disk numbers
+	out.extend_from_slice(&u64::from(entries).to_le_bytes());
+	out.extend_from_slice(&u64::from(entries).to_le_bytes());
+	out.extend_from_slice(&u64::from(size).to_le_bytes());
+	out.extend_from_slice(&u64::from(offset).to_le_bytes());
+
+	out.extend_from_slice(&0x0706_4B50_u32.to_le_bytes());
+	out.extend_from_slice(&0_u32.to_le_bytes());
+	out.extend_from_slice(&record_offset.to_le_bytes());
+	out.extend_from_slice(&1_u32.to_le_bytes());
+
+	out.extend_from_slice(&0x0605_4B50_u32.to_le_bytes());
+	out.extend_from_slice(&[0; 4]);
+	out.extend_from_slice(&u16::MAX.to_le_bytes());
+	out.extend_from_slice(&u16::MAX.to_le_bytes());
+	out.extend_from_slice(&u32::MAX.to_le_bytes());
+	out.extend_from_slice(&u32::MAX.to_le_bytes());
+	out.extend_from_slice(&0_u16.to_le_bytes());
+
+	out
+}
+
+/// Builds an archive with a single stored entry whose sizes and offset are in a ZIP64 extra field.
+fn zip64_entry_archive(name: &str, data: &[u8]) -> Vec<u8> {
+	let crc32 = crc32fast::hash(data);
+	let mut archive = Vec::new();
+
+	archive.extend_from_slice(&0x0403_4B50_u32.to_le_bytes());
+	archive.extend_from_slice(&[45, 0, 0, 0, 0, 0]); // Version, flags, method
+	archive.extend_from_slice(&[0; 4]);
+	archive.extend_from_slice(&crc32.to_le_bytes());
+	archive.extend_from_slice(&(data.len() as u32).to_le_bytes());
+	archive.extend_from_slice(&(data.len() as u32).to_le_bytes());
+	archive.extend_from_slice(&(name.len() as u16).to_le_bytes());
+	archive.extend_from_slice(&[0, 0]);
+	archive.extend_from_slice(name.as_bytes());
+	archive.extend_from_slice(data);
+
+	let mut central_directory = Vec::new();
+	central_directory.extend_from_slice(&0x0201_4B50_u32.to_le_bytes());
+	central_directory.extend_from_slice(&[45, 0, 45, 0, 0, 0, 0, 0]); // Versions, flags, method
+	central_directory.extend_from_slice(&[0; 4]);
+	central_directory.extend_from_slice(&crc32.to_le_bytes());
+	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
+	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
+	central_directory.extend_from_slice(&(name.len() as u16).to_le_bytes());
+	central_directory.extend_from_slice(&32_u16.to_le_bytes()); // Extra field length
+	central_directory.extend_from_slice(&[0; 10]); // Comment length, disk, attributes
+	central_directory.extend_from_slice(&u32::MAX.to_le_bytes());
+	central_directory.extend_from_slice(name.as_bytes());
+	// An unrelated extra field, and then the ZIP64 one
+	central_directory.extend_from_slice(&[0xFF, 0xFF, 0, 0]);
+	central_directory.extend_from_slice(&1_u16.to_le_bytes());
+	central_directory.extend_from_slice(&24_u16.to_le_bytes());
+	central_directory.extend_from_slice(&(data.len() as u64).to_le_bytes());
+	central_directory.extend_from_slice(&(data.len() as u64).to_le_bytes());
+	central_directory.extend_from_slice(&0_u64.to_le_bytes());
+
+	let central_directory_offset = archive.len() as u32;
+	archive.extend_from_slice(&central_directory);
+
+	archive.extend_from_slice(&0x0605_4B50_u32.to_le_bytes());
+	archive.extend_from_slice(&[0; 4]);
+	archive.extend_from_slice(&1_u16.to_le_bytes());
+	archive.extend_from_slice(&1_u16.to_le_bytes());
+	archive.extend_from_slice(&(central_directory.len() as u32).to_le_bytes());
+	archive.extend_from_slice(&central_directory_offset.to_le_bytes());
+	archive.extend_from_slice(&0_u16.to_le_bytes());
+
+	archive
+}
+
+#[test]
+fn zip_reader_supports_zip64_archives() {
+	let archive = ZipArchive::parse(with_zip64_end_records(&zip(
+		&[("a.txt", b"first", false), ("b.txt", b"second", true)],
+		b""
+	)))
+	.unwrap();
+	assert_eq!(archive.read("a.txt").as_deref(), Some(&b"first"[..]));
+	assert_eq!(archive.read("b.txt").as_deref(), Some(&b"second"[..]));
+
+	let archive = ZipArchive::parse(zip64_entry_archive("big.txt", b"zip64 entry")).unwrap();
+	assert_eq!(archive.read("big.txt").as_deref(), Some(&b"zip64 entry"[..]));
+
+	// A maxed out field without ZIP64 records can't be trusted
+	let mut broken = with_zip64_end_records(&zip(&[("a.txt", b"first", false)], b""));
+	let record_start = broken.len() - 22 - 20 - 56;
+	broken[record_start] ^= 0xFF;
+	assert!(matches!(
+		ZipArchive::parse(broken),
+		Err(ZipReadError::Zip64Unsupported)
+	));
+}
+
+#[test]
+fn zip_reader_handles_many_entries() {
+	// More entries than the 16-bit counter of regular archives can hold
+	let names = (0..70_000).map(|i| format!("f/{i}")).collect::<Vec<_>>();
+	let entries = names
+		.iter()
+		.map(|name| (name.as_str(), &b"x"[..], false))
+		.collect::<Vec<_>>();
+	let archive = zip(&entries, b"");
+
+	// The regular helper writes the wrapped counter, so convert it like a ZIP64 writer would
+	let end = archive.len() - 22;
+	let mut fixed = archive[..end].to_vec();
+	fixed.extend_from_slice(&with_zip64_end_records(&{
+		let mut tail = archive.clone();
+		tail[end + 10..end + 12].copy_from_slice(&0_u16.to_le_bytes());
+		tail
+	})[end..]);
+	// Patch the real counts into the ZIP64 record, which starts where the end record was
+	fixed[end + 32..end + 40].copy_from_slice(&70_000_u64.to_le_bytes());
+	fixed[end + 24..end + 32].copy_from_slice(&70_000_u64.to_le_bytes());
+
+	let archive = ZipArchive::parse(fixed).unwrap();
+	assert!(archive.contains("f/0") && archive.contains("f/69999"));
+	assert_eq!(archive.read("f/65536").as_deref(), Some(&b"x"[..]));
 }
