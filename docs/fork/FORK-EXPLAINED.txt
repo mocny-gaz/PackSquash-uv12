@@ -1,0 +1,249 @@
+PACKSQUASH FORK: WHAT EACH CHANGE DOES
+======================================
+
+This file explains the changes in your fork (mocny-gaz/PackSquash-uv12) in plain
+words. The patches are applied in this order:
+
+  0001  mcchanges (issue 402) and unused OptiFine sky images
+  0002  language keys (issue 197) and jars with many versions
+  0003  Bedrock Edition packs (issue 266)
+  0004  OptiFine sky image merging, README section, jar tools
+  0005  rename to mcchanges, Bedrock jars, ZIP64
+  0006  copy_as_is file option (issues 338, 368) and shader #include (issue 397)
+  0007  audio files as hashes
+  0008  handoff file and README order
+
+Apply them with git am, as FIRST-RELEASE-GUIDE.txt shows. To make the commits yours
+after that, run: git rebase master --exec "git commit --amend --reset-author --no-edit"
+(An earlier version of this file said "git am --reset-author". That switch does not
+exist.)
+
+The file HANDOFF.md in the repository has the full technical record.
+
+
+1. MCCHANGES (issue 402)
+----------------------------
+
+Problem: many packs are built from a full copy of the vanilla assets, so they
+contain thousands of files that are identical to the game files.
+
+Solution: mcchanges_path points to the vanilla assets. This can be a
+folder, a ZIP, or a client .jar. PackSquash then leaves out every pack file that
+is identical to the vanilla file with the same path. The game loads that file
+from vanilla anyway, so players see no difference.
+
+How files are compared:
+  - Textures: same size and same pixels. How the PNG was encoded does not matter.
+    The color of fully transparent pixels is ignored, as nobody can see it.
+  - JSON files: same contents. Formatting and key order do not matter.
+  - Any other file: same bytes.
+  - A texture and its .png.mcmeta animation file leave together or stay
+    together. The game reads the animation file from the same pack that gives
+    the texture. If only one of them left, animations could break.
+  - pack.mcmeta and pack.png are never left out.
+
+Limits:
+  - The mcchanges must match the game version of the pack.
+  - If your pack sits above other packs, a removed file lets the lower pack show
+    through. This is the same as in any pack that does not contain the file.
+
+
+2. LANGUAGE KEYS (issue 197)
+----------------------------
+
+Problem: language files often copy hundreds of vanilla texts that the pack did
+not change.
+
+Solution: with a mcchanges pack, PackSquash removes the entries that have the
+same value as vanilla. This works for .json files (modern versions) and .lang
+files (old versions) in the lang folder of each namespace.
+
+Example:
+
+  vanilla en_us.json:  Stone=Stone, Dirt=Dirt, Apple=Apple
+  your en_us.json:     Stone=Stone, Dirt=Soil, Apple=Apple, MyTitle=My Pack
+  result in the ZIP:   Dirt=Soil, MyTitle=My Pack
+
+The game asks each pack for every text, from the top pack to the bottom pack.
+Your pack no longer has "Stone", so vanilla answers with the same text. If every
+entry of a file is identical to vanilla, the whole file is left out.
+
+Details:
+  - In a .lang file, a key written twice uses its last value in the game.
+    PackSquash judges the key by that last value.
+  - The remaining JSON is written without formatting, in the original order.
+  - Comments, blank lines and line endings of .lang files are kept.
+  - Files that are not valid language files stay as they are.
+  - Option: skip_language_keys_identical_to_mcchanges. It is on by default, but
+    it only does something when mcchanges_path is set.
+
+
+3. THE BASELINE JAR WITH MANY VERSIONS
+--------------------------------------
+
+Problem: your HTML tool needs one vanilla jar per game version. Each jar has
+almost the same textures as the one before.
+
+Chosen method: one jar where each version stores only what it changed. I chose
+this over a full copy per version, because a full copy repeats every unchanged
+texture for every version.
+
+Layout of the jar:
+
+  mcchanges.jar
+    mcchanges.json                  the version list and the deleted files
+    1.6.1/assets/...               all files of the oldest version
+    1.7.2/assets/...               only files added or changed since 1.6.1
+    1.21.4/assets/...              only files added or changed since 1.21.3
+
+mcchanges.json looks like this:
+
+  {
+    "format": 1,
+    "versions": ["1.6.1", "1.7.2", "1.21.4"],
+    "removed": { "1.7.2": ["assets/minecraft/textures/blocks/old.png"] }
+  }
+
+  - versions: from the oldest to the newest release, in release order.
+  - removed: files that a version deleted compared to the version before it.
+
+You asked for "only add the new version if it only adds files". The chosen
+format covers that case and the others. A version that changes or deletes files
+also fits, because changes are stored as new files and deletions are listed.
+
+How PackSquash reads it: you set mcchanges_version = '1.21.4'. For each
+file, PackSquash looks in the 1.21.4 folder first, then in the version before,
+and so on. It stops at the first folder that has the file, or at the first
+version that deleted it.
+
+How to build it and keep it up to date:
+  - tools/mcchanges-jar/build_mcchanges_jar.py downloads the releases, packs them,
+    and checks the result, for Java Edition and Bedrock Edition. The same command
+    with --update appends new versions. In my test, an update gave a file
+    identical to a full rebuild.
+  - Audio files are stored only as hashes (SHA-1 for Java, taken from the Mojang
+    asset index without downloading the sounds, SHA-256 for Bedrock). PackSquash
+    leaves out the sounds of a pack that have the same hash.
+  - Archives with more than 65535 entries are supported (ZIP64).
+  - tools/mcchanges-jar/mcchanges-jar-prompt.md is the prompt for an AI. It tells
+    the AI how to download the releases from Mojang, run the script, check the
+    result, and update the jar later.
+  - Not tested: the real Mojang servers. My sandbox cannot reach them. The Java
+    steps were tested against a local copy of their behavior.
+  - Tested with real data: two Bedrock releases from Mojang/bedrock-samples gave an
+    82 MB jar with 4769 sound hashes.
+  - Not measured: the size of a full Java jar.
+  - The jar holds Mojang files. Do not publish it (see MCCHANGES-JAR-GUIDE.txt).
+
+Idea for your HTML tool:
+  - The user loads the jar once. The tool reads mcchanges.json and shows a
+    version list.
+  - To read a path, the tool walks from the chosen version to the oldest one,
+    like PackSquash does.
+  - The tool computes texture pixel hashes only for paths that exist in the
+    mcchanges, and caches them.
+  - The tool keeps the jar in IndexedDB, so the user does not load it each time.
+  - The tool writes mcchanges_path and mcchanges_version in the
+    packsquash.toml that it generates.
+
+
+4. BEDROCK EDITION PACKS (issue 266)
+------------------------------------
+
+What it is: Bedrock packs are .mcpack files, which are ZIP files. They use
+manifest.json instead of pack.mcmeta, and their folders and formats differ from
+Java packs.
+
+How it works: PackSquash detects a Bedrock pack when the pack folder has a
+manifest.json file and no pack.mcmeta file. You can also set pack_edition to
+'bedrock'.
+
+Rules:
+  - manifest.json is checked: format_version, header (name, uuid, version), and
+    modules (type, uuid, version). A repeated uuid is an error, because the game
+    refuses such packs. Missing min_engine_version only gives a warning.
+  - PNG files are optimized without losing data. The color of transparent
+    pixels is never changed. Some Bedrock textures store other data in the
+    alpha channel, for example the subsurface scattering of ray tracing.
+  - JSON files are minified. Comments are removed, and the key order is kept.
+    A number like 2.50 is written as 2.5, which has the same value.
+  - OGG files are optimized as Ogg Vorbis audio.
+  - Every other file in a folder is copied as it is: .lang, .tga, .wav, .fsb,
+    .material, and so on. The Java language file optimizer would reject valid
+    Bedrock .lang files, so those are copied.
+  - Files at the root of the pack that are not part of Bedrock packs, like
+    README.txt, are skipped and reported. You can include them with
+    force_include = true.
+  - Only the zip_spec_conformance_level 'pedantic' is allowed. I could not check
+    the other levels against the Bedrock ZIP reader, so PackSquash refuses them.
+  - A JSON file that Bedrock accepts but real JSON does not, for example with a
+    trailing comma, gives an error. Copy it with force_include = true.
+
+Not tested: loading a processed pack in the game. The rules come from the
+Bedrock documentation and from the Bedrock Wiki, and automated tests check them.
+Please test a real pack in the game before you publish it.
+
+
+5. OPTIFINE SKY IMAGES
+----------------------
+
+skip_unused_optifine_sky_images
+  Leaves out sky images that no sky entry (.properties file) names. This is the
+  "deletes sky images no entry uses" part of your HTML tool.
+
+merge_identical_optifine_sky_images
+  Merges images with identical bytes in the same folder. The first image in path
+  order stays. The other ones are left out, and the sky entries of that folder
+  are changed to use the image that stays. This is the "merges identical sky
+  images" part of your HTML tool.
+
+Differences from your HTML tool, on purpose:
+  - Only whole file names are replaced, so b.png changes in "source=./b.png",
+    but not in "source=ab.png". Your HTML tool replaces any matching text.
+  - An image is not merged if a sky entry in another folder names it, because
+    that entry may mean another image with the same name.
+
+Both options need allow_mods to contain 'OptiFine', and both are off by default.
+
+What PackSquash already did before: it ignores Thumbs.db, desktop.ini, .bak and
+.tmp files, skips files it does not recognize (outside assets, .psd, .xcf), and
+it already minifies JSON and recompresses PNG files. The other debloat options
+of your HTML tool are covered by that.
+
+
+6. COPY FILES UNTOUCHED (issues 338 and 368)
+--------------------------------------------
+
+The file option copy_as_is = true copies the files that match a glob exactly as
+they are, even when PackSquash knows how to optimize them (shaders, JSON files,
+textures). The file keeps its name. Example:
+
+  ['assets/minecraft/shaders/core/**']
+  copy_as_is = true
+
+The upstream author suggested an ignore file. A TOML option fits the way PackSquash
+is configured, and the author said he would consider it. The language key removal
+and the sky options do not change files with copy_as_is.
+
+
+7. SHADERS WITH #include (issue 397)
+------------------------------------
+
+Minecraft 26.3 snapshots use #include in shaders. PackSquash failed on it with an
+unknown directive error. Now it treats #include like an #moj_import that it can not
+expand: the shader is copied as is, and syntax errors are tentative. This is the
+fallback that the upstream author described. It is not a full resolver.
+
+
+8. THINGS I DID NOT VERIFY
+--------------------------
+
+  - The game itself. I tested with automated tests only.
+  - The Mojang download steps of the mcchanges jar prompt.
+  - Formatting with the nightly rustfmt of your rust-toolchain file. I only had
+    a stable one. Run "cargo fmt --all" before you push.
+  - Clippy with your exact toolchain. It was clean with stable 1.99.
+  - Anything on Windows. I compiled and tested on Linux.
+  - One test of the original code fails in my sandbox because it needs real
+    hardware serial numbers: get_aggregated_dmi_serial_numbers_id.
+  - The two slow "ditherbomb" PNG tests, which I skipped.

@@ -1,0 +1,357 @@
+FIRST RELEASE GUIDE FOR YOUR PACKSQUASH FORK
+============================================
+
+This guide takes you from the patch files to a published release with
+Windows, Linux and macOS programs. The commands are for the Windows command
+prompt (cmd), with your project in C:\apscl and your fork on GitHub.
+
+Short version of the whole path:
+
+  1. Apply the patches with git                    (part 1)
+  2. Format and check the code on your computer      (part 2)
+  3. Prepare the GitHub build (3 small edits)        (part 3)
+  4. Set the version and the changelog               (part 4)
+  5. Push, wait for the green check, push a tag      (part 5)
+  6. Publish the draft release that GitHub creates   (part 6)
+
+GitHub builds the programs for you. You do not need to compile anything yourself
+to make a release. Part 7 shows how to compile on your computer if you want to.
+
+
+PART 0. THINGS TO INSTALL
+-------------------------
+
+Open cmd and run these once. Each line installs one program:
+
+  winget install Git.Git
+  winget install Rustlang.Rustup
+  winget install Kitware.CMake
+  winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  winget install Python.Python.3.12
+  winget install GitHub.cli
+
+What they are for:
+  Git          the version control program
+  Rustup       installs the Rust compiler. The file rust-toolchain in your
+               project tells it to use "nightly", and it installs that by itself
+               the first time you run cargo in the project
+  CMake        needed to compile some parts of PackSquash
+  Build Tools  the C++ compiler that Rust needs on Windows
+  Python       runs the mcchanges jar script
+  GitHub CLI   optional, for releases from the command line
+
+Close cmd and open it again after the installs, so the new programs are found.
+Check them:   git --version    cargo --version    cmake --version
+
+
+PART 1. APPLY THE PATCHES
+-------------------------
+
+Put the patch files in one folder, for example C:\patches. Each has a number, and
+git applies them in number order:
+
+  0001-baseline-pack-and-unused-sky-images.patch
+  0002-language-keys-and-versioned-baseline.patch
+  0003-bedrock-edition-packs.patch
+  0004-sky-merge-readme-and-tools.patch
+  0005-mcchanges-rename-and-bedrock-jar.patch
+  0006-copy-as-is-and-shader-include.patch
+  0007-audio-hashes.patch
+  0008-handoff-and-readme.patch
+  (and any later one that I send, such as the cleanup patch)
+
+Each command below, with what it does:
+
+  cd /d C:\apscl
+      Go to your project. /d also changes the drive if you were on another one.
+
+  git status
+      Shows your changed files. You want to see "nothing to commit, working tree
+      clean". If it lists changes, commit or stash them first.
+
+  git remote -v
+      Shows where "origin" points. It must be your fork (mocny-gaz/PackSquash-uv12).
+
+  git checkout master
+      Switches to the master branch.
+
+  git pull
+      Downloads new commits from your fork on GitHub.
+
+  git checkout -b mcchanges-features
+      Creates a new branch and switches to it. If something goes wrong, master
+      is still untouched.
+
+  git am C:\patches\0001-baseline-pack-and-unused-sky-images.patch C:\patches\0002-language-keys-and-versioned-baseline.patch C:\patches\0003-bedrock-edition-packs.patch C:\patches\0004-sky-merge-readme-and-tools.patch C:\patches\0005-mcchanges-rename-and-bedrock-jar.patch C:\patches\0006-copy-as-is-and-shader-include.patch C:\patches\0007-audio-hashes.patch C:\patches\0008-handoff-and-readme.patch
+      Applies the patches in this order, as one commit each. This is one long
+      line. In PowerShell you can write: git am (Get-ChildItem C:\patches\*.patch | Sort-Object Name).FullName
+
+  git log --oneline -9
+      Shows the last commits. You should see the new ones on top.
+
+If git am stops with an error:
+  git am --abort              cancels everything and returns to the start
+  git am --3way <files>       tries again and lets git merge small differences
+  git am --skip               skips the patch that fails (only if you know why)
+
+The patches were tested on the original PackSquash commit 4f0f501 ("fix(optifine):
+do not skip randomized model selection config for CEM"). If your fork has other
+changes, a patch can conflict. Send me the error text.
+
+The commits have the author "Claude". To make them yours, run this after git am
+(master is the branch you started from):
+
+  git rebase master --exec "git commit --amend --reset-author --no-edit"
+
+A correction: earlier I wrote that "git am --reset-author" exists. It does not.
+The line above is the working way. It is the git commit command that has that
+switch, and the rebase runs it for each commit.
+
+Check that your name and email are set, before you do it:
+
+  git config user.name
+  git config user.email
+
+If they print nothing:
+
+  git config --global user.name "Your Name"
+  git config --global user.email "you@example.com"
+
+
+PART 2. FORMAT AND CHECK THE CODE
+---------------------------------
+
+The CI of the project checks the format of the code and runs clippy (a code
+checker), and it fails on any warning. I could only run a stable version of
+these tools. Run yours first so CI does not fail:
+
+  cd /d C:\apscl
+  cargo fmt --all
+      Formats all the code with the rules of the project. This can change the
+      files I wrote, because I formatted them by hand.
+
+  cargo clippy --no-deps --all-targets -- -D warnings
+      Checks the code. It must end without warnings. The first run downloads and
+      compiles many libraries, so it takes some minutes.
+
+  cargo test --workspace
+      Runs all tests. On Linux, one original test (get_aggregated_dmi_serial_numbers_id)
+      can fail when the computer has no hardware serial numbers. That is not a
+      problem of the patches. Tell me about any other failure.
+
+Then save any formatting changes:
+
+  git add -A
+  git commit -m "style: format code"
+      (If git says "nothing to commit", skip the commit.)
+
+Put the work on master and send it to GitHub:
+
+  git checkout master
+  git merge --ff-only mcchanges-features
+      Moves master to the new commits. --ff-only refuses to create a merge
+      commit, so the history stays a straight line.
+
+  git push origin master
+      Sends master to GitHub.
+
+
+PART 3. PREPARE THE GITHUB BUILD
+--------------------------------
+
+3.1 Turn on Actions. Open your repository on GitHub, click the "Actions" tab,
+    and click "I understand my workflows, go ahead and enable them". Forks have
+    them off by default.
+
+3.2 Change the runner names. The original project uses paid runners called
+    "blacksmith-4vcpu-ubuntu-2404" that your fork does not have. Without this
+    change, the jobs wait forever. Open .github\workflows\ci.yml in VS Code
+    or another editor, use Find and Replace, replace all (3 matches):
+
+      blacksmith-4vcpu-ubuntu-2404     with     ubuntu-24.04
+
+    Do it in an editor, not with a command line tool. The file has emoji, and
+    some Windows tools damage them.
+
+3.3 Add the build secret. In your repository on GitHub, open
+    Settings > Secrets and variables > Actions > New repository secret.
+      Name:   CONST_RANDOM_SEED
+      Value:  any long random text. You can make one in PowerShell:
+              -join ((1..64) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+    It seeds the hiding of text strings inside the program. Use the same value
+    for every release if you want builds that can be reproduced.
+
+3.4 Check the workflow permissions: Settings > Actions > General > Workflow
+    permissions. Choose "Read and write permissions" and save. CI creates the
+    release with the token of the workflow.
+
+3.5 Stop the wiki job from failing. The file .github\workflows\wiki-sync.yml
+    copies docs\wiki to the GitHub wiki of the repository. Your fork has no wiki
+    set up, so the job fails on each change of the docs. Remove it:
+
+      cd /d C:\apscl
+      git rm .github\workflows\wiki-sync.yml
+
+    The "benchmark" job of ci.yml needs a private password of the original
+    project and fails. The project marks that failure as not critical. Ignore it.
+
+Save these changes:
+
+  git add -A
+  git commit -m "ci: use GitHub runners and stop the wiki sync"
+
+
+PART 4. SET THE VERSION AND THE CHANGELOG
+-----------------------------------------
+
+4.1 Version. Open Cargo.toml in the root of the project. In [workspace.package],
+    change the line
+
+      version = "0.4.1"
+    to
+      version = "0.5.0-fork.1"
+
+    "0.5.0" means new features compared with 0.4.x. "-fork.1" marks it as your
+    fork, so it can not be confused with a later release of the original project.
+    If the Debian package step of CI complains about the "-" in the version, use
+    "0.5.0" instead.
+
+    Update the lock file, so that the lock and the version agree:
+
+      cargo check -p packsquash_cli
+
+    Only a few lines of Cargo.lock change. Check with:   git diff Cargo.lock
+
+4.2 Changelog. Open CHANGELOG.md. Find the line
+
+      ## [Unreleased]
+
+    Add a new empty section above it, and give the current one the version and
+    the date (YYYY-MM-DD):
+
+      ## [Unreleased]
+
+      ## [0.5.0-fork.1] - 2026-10-24
+
+    Everything that was under "Unreleased" now belongs to 0.5.0-fork.1. It
+    includes the changes of the original project that were not released yet,
+    which your fork now ships too.
+
+4.3 Save:
+
+  git add -A
+  git commit -m "chore: release 0.5.0-fork.1"
+
+
+PART 5. PUSH, CHECK, TAG
+------------------------
+
+  git push origin master
+      Sends everything to GitHub. CI starts.
+
+Open the Actions tab and wait for the run to finish. It must be green (the
+benchmark job may be red, ignore it). If "static analysis" is red, open it and
+read why. Almost always it is the format: run cargo fmt --all, commit, push.
+
+When it is green, create the release tag. A tag is a name for one commit. The
+tag name must start with "v", because CI builds releases for tags like that:
+
+  git tag -a v0.5.0-fork.1 -m "PackSquash fork 0.5.0-fork.1"
+      Creates the tag on the current commit.
+
+  git push origin v0.5.0-fork.1
+      Sends the tag to GitHub. CI starts again and, this time, also builds the
+      release programs.
+
+Wait for this run too. It builds programs for Windows, Linux (glibc and musl,
+x86-64 and ARM), and macOS, a Debian package, and a Docker image. It takes a
+while. I did not time it.
+
+
+PART 6. PUBLISH THE RELEASE
+---------------------------
+
+When the tag run ends, CI has created a DRAFT release with the programs
+attached and notes that GitHub generated.
+
+  1. Open your repository > Releases. You see a draft called v0.5.0-fork.1.
+  2. Click the pencil to edit it.
+  3. Replace the notes with the text of the 0.5.0-fork.1 section of CHANGELOG.md.
+     Add one line that this is a fork, with a link to the original project.
+  4. Download the Windows program from the draft and test it (below).
+  5. Click "Publish release".
+
+Test the program before you publish. Unzip it, open cmd in that folder:
+
+  packsquash.exe --version
+      Must show 0.5.0-fork.1.
+
+  packsquash.exe path\to\packsquash.toml
+      Optimizes a pack with the options file. Try one Java pack, one Bedrock
+      pack, and one run with mcchanges_path set (see MCCHANGES-JAR-GUIDE.txt).
+
+Do not attach the mcchanges jar to the release. It holds Mojang's files. Read
+section 6 of MCCHANGES-JAR-GUIDE.txt.
+
+If you are not comfortable with the original author's name on a fork release,
+read the license: PackSquash is AGPL-3.0-or-later. A fork may be published, and
+the source code of your version must stay available. A public GitHub fork does
+that. Keep the license file and the notice in the README.
+
+
+PART 7. COMPILE ON YOUR COMPUTER (OPTIONAL)
+-------------------------------------------
+
+There is no Windows build script in the project. These are the build files that
+exist:
+
+  Cargo.toml               describes the project. cargo reads it.
+  .github\workflows\ci.yml the release builds. GitHub runs it. You do not.
+  scripts\build_deb.sh     makes a Debian package. Linux only.
+  .cargo\config.toml       compiler settings. Cargo reads it by itself.
+
+To compile for your own use:
+
+  cd /d C:\apscl
+  cargo build --release -p packsquash_cli
+
+The first build takes a long time because it compiles all the libraries. The
+program is created here:
+
+  C:\apscl\target\release\packsquash.exe
+
+Run it:
+
+  target\release\packsquash.exe --help
+  target\release\packsquash.exe C:\path\to\packsquash.toml
+
+The project's releases use the GNU Windows toolchain, and I could only compile and
+test on Linux. The command above uses the default Windows toolchain, which is
+MSVC. I did not test it. If it fails to compile, use the program that CI builds
+(part 6). To use the GNU toolchain like the project does, you also need MinGW-w64
+(install MSYS2 from msys2.org and its mingw-w64-x86_64-gcc package), and then:
+
+  rustup toolchain install nightly-x86_64-pc-windows-gnu
+  cargo +nightly-x86_64-pc-windows-gnu build --release -p packsquash_cli
+
+To make a release by hand, without CI, after you built the program:
+
+  gh release create v0.5.0-fork.1 target\release\packsquash.exe --title "0.5.0-fork.1" --notes-file release-notes.txt
+
+where release-notes.txt holds your notes. CI does a better job (all platforms,
+checksums, build proof), so use it when you can.
+
+
+PART 8. PROBLEMS
+----------------
+
+  CI jobs stay "Queued" for ever     Runner names were not changed (3.2).
+  "static analysis" is red           Run cargo fmt --all, commit, push.
+  No draft release after the tag     Check Settings > Actions > General >
+                                     Workflow permissions (3.4), and the run log.
+  The ARM jobs do not start          ARM runners are free for public repositories
+                                     only. Make the repository public or remove
+                                     the ARM entries from the build matrix.
+  git am says "patch does not apply" Your fork differs from the base commit.
+                                     Use "git am --3way", or send me the error.
+  cargo is not recognized            Close and reopen cmd after installing Rust.

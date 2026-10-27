@@ -1,0 +1,213 @@
+MCCHANGES JAR GUIDE
+===================
+
+The mcchanges jar holds the vanilla files of many Minecraft versions. PackSquash
+uses it to leave out the files of your pack that are identical to vanilla.
+You build it once with one command, and update it with one more command when new
+game versions come out.
+
+The commands below are for the Windows command prompt (cmd), with the project in
+C:\apscl. The script is written for the Python standard library only.
+
+
+0. YOUR QUESTION: WHAT DOES EACH VERSION GET COMPARED WITH?
+------------------------------------------------------------
+
+With the version before it. Yes, this is the second variant you asked for.
+
+  1.6.1  stores all its files
+  1.7.2  stores what is new or changed compared with 1.6.1
+  1.8    stores what is new or changed compared with 1.7.2
+  1.8.1  stores what is new or changed compared with 1.8
+  ...
+
+If you are on 1.8.3, the jar compares 1.8.3 with 1.8.2. Files that a version
+deleted are listed in mcchanges.json. PackSquash walks back through the versions
+to find a file, so it gets the right file for any version you choose.
+
+
+1. WHAT YOU NEED
+----------------
+
+  - Python 3.9 or newer from python.org. Check it:   python --version
+  - Internet access.
+  - Git, for the Bedrock command. It lists the versions with git, which has no
+    rate limit. Without git, the script uses the GitHub web API instead, which
+    answers "HTTP 403" after about 60 requests per hour. In that case, create a
+    GitHub token and run:   set GITHUB_TOKEN=your_token_here
+  - Free disk space. The script keeps small copies of what it downloaded in the
+    folder mcchanges-work, so a stopped run continues where it stopped.
+
+
+2. BUILD THE JAR
+----------------
+
+Open cmd and go to the project:
+
+  cd /d C:\apscl
+
+Java Edition. First look at what it would do. Nothing is downloaded:
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar --dry-run
+
+Then build it. This downloads every release from 1.6.1 to the newest one and
+takes a while. I did not time it:
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar
+
+Only the newest releases (faster, if you do not need old versions):
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar --last 10
+
+Only the version that you need, or no sounds at all (smallest jar):
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar --audio none
+
+Bedrock Edition. Each download is about 150 MB. The script keeps only the
+resource pack files, so the jar is much smaller. Two versions gave an 82 MB jar
+in my test:
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py bedrock --output C:\amc\mcchanges-bedrock.jar --count 5
+
+At the end you see a line like:
+
+  wrote C:\amc\mcchanges-java.jar (123.4 MB), verified 100 version(s)
+
+"verified" means the script rebuilt every version from the jar and compared it
+with the download. A line that starts with "error:" means that it failed.
+
+AUDIO FILES. Sound files (.ogg, .fsb, .wav, .mp3) are big, and packs rarely
+copy them unchanged. So the jar does not store them. It stores only a hash of
+each one, which is a short fingerprint of the file. PackSquash leaves out the
+sound files of your pack that have the same fingerprint as the vanilla one. This
+keeps the jar small and still removes the copied sounds.
+
+  - Java: the Mojang asset index already lists the SHA-1 of every sound, so the
+    script does not even download the sounds. The hashes cost almost nothing.
+  - Bedrock: the script reads the sound files in the download and keeps their
+    SHA-256 fingerprints.
+  - A sound that you re-encoded does not match, as the fingerprint of the bytes
+    changes. That is the same as for any other file that is not an exact copy.
+
+You can change this with --audio, on any build command:
+
+  --audio hash    the default. Keep only the fingerprints
+  --audio none    ignore sounds completely, the smallest jar
+  --audio full    store the sound files themselves. The jar gets very big
+
+If you build again with another --audio value and keep the old mcchanges-work
+folder, the script downloads the versions again, because the saved copies were
+made with the other value. To change the mode of an existing jar, build a new one.
+
+Other files that are not in the client jar come from the Mojang asset index: the
+language files and sounds.json.
+
+
+3. UPDATE THE JAR WHEN A NEW VERSION COMES OUT
+----------------------------------------------
+
+Run the same command with --update. It downloads only the new releases and keeps
+the old ones. The result is the same file that a full rebuild gives.
+
+  python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar --update
+  python tools\mcchanges-jar\build_mcchanges_jar.py bedrock --output C:\amc\mcchanges-bedrock.jar --update
+
+You can also give the AI the prompt in tools\mcchanges-jar\mcchanges-jar-prompt.md
+with the script and the current jar attached. It runs these commands for you.
+
+
+4. WHERE TO PUT THE JAR
+-----------------------
+
+Anywhere outside the folder of the pack that you optimize. PackSquash reads every
+file inside the pack folder, so a jar placed there would be treated as pack
+content. Use C:\amc\ for them, as in the examples. Make the folder once:
+
+  mkdir C:\amc
+
+Put the normal mcchanges jars and, later, the lite ones in that folder. Do not put it in C:\apscl:
+it is Mojang's data, and the repository should not contain it.
+
+If you keep it in C:\apscl anyway for convenience, tell git to ignore it:
+
+  cd /d C:\apscl
+  echo mcchanges-*.jar>>.gitignore
+  echo mcchanges-work/>>.gitignore
+  git add .gitignore
+  git commit -m "chore: ignore mcchanges jars and downloads"
+
+
+5. USE IT WITH PACKSQUASH
+-------------------------
+
+In the options file of your pack (packsquash.toml), add two lines. Use the
+version that your pack targets. These are version names, such as 1.21.4 for Java
+or 1.26.50.4 for Bedrock. The newest version is the last one in the jar.
+
+  mcchanges_path = 'C:\amc\mcchanges-java.jar'
+  mcchanges_version = '1.21.4'
+
+Run PackSquash with the options file as its only parameter:
+
+  packsquash.exe packsquash.toml
+
+PackSquash leaves out the files that are identical to the vanilla ones. It does
+not report them as warnings. To list the versions that a jar has:
+
+  python -c "import zipfile,json;print(json.loads(zipfile.ZipFile(r'C:\amc\mcchanges-java.jar').read('mcchanges.json'))['versions'])"
+
+Notes:
+  - The version must match the game version of the pack. A wrong version can
+    remove files that are different in the version that your players use.
+  - PackSquash loads the jar into memory. Expect a few hundred MB for a big jar.
+  - The option names changed from "baseline" to "mcchanges":
+      mcchanges_path
+      mcchanges_version
+      skip_language_keys_identical_to_mcchanges
+
+
+6. SHARING IT ON GITHUB
+-----------------------
+
+Do not upload the jar to a public GitHub repository or release.
+
+Why: the files inside are Mojang's. The Bedrock samples say "(c) Mojang AB. All
+rights reserved" and that the files are subject to the Minecraft EULA. The Java
+client jar has the same status. A public upload would be a redistribution that
+Mojang did not allow, and GitHub can remove it after a complaint. I am not a
+lawyer. Check Mojang's rules before you decide.
+
+What to share instead:
+
+  1. The script. It is already in your repository, in tools\mcchanges-jar. Anyone
+     who has the fork can build the jar with the commands in section 2 and keep
+     it updated with section 3. This takes one command and shares no Mojang data.
+  2. The README text in the fork explains the same steps.
+
+If you want to keep a copy for yourself or a small team, use a PRIVATE
+repository and its releases. With the GitHub command line tool (install it with
+"winget install GitHub.cli", then run "gh auth login"):
+
+  cd /d C:\mc
+  gh release create mcchanges-java mcchanges-java.jar --repo YOUR_NAME/YOUR_PRIVATE_REPO --title "mcchanges java" --notes "Built with build_mcchanges_jar.py"
+  gh release upload mcchanges-java mcchanges-java.jar --repo YOUR_NAME/YOUR_PRIVATE_REPO --clobber
+
+The second command replaces the file after an update.
+
+An idea that avoids the problem, for later: a file that stores only hashes of the
+vanilla files, not the files. It would be tiny and would hold no Mojang data.
+PackSquash would need new code to read it, and the language key removal would
+need the hashes of each value. I did not build this.
+
+
+7. PROBLEMS
+-----------
+
+  python is not recognized       Install Python and tick "Add python.exe to PATH".
+  HTTP 403 from api.github.com   Install git, or set GITHUB_TOKEN (section 1).
+  SHA-1 does not match           The script retries once. Run it again.
+  The run stopped halfway        Run the same command again. It continues.
+  "not in release order"         The jar was built with other versions than the
+                                 current list. Build it again with another --output.
+  No language files for a version  The script prints a note with the keys that
+                                 the asset index has. Send me that text.
