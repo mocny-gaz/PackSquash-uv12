@@ -581,7 +581,8 @@ root, with this structure:
 {
   "format": 1,
   "versions": ["1.8.9", "1.9", "1.9.4"],
-  "removed": { "1.9": ["assets/minecraft/textures/blocks/deleted.png"] }
+  "removed": { "1.9": ["assets/minecraft/textures/blocks/deleted.png"] },
+  "hashed": { "1.9": { "assets/minecraft/sounds/new.ogg": "sha1:0123abcd..." } }
 }
 ```
 
@@ -592,6 +593,13 @@ root, with this structure:
   relative to the previous one.
 - `removed` lists, for each version, the files that the version deleted relative
   to the previous one.
+- `hashed` is optional. For each version, it lists files that the version added
+  or changed, but whose contents are not stored, only their hash, written as
+  `sha1:` or `sha256:` followed by the hexadecimal digest. It is used for audio
+  files, which are big and which packs rarely copy. PackSquash leaves out the
+  files of the pack that have that hash. Files that are only known by their hash
+  are compared byte for byte, not by their contents, so a re-encoded file does
+  not match.
 
 To look up a file in the selected version, PackSquash checks the directory of
 that version first, then the directories of the previous versions, and stops at

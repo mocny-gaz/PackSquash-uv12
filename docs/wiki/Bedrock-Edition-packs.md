@@ -107,4 +107,7 @@ mcchanges_version = '1.26.50.4'
 
 The `manifest.json`, `pack_icon.png` and `bug_pack_icon.png` files are never left
 out. Language key removal only works for Java Edition language files. Sound files
-(`.ogg` and `.fsb`) are not in the jar unless you build it with `--include-audio`.
+(`.ogg`, `.fsb`, `.wav` and `.mp3`) are in the jar only as hashes, to save space:
+PackSquash still leaves out the sound files of your pack that are identical to
+the vanilla ones. Build the jar with `--audio full` to store the files, or with
+`--audio none` to ignore them.

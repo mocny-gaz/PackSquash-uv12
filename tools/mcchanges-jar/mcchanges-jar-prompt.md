@@ -40,6 +40,10 @@ python build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --update
 
 Add `--include-previews` only if the user asks for preview releases.
 
+## Audio
+
+Audio files are big and packs rarely copy them, so by default the jar stores only their hash. Java sounds are hashed with the SHA-1 that the Mojang asset index lists, without downloading them. Do not change this unless the user asks: `--audio none` ignores audio, and `--audio full` stores the files (very big).
+
 ## Before you run
 
 1. Add `--dry-run` once. It prints the versions that would be added and downloads nothing. Show it to the user if the list looks wrong.

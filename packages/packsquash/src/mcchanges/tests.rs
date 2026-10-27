@@ -4,6 +4,7 @@ use std::path::Path;
 
 use flate2::Compression;
 use flate2::write::{DeflateEncoder, ZlibEncoder};
+use serde_json::json;
 use tempfile::{Builder, TempDir};
 
 use super::*;
@@ -1011,4 +1012,84 @@ fn zip_reader_handles_many_entries() {
 	let archive = ZipArchive::parse(fixed).unwrap();
 	assert!(archive.contains("f/0") && archive.contains("f/69999"));
 	assert_eq!(archive.read("f/65536").as_deref(), Some(&b"x"[..]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn files_stored_as_hashes_are_compared_by_hash() {
+	use sha1::Sha1;
+	use sha2::{Digest, Sha256};
+
+	let hexadecimal = |digest: &[u8]| {
+		digest
+			.iter()
+			.map(|byte| format!("{byte:02x}"))
+			.collect::<String>()
+	};
+	let sha1 = |data: &[u8]| format!("sha1:{}", hexadecimal(&Sha1::digest(data)));
+	let sha256 = |data: &[u8]| format!("sha256:{}", hexadecimal(&Sha256::digest(data)).to_uppercase());
+
+	let index = json!({
+		"format": 1,
+		"versions": ["1.0", "1.1", "1.2"],
+		"hashed": {
+			"1.0": {"assets/minecraft/sounds/b.ogg": sha256(b"sound b")},
+			"1.1": {
+				"assets/minecraft/sounds/a.ogg": sha1(b"sound a"),
+				"assets/minecraft/sounds/c.ogg": "md5:0cc175b9c0f1b6a831c399e269772661",
+				"assets/minecraft/sounds/d.ogg": "no algorithm"
+			}
+		},
+		"removed": {"1.2": ["assets/minecraft/sounds/a.ogg"]}
+	});
+
+	let (dir, pack_dir, changed_pack_dir) = (temp_dir(), temp_dir(), temp_dir());
+	write_file(
+		dir.path(),
+		"mcchanges.jar",
+		&zip(
+			&[
+				("mcchanges.json", index.to_string().as_bytes(), true),
+				("1.0/assets/minecraft/texts/a.txt", b"a text", true)
+			],
+			b""
+		)
+	);
+
+	for (name, data) in [("a", "sound a"), ("b", "sound b"), ("c", "a"), ("d", "sound d")] {
+		write_file(pack_dir.path(), &format!("assets/minecraft/sounds/{name}.ogg"), data.as_bytes());
+		write_file(changed_pack_dir.path(), &format!("assets/minecraft/sounds/{name}.ogg"), b"changed");
+	}
+
+	// For each version, whether the files a, b, c and d are redundant
+	for (version, expected) in [
+		("1.0", [false, true, false, false]),
+		("1.1", [true, true, false, false]),
+		("1.2", [false, true, false, false])
+	] {
+		let mcchanges = McChanges::open(
+			&OsFilesystem,
+			&dir.path().join("mcchanges.jar"),
+			Some(version)
+		)
+		.await
+		.unwrap();
+
+		for (name, expected) in ["a", "b", "c", "d"].into_iter().zip(expected) {
+			let file = format!("assets/minecraft/sounds/{name}.ogg");
+
+			assert_eq!(
+				mcchanges
+					.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), &file))
+					.await,
+				expected,
+				"{name} in {version}"
+			);
+			assert!(
+				!mcchanges
+					.is_redundant(&OsFilesystem, &pack_file(changed_pack_dir.path(), &file))
+					.await,
+				"changed {name} in {version}"
+			);
+		}
+	}
 }

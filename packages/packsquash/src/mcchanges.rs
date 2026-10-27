@@ -26,6 +26,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use sha1::Sha1;
+use sha2::{Digest, Sha256};
 use spng::{ContextFlags, DecodeFlags, Format};
 use thiserror::Error;
 
@@ -94,14 +96,28 @@ struct VersionIndexFile {
 	format: u32,
 	versions: Vec<String>,
 	#[serde(default)]
-	removed: HashMap<String, Vec<String>>
+	removed: HashMap<String, Vec<String>>,
+	/// For each version, the files that it added or changed, but whose contents are not
+	/// stored in the mcchanges pack. They are represented by a hash in the format
+	/// `algorithm:hexadecimal digest`, with the algorithms `sha1` and `sha256`.
+	#[serde(default)]
+	hashed: HashMap<String, HashMap<String, String>>
 }
 
 /// A game version of a versioned mcchanges pack, and the files that it deleted
 /// relative to the previous version.
 struct VersionLayer {
 	version: String,
-	removed_files: HashSet<String>
+	removed_files: HashSet<String>,
+	hashed_files: HashMap<String, String>
+}
+
+/// A file of an mcchanges pack.
+enum McChangesEntry {
+	/// The contents of the file.
+	Data(Vec<u8>),
+	/// The hash of the contents of the file, as `algorithm:hexadecimal digest`.
+	Hash(String)
 }
 
 /// A loaded mcchanges pack, ready to be used to find redundant pack files.
@@ -183,6 +199,7 @@ impl McChanges {
 		};
 
 		let mut removed = index.removed;
+		let mut hashed = index.hashed;
 
 		Ok(index.versions[..=selected_position]
 			.iter()
@@ -192,7 +209,8 @@ impl McChanges {
 				removed_files: removed
 					.remove(version)
 					.map(|files| files.into_iter().collect())
-					.unwrap_or_default()
+					.unwrap_or_default(),
+				hashed_files: hashed.remove(version).unwrap_or_default()
 			})
 			.collect())
 	}
@@ -206,12 +224,19 @@ impl McChanges {
 		}
 	}
 
-	/// Reads the contents of the mcchanges pack file with the given relative path, if it
-	/// exists and can be read. For versioned mcchanges packs, this reads the file as it
-	/// is in the selected game version.
-	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
+	/// Finds the mcchanges pack file with the given relative path. For versioned mcchanges
+	/// packs, this finds the file as it is in the selected game version, which can be known only
+	/// by its hash. Returns `None` if the file does not exist or can't be read.
+	async fn lookup<V: VirtualFileSystem>(
+		&self,
+		vfs: &V,
+		relative_path: &str
+	) -> Option<McChangesEntry> {
 		let Some(layers) = &self.layers else {
-			return self.read_raw(vfs, relative_path).await;
+			return self
+				.read_raw(vfs, relative_path)
+				.await
+				.map(McChangesEntry::Data);
 		};
 
 		for layer in layers {
@@ -219,7 +244,11 @@ impl McChanges {
 				.read_raw(vfs, &format!("{}/{relative_path}", layer.version))
 				.await
 			{
-				return Some(data);
+				return Some(McChangesEntry::Data(data));
+			}
+
+			if let Some(hash) = layer.hashed_files.get(relative_path) {
+				return Some(McChangesEntry::Hash(hash.clone()));
 			}
 
 			if layer.removed_files.contains(relative_path) {
@@ -228,6 +257,15 @@ impl McChanges {
 		}
 
 		None
+	}
+
+	/// Reads the contents of the mcchanges pack file with the given relative path, if it
+	/// exists, can be read, and its contents are stored.
+	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
+		match self.lookup(vfs, relative_path).await {
+			Some(McChangesEntry::Data(data)) => Some(data),
+			_ => None
+		}
 	}
 
 	/// Checks whether including the given pack file in the result ZIP file is redundant
@@ -281,17 +319,19 @@ impl McChanges {
 				.await;
 		}
 
-		let (Some(pack_data), Some(mcchanges_data)) = (
+		let (Some(pack_data), Some(mcchanges_entry)) = (
 			read_file(vfs, &pack_file.file_path).await,
-			self.read(vfs, relative_path).await
+			self.lookup(vfs, relative_path).await
 		) else {
 			return false;
 		};
 
-		if relative_path.ends_with(".json") {
-			json_is_identical(&pack_data, &mcchanges_data)
-		} else {
-			pack_data == mcchanges_data
+		match mcchanges_entry {
+			McChangesEntry::Hash(hash) => hash_matches(&pack_data, &hash),
+			McChangesEntry::Data(mcchanges_data) if relative_path.ends_with(".json") => {
+				json_is_identical(&pack_data, &mcchanges_data)
+			}
+			McChangesEntry::Data(mcchanges_data) => pack_data == mcchanges_data
 		}
 	}
 
@@ -368,6 +408,26 @@ impl McChanges {
 
 		reduce(&pack_data, &mcchanges_data)
 	}
+}
+
+/// Checks whether the hash of some data is the given one, in the format
+/// `algorithm:hexadecimal digest`. Unknown algorithms never match.
+fn hash_matches(data: &[u8], hash: &str) -> bool {
+	fn hexadecimal(digest: impl AsRef<[u8]>) -> String {
+		digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+	}
+
+	let Some((algorithm, expected_digest)) = hash.split_once(':') else {
+		return false;
+	};
+
+	let actual_digest = match algorithm {
+		"sha1" => hexadecimal(Sha1::digest(data)),
+		"sha256" => hexadecimal(Sha256::digest(data)),
+		_ => return false
+	};
+
+	actual_digest.eq_ignore_ascii_case(expected_digest)
 }
 
 fn strip_bom(data: &[u8]) -> &[u8] {

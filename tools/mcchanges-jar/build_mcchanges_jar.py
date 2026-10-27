@@ -24,10 +24,14 @@ Commands (Python 3, no extra packages):
 releases that came out after them. The result is identical to a full rebuild.
 
 Output layout:
-  mcchanges.json            {"format": 1, "edition": "...", "versions": [...], "removed": {...}}
+  mcchanges.json            {"format": 1, "edition": "...", "versions": [...], "removed": {...}, "hashed": {...}}
   <oldest id>/...           every file of the oldest version
   <next id>/...             only files added or changed since the version before it
   "removed" lists, for each version, the files it deleted compared with the version before.
+  "hashed" lists, for each version, the audio files that it added or changed as a hash,
+  like "sha1:..." or "sha256:...". Audio files are big and are rarely copied by packs, so
+  only their hash is kept. PackSquash leaves out the audio files of a pack with that hash.
+  Use --audio full to store the audio files themselves, or --audio none to ignore them.
 
 The files inside belong to Mojang. Build the jar on your own computer and do not publish it.
 """
@@ -55,6 +59,9 @@ JAVA_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.
 JAVA_RESOURCES_URL = "https://resources.download.minecraft.net"
 # Files that are not in the client jar, but are in the asset index
 JAVA_EXTRA_KEY = re.compile(r"^minecraft/(lang/.+|sounds\.json)$")
+# Sounds are in the asset index too. It lists the SHA-1 of each one, so they can be hashed
+# without being downloaded
+JAVA_AUDIO_KEY = re.compile(r"^minecraft/.+\.(ogg|wav|mp3)$")
 
 BEDROCK_REPO = "Mojang/bedrock-samples"
 BEDROCK_TAG = re.compile(r"^v(\d+(?:\.\d+)+)(-preview)?$")
@@ -72,16 +79,22 @@ def fail(message):
 # Which files go in the jar
 # ----------------------------------------------------------------------------
 
+AUDIO_SUFFIXES = (".ogg", ".fsb", ".wav", ".mp3")
+
+
 class Filter:
-    def __init__(self, edition, include_data=False, include_audio=False):
+    def __init__(self, edition, include_data=False, audio="hash"):
         self.edition = edition
         self.include_data = include_data
-        self.include_audio = include_audio
+        self.audio = audio  # "hash", "full" or "none"
+
+    def is_audio(self, path):
+        return path.endswith(AUDIO_SUFFIXES)
 
     def wanted(self, path):
         if not path or path.endswith("/") or path.endswith(".class"):
             return False
-        if not self.include_audio and path.endswith((".ogg", ".fsb")):
+        if self.audio == "none" and self.is_audio(path):
             return False
         if self.edition == "java":
             return path.startswith("assets/") or (self.include_data and path.startswith("data/"))
@@ -139,15 +152,24 @@ def sha256(data):
 
 
 def read_zip(path, flt, prefix=""):
-    """Returns {path: bytes} for the wanted files of a ZIP file, without the prefix."""
-    files = {}
+    """Returns ({path: bytes}, {path: hash}) for the wanted files of a ZIP file.
+
+    Audio files are returned as hashes, not as bytes, if the filter asks for it.
+    """
+    files, hashes = {}, {}
     with zipfile.ZipFile(path) as archive:
         for info in archive.infolist():
             name = info.filename
             # Directories are skipped, including the one that the prefix names
-            if not name.endswith("/") and name.startswith(prefix) and flt.wanted(name[len(prefix):]):
-                files[name[len(prefix):]] = archive.read(info)
-    return files
+            if name.endswith("/") or not name.startswith(prefix) or not flt.wanted(name[len(prefix):]):
+                continue
+            relative = name[len(prefix):]
+            data = archive.read(info)
+            if flt.audio == "hash" and flt.is_audio(relative):
+                hashes[relative] = "sha256:" + sha256(data)
+            else:
+                files[relative] = data
+    return files, hashes
 
 
 def write_zip(destination, entries):
@@ -170,11 +192,15 @@ def write_zip(destination, entries):
 
 
 def load_version(versions_dir, version, flt):
-    """Returns {path: bytes} of a version from DIR/<id>.jar and the optional DIR/<id>.extra."""
+    """Returns ({path: bytes}, {path: hash}) of a version.
+
+    The files come from DIR/<id>.jar and the optional DIR/<id>.extra folder, and the hashes
+    of audio files that were collected while downloading come from DIR/<id>.audio.json.
+    """
     jar_path = os.path.join(versions_dir, version + ".jar")
     if not os.path.isfile(jar_path):
         fail(f"missing {jar_path}")
-    files = read_zip(jar_path, flt)
+    files, hashes = read_zip(jar_path, flt)
 
     extra_dir = os.path.join(versions_dir, version + ".extra")
     for root, _, names in os.walk(extra_dir):
@@ -184,11 +210,35 @@ def load_version(versions_dir, version, flt):
             if flt.wanted(path):
                 with open(full, "rb") as f:
                     files[path] = f.read()
-    return files
+
+    audio_path = os.path.join(versions_dir, version + ".audio.json")
+    if flt.audio == "hash" and os.path.isfile(audio_path):
+        with open(audio_path, encoding="utf-8") as f:
+            hashes.update(json.load(f))
+    return files, hashes
+
+
+def state_of(files, hashes):
+    """What identifies each path of a version: ('f', digest of the file) or ('h', its hash)."""
+    state = {path: ("f", sha256(data)) for path, data in files.items()}
+    state.update({path: ("h", token) for path, token in hashes.items()})
+    return state
+
+
+def apply_version(effective, index, version, archive_names, read):
+    """Applies a version of an mcchanges jar to the state of the previous version."""
+    for removed in index.get("removed", {}).get(version, []):
+        effective.pop(removed, None)
+    prefix = version + "/"
+    for name in archive_names:
+        if name.startswith(prefix):
+            effective[name[len(prefix):]] = ("f", sha256(read(name)))
+    for path, token in index.get("hashed", {}).get(version, {}).items():
+        effective[path] = ("h", token)
 
 
 def read_existing(path):
-    """Returns (index, effective hashes of the newest version, all entries)."""
+    """Returns (index, state of the newest version, all entries)."""
     with zipfile.ZipFile(path) as archive:
         if INDEX_NAME not in archive.namelist():
             fail(f"{path} has no {INDEX_NAME}, so it is not an mcchanges jar")
@@ -199,12 +249,7 @@ def read_existing(path):
 
     effective = {}
     for version in index["versions"]:
-        for removed in index.get("removed", {}).get(version, []):
-            effective.pop(removed, None)
-        prefix = version + "/"
-        for name, data in entries.items():
-            if name.startswith(prefix):
-                effective[name[len(prefix):]] = sha256(data)
+        apply_version(effective, index, version, entries, entries.__getitem__)
     return index, effective, entries
 
 
@@ -215,12 +260,7 @@ def verify(output, expected):
         names = [i.filename for i in archive.infolist() if not i.filename.endswith("/")]
         effective = {}
         for version in index["versions"]:
-            for removed in index.get("removed", {}).get(version, []):
-                effective.pop(removed, None)
-            prefix = version + "/"
-            for name in names:
-                if name.startswith(prefix):
-                    effective[name[len(prefix):]] = sha256(archive.read(name))
+            apply_version(effective, index, version, names, archive.read)
             if version in expected and effective != expected[version]:
                 want = expected[version]
                 fail(
@@ -231,7 +271,7 @@ def verify(output, expected):
 
 
 def pack(edition, flt, versions_dir, order, output, update):
-    """Packs the versions of `order` that are not in the output yet. Returns nothing."""
+    """Packs the versions of `order` that are not in the output yet."""
     if len(order) != len(set(order)):
         fail("duplicate version ids")
     if any("/" in v or "\\" in v or v in (".", "..") for v in order):
@@ -243,8 +283,9 @@ def pack(edition, flt, versions_dir, order, output, update):
         if order[: len(existing)] != existing:
             fail("the versions already in the output are not the start of the version list")
         removed_map = index.get("removed", {})
+        hashed_map = index.get("hashed", {})
     else:
-        existing, previous, entries, removed_map = [], {}, {}, {}
+        existing, previous, entries, removed_map, hashed_map = [], {}, {}, {}, {}
 
     new_versions = order[len(existing):]
     if not new_versions:
@@ -253,30 +294,63 @@ def pack(edition, flt, versions_dir, order, output, update):
 
     expected = {}
     for version in new_versions:
-        files = load_version(versions_dir, version, flt)
-        if not files:
+        files, hashes = load_version(versions_dir, version, flt)
+        if not files and not hashes:
             fail(f"no files found for {version}")
-        hashes = {path: sha256(data) for path, data in files.items()}
-        expected[version] = hashes
+        state = state_of(files, hashes)
+        expected[version] = state
 
         # Each version is compared with the version right before it
-        changed = [p for p in files if previous.get(p) != hashes[p]]
-        for path in changed:
+        changed_files = [p for p in files if previous.get(p) != state[p]]
+        changed_hashes = {p: t for p, t in hashes.items() if previous.get(p) != state[p]}
+        for path in changed_files:
             entries[f"{version}/{path}"] = files[path]
-        removed = sorted(p for p in previous if p not in files)
+        if changed_hashes:
+            hashed_map[version] = dict(sorted(changed_hashes.items()))
+        removed = sorted(p for p in previous if p not in state)
         if removed:
             removed_map[version] = removed
-        log(f"{version}: {len(changed)} added or changed, {len(removed)} removed, {len(files)} total")
-        previous = hashes
+        log(
+            f"{version}: {len(changed_files)} files and {len(changed_hashes)} audio hashes added or changed, "
+            f"{len(removed)} removed, {len(state)} total"
+        )
+        previous = state
 
     index = {"format": FORMAT, "edition": edition, "versions": existing + new_versions}
     if removed_map:
         index["removed"] = removed_map
+    if hashed_map:
+        index["hashed"] = hashed_map
     entries[INDEX_NAME] = json.dumps(index, indent=1, sort_keys=True).encode("utf-8")
 
     write_zip(output, entries)
     verify(output, expected)
     log(f"wrote {output} ({os.path.getsize(output) / 1e6:.1f} MB), verified {len(new_versions)} version(s)")
+
+
+def is_ready(work_dir, version, flt):
+    """A version is ready if it was downloaded with the same audio mode."""
+    path = os.path.join(work_dir, version + ".ready")
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip() == flt.audio
+
+
+def mark_ready(work_dir, version, flt):
+    with open(os.path.join(work_dir, version + ".ready"), "w", encoding="utf-8") as f:
+        f.write(flt.audio)
+
+
+def write_slim(work_dir, version, files, hashes):
+    """Keeps only what is needed of a download, to save disk space."""
+    write_zip(os.path.join(work_dir, version + ".jar"), files)
+    audio_path = os.path.join(work_dir, version + ".audio.json")
+    if hashes:
+        with open(audio_path, "w", encoding="utf-8") as f:
+            json.dump(hashes, f, sort_keys=True)
+    elif os.path.exists(audio_path):
+        os.unlink(audio_path)
 
 
 def existing_versions(output, update):
@@ -298,8 +372,7 @@ def java_releases(manifest_url):
 
 def fetch_java_version(entry, work_dir, flt, resources_url):
     version = entry["id"]
-    ready = os.path.join(work_dir, version + ".ready")
-    if os.path.exists(ready):
+    if is_ready(work_dir, version, flt):
         return
     log(f"{version}: downloading")
 
@@ -307,18 +380,27 @@ def fetch_java_version(entry, work_dir, flt, resources_url):
     client = data["downloads"]["client"]
     raw = os.path.join(work_dir, version + ".download")
     download(client["url"], raw, client.get("sha1"))
-    # Keep only what is needed, to save disk space
-    write_zip(os.path.join(work_dir, version + ".jar"), read_zip(raw, flt))
+    files, hashes = read_zip(raw, flt)
     os.unlink(raw)
+    write_slim(work_dir, version, files, hashes)
 
     # Language files and sounds.json are not in the client jar, but in the asset index
     index = fetch_json(data["assetIndex"]["url"])
     objects_dir = os.path.join(work_dir, "objects")
     os.makedirs(objects_dir, exist_ok=True)
     extra_dir = os.path.join(work_dir, version + ".extra")
-    found = 0
+    shutil.rmtree(extra_dir, ignore_errors=True)
+    found, audio_hashes = 0, 0
     for key, obj in sorted(index.get("objects", {}).items()):
-        if not JAVA_EXTRA_KEY.match(key) or not flt.wanted("assets/" + key):
+        path = "assets/" + key
+        if not flt.wanted(path):
+            continue
+        if JAVA_AUDIO_KEY.match(key) and flt.audio == "hash":
+            # The asset index has the SHA-1 of the file, so there is no need to download it
+            hashes[path] = "sha1:" + obj["hash"]
+            audio_hashes += 1
+            continue
+        if not (JAVA_EXTRA_KEY.match(key) or (JAVA_AUDIO_KEY.match(key) and flt.audio == "full")):
             continue
         cached = os.path.join(objects_dir, obj["hash"])
         if not os.path.exists(cached):
@@ -331,11 +413,12 @@ def fetch_java_version(entry, work_dir, flt, resources_url):
         sample = ", ".join(sorted(index.get("objects", {}))[:8])
         log(f"  note: no language files in the asset index of {version}. It has keys like: {sample}")
 
-    open(ready, "w").close()
+    write_slim(work_dir, version, files, hashes)
+    mark_ready(work_dir, version, flt)
 
 
 def cmd_java(args):
-    flt = Filter("java", args.include_data, args.include_audio)
+    flt = Filter("java", args.include_data, args.audio)
     releases = java_releases(args.manifest_url)
     ids = [r["id"] for r in releases]
 
@@ -405,8 +488,7 @@ def bedrock_releases(api_url, include_previews, token):
 
 
 def fetch_bedrock_version(version, tag, work_dir, flt, token):
-    ready = os.path.join(work_dir, version + ".ready")
-    if os.path.exists(ready):
+    if is_ready(work_dir, version, flt):
         return
     log(f"{version}: downloading (this file is big, around 150 MB)")
 
@@ -418,16 +500,16 @@ def fetch_bedrock_version(version, tag, work_dir, flt, token):
     if len(roots) != 1:
         fail(f"unexpected layout in the download of {tag}")
     prefix = roots.pop() + "/resource_pack/"
-    files = read_zip(raw, flt, prefix)
-    if not files:
+    files, hashes = read_zip(raw, flt, prefix)
+    if not files and not hashes:
         fail(f"{tag} has no resource_pack folder")
-    write_zip(os.path.join(work_dir, version + ".jar"), files)
+    write_slim(work_dir, version, files, hashes)
     os.unlink(raw)
-    open(ready, "w").close()
+    mark_ready(work_dir, version, flt)
 
 
 def cmd_bedrock(args):
-    flt = Filter("bedrock", False, args.include_audio)
+    flt = Filter("bedrock", False, args.audio)
     token = args.github_token or os.environ.get("GITHUB_TOKEN")
     releases = bedrock_releases(args.api_url, args.include_previews, token)
     ids = [v for v, _ in releases]
@@ -465,7 +547,7 @@ def cmd_bedrock(args):
 # ----------------------------------------------------------------------------
 
 def cmd_pack(args):
-    flt = Filter(args.edition, args.include_data, args.include_audio)
+    flt = Filter(args.edition, args.include_data, args.audio)
     with open(args.order, encoding="utf-8") as f:
         order = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     pack(args.edition, flt, args.versions_dir, order, args.output, args.update)
@@ -478,7 +560,10 @@ def main():
     def common(p):
         p.add_argument("--output", required=True, help="the mcchanges jar to write")
         p.add_argument("--update", action="store_true", help="append new versions to the existing output")
-        p.add_argument("--include-audio", action="store_true", help="also include .ogg and .fsb files (big)")
+        p.add_argument(
+            "--audio", choices=["hash", "none", "full"], default="hash",
+            help="audio files: keep only their hash (default), ignore them, or store them (big)"
+        )
 
     def downloading(p):
         common(p)

@@ -70,6 +70,10 @@ must use the `pedantic` conformance level. For more details, please see
 [#266](https://github.com/ComunidadAylas/PackSquash/issues/266) and the new
 Bedrock Edition packs wiki page.
 - Archives with more than 65535 entries (ZIP64) can be used as mcchanges files.
+- The `mcchanges.json` of versioned mcchanges files can have a `hashed` section, with
+files that are only known by their SHA-1 or SHA-256 hash. The script to build the
+jar uses it for audio files, which makes the jar much smaller. This adds the
+`sha1` crate as a dependency.
 - The new `mcchanges_version` global option selects the game version to use
 from a mcchanges pack that holds many versions, described by a `mcchanges.json`
 file at its root. Versions only store the files they added or changed.
