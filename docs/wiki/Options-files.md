@@ -597,9 +597,25 @@ root, with this structure:
   or changed, but whose contents are not stored, only their hash, written as
   `sha1:` or `sha256:` followed by the hexadecimal digest. It is used for audio
   files, which are big and which packs rarely copy. PackSquash leaves out the
-  files of the pack that have that hash. Files that are only known by their hash
-  are compared byte for byte, not by their contents, so a re-encoded file does
-  not match.
+  files of the pack that have that hash. A `sha1:` or `sha256:` token is compared
+  byte for byte, so a re-encoded file does not match.
+- A **hashes-only** mcchanges pack stores no files at all, only `hashed` tokens, which
+  makes it much smaller. Besides `sha1:` and `sha256:`, a token can be:
+  - `png:<width>x<height>:<digest>`: the SHA-256 digest of the RGBA8 pixels of a
+    texture. A pack texture matches if it has the same size and pixels, the same
+    way that PackSquash compares textures with a normal mcchanges pack. The
+    color of fully transparent pixels is ignored.
+  - `json:<digest>`: the SHA-256 digest of a JSON file written with sorted keys
+    and no spaces. Formatting and key order do not matter. A file with a decimal
+    number that is extremely small or big may not match, and is kept.
+  - `langkeys:<digest>`: a language file. The `<path>.langkeys` file next to
+    the files of the version holds a 12 byte hash of every key and value of the
+    file, and the digest is the SHA-256 digest of that file. With these hashes
+    PackSquash can still remove the keys that are identical to the game, as
+    [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
+    describes. A whole language file that is identical is dropped by that option.
+
+  A token that PackSquash does not understand never matches, so the file is kept.
 
 To look up a file in the selected version, PackSquash checks the directory of
 that version first, then the directories of the previous versions, and stops at

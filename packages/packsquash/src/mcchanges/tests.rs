@@ -1093,3 +1093,322 @@ async fn files_stored_as_hashes_are_compared_by_hash() {
 		}
 	}
 }
+
+/// Tokens and key hashes below were computed by `build_mcchanges_jar.py`, so these tests check
+/// that the build script and PackSquash agree. They are the pixels of a 2x2 image, whose third
+/// pixel is fully transparent, and the canonical JSON of a document.
+const HASHES_PIXELS: [u8; 16] = [255, 0, 0, 255, 0, 255, 0, 128, 9, 9, 9, 0, 1, 2, 3, 255];
+const HASHES_PNG_TOKEN: &str = "png:2x2:f694ed61298646d789644a1250697762110dc2b61a986310f3abaa62601d6536";
+const HASHES_JSON: &str = r#"{"b":[1,2.5,"é\n"],"a":{"z":null,"y":false}}"#;
+const HASHES_JSON_TOKEN: &str = "json:ad4c63c14a6649b0b5574b6520785f1474ffe17a63b24f1964955a7fed25bfad";
+/// The vanilla language file `{"a": "1", "b": "2", "c": "3"}`
+const HASHES_LANG_JSON_TOKEN: &str = "langkeys:229e756964a795cbedd5d7d9eb5a3135ff7ca074260e0ad8427f79e7c2ebbb06";
+const HASHES_LANG_JSON_KEYS: &str = "0a934f412f7d21f7b4366ca4a3d88d977a7b71a1db0c0517d2d8137896948869394000a0";
+/// The vanilla language file `# c\na=1\nb=2\r\nc=3\na=1\n`
+const HASHES_LANG_LEGACY: &[u8] = b"# c\na=1\nb=2\r\nc=3\na=1\n";
+const HASHES_LANG_LEGACY_TOKEN: &str = "langkeys:15788b31caec836170a9a443c6dbaa484dcaa776fe45bfc5ed733ac92293d5d0";
+const HASHES_LANG_LEGACY_KEYS: &str = "05a9c569a185ac60f5511f9768960076a8d49f6aa1a5890f76749254503e07c2a625e6b9";
+
+fn from_hex(text: &str) -> Vec<u8> {
+	(0..text.len())
+		.step_by(2)
+		.map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+		.collect()
+}
+
+/// A hashes jar with one version, `1.0`, that holds only the given tokens and extra files.
+fn hashes_jar(hashed: &serde_json::Value, extra_files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+	let index = json!({"format": 1, "kind": "hashes", "versions": ["1.0"], "hashed": {"1.0": hashed}}).to_string();
+
+	let mut entries: Vec<(&str, &[u8], bool)> = vec![("mcchanges.json", index.as_bytes(), true)];
+	entries.extend(extra_files.iter().map(|(name, data)| (*name, data.as_slice(), true)));
+
+	zip(&entries, b"")
+}
+
+async fn open_hashes_jar(directory: &TempDir, jar: &[u8]) -> McChanges {
+	write_file(directory.path(), "hashes.jar", jar);
+
+	McChanges::open(&OsFilesystem, &directory.path().join("hashes.jar"), Some("1.0"))
+		.await
+		.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_textures_are_compared_by_decoded_pixels() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	let jar = hashes_jar(
+		&json!({
+			"assets/minecraft/textures/a.png": HASHES_PNG_TOKEN,
+			"assets/minecraft/textures/b.png": HASHES_PNG_TOKEN,
+			"assets/minecraft/textures/c.png": HASHES_PNG_TOKEN,
+			"assets/minecraft/textures/animated.png": HASHES_PNG_TOKEN,
+			"assets/minecraft/textures/animated.png.mcmeta": HASHES_JSON_TOKEN,
+			"assets/minecraft/textures/odd.png": format!("sha256:{}", hexadecimal(Sha256::digest(b"odd bytes")))
+		}),
+		&[]
+	);
+	let mcchanges = open_hashes_jar(&jar_dir, &jar).await;
+
+	let mut changed_pixels = HASHES_PIXELS;
+	changed_pixels[0] = 254;
+	let mut other_transparent_color = HASHES_PIXELS;
+	other_transparent_color[8..11].copy_from_slice(&[1, 2, 3]);
+
+	write_file(pack_dir.path(), "assets/minecraft/textures/a.png", &png(2, 2, &HASHES_PIXELS, Compression::best()));
+	write_file(pack_dir.path(), "assets/minecraft/textures/b.png", &png(2, 2, &other_transparent_color, Compression::none()));
+	write_file(pack_dir.path(), "assets/minecraft/textures/c.png", &png(2, 2, &changed_pixels, Compression::best()));
+	write_file(pack_dir.path(), "assets/minecraft/textures/odd.png", b"odd bytes");
+
+	// A texture that has animation metadata is only the same if the metadata is the same
+	write_file(pack_dir.path(), "assets/minecraft/textures/animated.png", &png(2, 2, &HASHES_PIXELS, Compression::none()));
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/textures/animated.png.mcmeta",
+		r#"{ "a": {"y": false, "z": null}, "b": [1, 2.50, "é\n"] }"#.as_bytes()
+	);
+
+	let is_redundant = |file: &str| {
+		let pack_file = pack_file(pack_dir.path(), file);
+		let mcchanges = &mcchanges;
+		async move { mcchanges.is_redundant(&OsFilesystem, &pack_file).await }
+	};
+
+	assert!(is_redundant("assets/minecraft/textures/a.png").await);
+	// b.png only differs in the color of a transparent pixel, which can't be seen
+	assert!(is_redundant("assets/minecraft/textures/b.png").await);
+	assert!(!is_redundant("assets/minecraft/textures/c.png").await);
+	assert!(is_redundant("assets/minecraft/textures/odd.png").await);
+	assert!(is_redundant("assets/minecraft/textures/animated.png").await);
+	assert!(is_redundant("assets/minecraft/textures/animated.png.mcmeta").await);
+
+	// The same pixels, but another size in the token
+	let jar = hashes_jar(
+		&json!({"assets/minecraft/textures/a.png": HASHES_PNG_TOKEN.replace("2x2", "4x1")}),
+		&[]
+	);
+	let mcchanges = open_hashes_jar(&temp_dir(), &jar).await;
+	assert!(
+		!mcchanges
+			.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), "assets/minecraft/textures/a.png"))
+			.await
+	);
+
+	// The metadata changes
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/textures/animated.png.mcmeta",
+		r#"{"a":{"y":false,"z":null},"b":[1,2.6,"é\n"]}"#.as_bytes()
+	);
+	assert!(
+		!open_hashes_jar(&temp_dir(), &hashes_jar(
+			&json!({
+				"assets/minecraft/textures/animated.png": HASHES_PNG_TOKEN,
+				"assets/minecraft/textures/animated.png.mcmeta": HASHES_JSON_TOKEN
+			}),
+			&[]
+		))
+		.await
+		.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), "assets/minecraft/textures/animated.png"))
+		.await
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_json_files_are_compared_by_contents() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	let mcchanges = open_hashes_jar(
+		&jar_dir,
+		&hashes_jar(&json!({"assets/minecraft/models/m.json": HASHES_JSON_TOKEN}), &[])
+	)
+	.await;
+
+	for (file, data, expected) in [
+		("same.json", HASHES_JSON.as_bytes().to_vec(), true),
+		("reformatted.json", "{\n \"a\": {\"y\": false, \"z\": null},\n \"b\": [1, 2.5, \"é\\n\"]\n}".into(), true),
+		("bom.json", [b"\xEF\xBB\xBF".as_slice(), HASHES_JSON.as_bytes()].concat(), true),
+		("other_value.json", HASHES_JSON.replace("2.5", "2.6").into_bytes(), false),
+		("other_key.json", HASHES_JSON.replace("\"z\"", "\"x\"").into_bytes(), false),
+		("integer.json", HASHES_JSON.replace("1,2.5", "1.0,2.5").into_bytes(), false),
+		("invalid.json", b"{not json".to_vec(), false)
+	] {
+		// Every file takes the place of the vanilla one, in a pack of its own
+		let pack_dir = if expected { &pack_dir } else { &temp_dir() };
+		write_file(pack_dir.path(), "assets/minecraft/models/m.json", &data);
+
+		assert_eq!(
+			mcchanges
+				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), "assets/minecraft/models/m.json"))
+				.await,
+			expected,
+			"{file}"
+		);
+	}
+}
+
+/// What reducing the language file gives for a pack language file, for a hashes jar and for the
+/// vanilla files themselves, which have to agree.
+async fn reductions(file: &str, token: &str, keys: &str, vanilla: &[u8], pack: &[u8]) -> (LanguageFileReduction, LanguageFileReduction) {
+	let (jar_dir, vanilla_dir, pack_dir) = (temp_dir(), temp_dir(), temp_dir());
+	write_file(vanilla_dir.path(), file, vanilla);
+	write_file(pack_dir.path(), file, pack);
+
+	let hashes_jar = open_hashes_jar(
+		&jar_dir,
+		&hashes_jar(&json!({ file: token }), &[(&format!("1.0/{file}.langkeys"), from_hex(keys))])
+	)
+	.await;
+	let entry = pack_file(pack_dir.path(), file);
+
+	(
+		hashes_jar.reduce_language_file(&OsFilesystem, &entry).await,
+		mcchanges_directory(&vanilla_dir)
+			.await
+			.reduce_language_file(&OsFilesystem, &entry)
+			.await
+	)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_json_language_keys_are_removed_like_with_the_files() {
+	let file = "assets/minecraft/lang/es_es.json";
+	let vanilla = br#"{"a": "1", "b": "2", "c": "3"}"#;
+
+	for pack in [
+		br#"{"z": "26", "a": "1", "b": "changed", "d": "4"}"#.as_slice(),
+		br#"{"a": "1", "c": "3"}"#,
+		br#"{"c":"3","a":"1","b":"2"}"#,
+		br#"{"a": "other", "e": "5"}"#,
+		br#"{"a": 1, "b": "2"}"#,
+		b"not JSON",
+		b"[1, 2]"
+	] {
+		let (from_hashes, files) = reductions(file, HASHES_LANG_JSON_TOKEN, HASHES_LANG_JSON_KEYS, vanilla, pack).await;
+		assert_eq!(from_hashes, files, "{}", String::from_utf8_lossy(pack));
+	}
+
+	let (hashes_result, _) = reductions(file, HASHES_LANG_JSON_TOKEN, HASHES_LANG_JSON_KEYS, vanilla, br#"{"a": "1", "z": "26"}"#).await;
+	assert_eq!(hashes_result, LanguageFileReduction::Reduced { data: br#"{"z":"26"}"#.to_vec() });
+	let (hashes_result, _) = reductions(file, HASHES_LANG_JSON_TOKEN, HASHES_LANG_JSON_KEYS, vanilla, br#"{"a": "1", "c": "3"}"#).await;
+	assert_eq!(hashes_result, LanguageFileReduction::Redundant);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_legacy_language_keys_are_removed_like_with_the_files() {
+	let file = "assets/minecraft/lang/es_ES.lang";
+
+	for pack in [
+		b"a=1\nb=other\nd=4\n".as_slice(),
+		b"a=2\na=1\n",
+		b"a=1\na=2\n",
+		b"# comment\r\na=1\r\n\r\nb=2\r\nc=3\r\n",
+		b"a=1\nb=2\nc=4\n",
+		b"b=2=2\n",
+		b"\xFF\xFE=1\n"
+	] {
+		let (from_hashes, files) = reductions(file, HASHES_LANG_LEGACY_TOKEN, HASHES_LANG_LEGACY_KEYS, HASHES_LANG_LEGACY, pack).await;
+		assert_eq!(from_hashes, files, "{}", String::from_utf8_lossy(pack));
+	}
+
+	let (hashes_result, _) = reductions(file, HASHES_LANG_LEGACY_TOKEN, HASHES_LANG_LEGACY_KEYS, HASHES_LANG_LEGACY, b"a=1\nb=other\nd=4\n").await;
+	assert_eq!(hashes_result, LanguageFileReduction::Reduced { data: b"b=other\nd=4\n".to_vec() });
+	let (hashes_result, _) = reductions(file, HASHES_LANG_LEGACY_TOKEN, HASHES_LANG_LEGACY_KEYS, HASHES_LANG_LEGACY, b"a=2\na=1\n").await;
+	assert_eq!(hashes_result, LanguageFileReduction::Redundant);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_language_keys_that_do_not_match_their_token_are_not_used() {
+	let file = "assets/minecraft/lang/es_es.json";
+	let pack = br#"{"a": "1"}"#;
+	let (mut tampered, mut truncated) = (from_hex(HASHES_LANG_JSON_KEYS), from_hex(HASHES_LANG_JSON_KEYS));
+	tampered[0] ^= 1;
+	truncated.pop();
+
+	for keys in [tampered, truncated, Vec::new()] {
+		let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+		write_file(pack_dir.path(), file, pack);
+
+		let hashes_jar = open_hashes_jar(
+			&jar_dir,
+			&hashes_jar(&json!({ file: HASHES_LANG_JSON_TOKEN }), &[(&format!("1.0/{file}.langkeys"), keys)])
+		)
+		.await;
+
+		assert_eq!(
+			hashes_jar.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file)).await,
+			LanguageFileReduction::Unchanged
+		);
+	}
+
+	// A missing key file is the same
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(pack_dir.path(), file, pack);
+	let hashes_jar = open_hashes_jar(&jar_dir, &hashes_jar(&json!({ file: HASHES_LANG_JSON_TOKEN }), &[])).await;
+	assert_eq!(
+		hashes_jar.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), file)).await,
+		LanguageFileReduction::Unchanged
+	);
+	// An identical language file is not redundant by itself: the language key removal drops it
+	assert!(!hashes_jar.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), file)).await);
+}
+
+/// Not async because `PackSquasher::run` starts its own runtime.
+#[test]
+fn squashing_with_a_hashes_jar_leaves_out_what_the_game_already_has() {
+	let (jar_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+	let language = "assets/minecraft/lang/en_us.json";
+
+	write_file(
+		jar_dir.path(),
+		"hashes.jar",
+		&hashes_jar(
+			&json!({
+				"assets/minecraft/textures/blocks/stone.png": HASHES_PNG_TOKEN,
+				language: HASHES_LANG_JSON_TOKEN
+			}),
+			&[(&format!("1.0/{language}.langkeys"), from_hex(HASHES_LANG_JSON_KEYS))]
+		)
+	);
+
+	let mut changed = HASHES_PIXELS;
+	changed[0] = 100;
+
+	write_file(
+		pack_dir.path(),
+		"pack.mcmeta",
+		br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
+	);
+	write_file(pack_dir.path(), "assets/minecraft/textures/blocks/stone.png", &png(2, 2, &HASHES_PIXELS, Compression::none()));
+	write_file(pack_dir.path(), "assets/minecraft/textures/blocks/dirt.png", &png(2, 2, &changed, Compression::none()));
+	write_file(pack_dir.path(), language, br#"{"a": "1", "b": "changed", "c": "3", "d": "4"}"#);
+
+	let output_path = output_dir.path().join("pack.zip");
+	let mut global_options = GlobalOptions {
+		mcchanges_path: Some(jar_dir.path().join("hashes.jar")),
+		mcchanges_version: Some("1.0".into()),
+		output_file_path: output_path.clone(),
+		..GlobalOptions::default()
+	};
+	global_options.zip_compression_iterations = 1;
+
+	PackSquasher::new()
+		.run(
+			OsFilesystem,
+			SquashOptions {
+				pack_directory: pack_dir.path().to_path_buf(),
+				global_options,
+				file_options: Default::default()
+			},
+			None
+		)
+		.expect("Squashing a valid pack should succeed");
+
+	let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
+	assert!(output.contains("pack.mcmeta"));
+	assert!(!output.contains("assets/minecraft/textures/blocks/stone.png"));
+	assert!(output.contains("assets/minecraft/textures/blocks/dirt.png"));
+
+	let language = String::from_utf8(output.read(language).unwrap()).unwrap();
+	assert!(language.contains("changed") && language.contains("\"d\""), "{language}");
+	assert!(!language.contains("\"a\"") && !language.contains("\"c\""), "{language}");
+}

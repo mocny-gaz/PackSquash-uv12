@@ -19,6 +19,12 @@
 //! version, the files that the version deleted relative to the previous one. Selecting a version
 //! means looking for each file in the directory of that version first, and then in the
 //! directories of the previous versions, stopping at the first version that has or removed it.
+//!
+//! The files of a version do not have to be stored. The index can list them with a hash token
+//! instead (`hashed`), and a hashes-only mcchanges pack stores nothing but tokens. Tokens are
+//! `algorithm:digest` texts. See [`hash_matches`] for the algorithms. Language files have a token
+//! of the kind `langkeys:`, which refers to a `<path>.langkeys` file next to the version files. It
+//! holds a hash for every language entry, so that identical entries can still be removed.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -53,6 +59,16 @@ const PNG_HEADER: [u8; 16] = [
 /// Images with more pixels than this are only compared byte by byte, to bound the
 /// memory needed to decode them.
 const MAX_PIXEL_COMPARISON_PIXELS: u64 = 4096 * 4096;
+
+/// The length of the hash of a language entry in a `.langkeys` file. 96 bits make accidental
+/// collisions impossible for all practical purposes.
+const LANGUAGE_KEY_HASH_LENGTH: usize = 12;
+
+/// The suffix of the files with the language entry hashes of a language file.
+const LANGUAGE_KEYS_SUFFIX: &str = ".langkeys";
+
+/// The hash of a language entry: a key and its value.
+type LanguageKeyHash = [u8; LANGUAGE_KEY_HASH_LENGTH];
 
 /// An error that may occur while loading a mcchanges pack.
 #[derive(Error, Debug)]
@@ -117,7 +133,9 @@ enum McChangesEntry {
 	/// The contents of the file.
 	Data(Vec<u8>),
 	/// The hash of the contents of the file, as `algorithm:hexadecimal digest`.
-	Hash(String)
+	Hash(String),
+	/// The hashes of the entries of a language file. The file itself is not known.
+	LanguageKeys(HashSet<LanguageKeyHash>)
 }
 
 /// A loaded mcchanges pack, ready to be used to find redundant pack files.
@@ -248,6 +266,21 @@ impl McChanges {
 			}
 
 			if let Some(hash) = layer.hashed_files.get(relative_path) {
+				if hash.starts_with("langkeys:") {
+					// A language file whose keys can't be loaded is left as an unmatchable hash
+					let keys = self
+						.read_raw(
+							vfs,
+							&format!("{}/{relative_path}{LANGUAGE_KEYS_SUFFIX}", layer.version)
+						)
+						.await
+						.and_then(|keys| parse_language_keys(&keys, hash));
+
+					return Some(
+						keys.map_or_else(|| McChangesEntry::Hash(hash.clone()), McChangesEntry::LanguageKeys)
+					);
+				}
+
 				return Some(McChangesEntry::Hash(hash.clone()));
 			}
 
@@ -257,15 +290,6 @@ impl McChanges {
 		}
 
 		None
-	}
-
-	/// Reads the contents of the mcchanges pack file with the given relative path, if it
-	/// exists, can be read, and its contents are stored.
-	async fn read<V: VirtualFileSystem>(&self, vfs: &V, relative_path: &str) -> Option<Vec<u8>> {
-		match self.lookup(vfs, relative_path).await {
-			Some(McChangesEntry::Data(data)) => Some(data),
-			_ => None
-		}
 	}
 
 	/// Checks whether including the given pack file in the result ZIP file is redundant
@@ -331,7 +355,9 @@ impl McChanges {
 			McChangesEntry::Data(mcchanges_data) if relative_path.ends_with(".json") => {
 				json_is_identical(&pack_data, &mcchanges_data)
 			}
-			McChangesEntry::Data(mcchanges_data) => pack_data == mcchanges_data
+			McChangesEntry::Data(mcchanges_data) => pack_data == mcchanges_data,
+			// Identical language files are left out by the language key removal instead
+			McChangesEntry::LanguageKeys(_) => false
 		}
 	}
 
@@ -345,12 +371,18 @@ impl McChanges {
 	) -> bool {
 		let (Some(pack_texture), Some(mcchanges_texture)) = (
 			read_file(vfs, texture_file_path).await,
-			self.read(vfs, texture_relative_path).await
+			self.lookup(vfs, texture_relative_path).await
 		) else {
 			return false;
 		};
 
-		if !png_is_identical(&pack_texture, &mcchanges_texture) {
+		let texture_is_identical = match mcchanges_texture {
+			McChangesEntry::Data(data) => png_is_identical(&pack_texture, &data),
+			McChangesEntry::Hash(hash) => hash_matches(&pack_texture, &hash),
+			McChangesEntry::LanguageKeys(_) => false
+		};
+
+		if !texture_is_identical {
 			return false;
 		}
 
@@ -359,12 +391,15 @@ impl McChanges {
 
 		match (
 			read_file(vfs, Path::new(&metadata_file_path)).await,
-			self.read(vfs, &format!("{texture_relative_path}.mcmeta"))
+			self.lookup(vfs, &format!("{texture_relative_path}.mcmeta"))
 				.await
 		) {
 			(None, None) => true,
-			(Some(pack_metadata), Some(mcchanges_metadata)) => {
+			(Some(pack_metadata), Some(McChangesEntry::Data(mcchanges_metadata))) => {
 				json_is_identical(&pack_metadata, &mcchanges_metadata)
+			}
+			(Some(pack_metadata), Some(McChangesEntry::Hash(hash))) => {
+				hash_matches(&pack_metadata, &hash)
 			}
 			_ => false
 		}
@@ -389,45 +424,187 @@ impl McChanges {
 			&& components.next() == Some("lang")
 			&& components.next().is_some();
 
-		let reduce: fn(&[u8], &[u8]) -> LanguageFileReduction = if !is_in_language_directory {
+		let is_json = if !is_in_language_directory {
 			return LanguageFileReduction::Unchanged;
 		} else if relative_path.ends_with(".json") {
-			reduce_json_language_file
+			true
 		} else if relative_path.ends_with(".lang") {
-			reduce_legacy_language_file
+			false
 		} else {
 			return LanguageFileReduction::Unchanged;
 		};
 
-		let (Some(pack_data), Some(mcchanges_data)) = (
+		let (Some(pack_data), Some(mcchanges_entry)) = (
 			read_file(vfs, &pack_file.file_path).await,
-			self.read(vfs, relative_path).await
+			self.lookup(vfs, relative_path).await
 		) else {
 			return LanguageFileReduction::Unchanged;
 		};
 
-		reduce(&pack_data, &mcchanges_data)
+		match (mcchanges_entry, is_json) {
+			(McChangesEntry::Data(mcchanges_data), true) => {
+				let Some(mcchanges_entries) = parse_json_language_file(&mcchanges_data) else {
+					return LanguageFileReduction::Unchanged;
+				};
+
+				reduce_json_language_file(&pack_data, |key, value| {
+					mcchanges_entries.get(key) == Some(value)
+				})
+			}
+			(McChangesEntry::Data(mcchanges_data), false) => {
+				let Ok(mcchanges_data) = std::str::from_utf8(&mcchanges_data) else {
+					return LanguageFileReduction::Unchanged;
+				};
+				let mcchanges_values = legacy_language_entries(mcchanges_data);
+
+				reduce_legacy_language_file(&pack_data, |key, value| {
+					mcchanges_values.get(key) == Some(&value)
+				})
+			}
+			(McChangesEntry::LanguageKeys(keys), true) => {
+				reduce_json_language_file(&pack_data, |key, value| {
+					keys.contains(&language_key_hash(key, canonical_json(value).as_bytes()))
+				})
+			}
+			(McChangesEntry::LanguageKeys(keys), false) => {
+				reduce_legacy_language_file(&pack_data, |key, value| {
+					keys.contains(&language_key_hash(key, value.as_bytes()))
+				})
+			}
+			(McChangesEntry::Hash(_), _) => LanguageFileReduction::Unchanged
+		}
 	}
 }
 
-/// Checks whether the hash of some data is the given one, in the format
-/// `algorithm:hexadecimal digest`. Unknown algorithms never match.
-fn hash_matches(data: &[u8], hash: &str) -> bool {
-	fn hexadecimal(digest: impl AsRef<[u8]>) -> String {
-		digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
-	}
+/// Formats a digest as lowercase hexadecimal.
+fn hexadecimal(digest: impl AsRef<[u8]>) -> String {
+	digest
+		.as_ref()
+		.iter()
+		.map(|byte| format!("{byte:02x}"))
+		.collect()
+}
 
+/// Checks whether some data matches a token, in the format `algorithm:digest`. The algorithms are:
+///
+/// - `sha1` and `sha256`: the digest of the bytes.
+/// - `json`: the SHA-256 digest of [`canonical_json`] of the parsed data.
+/// - `png`: `<width>x<height>:<digest>`, the SHA-256 digest of the RGBA8 pixels that [`decode_png`]
+///   gives. This is how [`png_is_identical`] compares textures.
+///
+/// Unknown algorithms never match.
+fn hash_matches(data: &[u8], hash: &str) -> bool {
 	let Some((algorithm, expected_digest)) = hash.split_once(':') else {
 		return false;
 	};
 
-	let actual_digest = match algorithm {
-		"sha1" => hexadecimal(Sha1::digest(data)),
-		"sha256" => hexadecimal(Sha256::digest(data)),
-		_ => return false
+	match algorithm {
+		"sha1" => hexadecimal(Sha1::digest(data)).eq_ignore_ascii_case(expected_digest),
+		"sha256" => hexadecimal(Sha256::digest(data)).eq_ignore_ascii_case(expected_digest),
+		"json" => parse_json(data).is_some_and(|value| {
+			hexadecimal(Sha256::digest(canonical_json(&value))).eq_ignore_ascii_case(expected_digest)
+		}),
+		"png" => png_token_matches(data, expected_digest),
+		_ => false
+	}
+}
+
+/// Checks whether a PNG image matches a `png` token without its algorithm.
+fn png_token_matches(png: &[u8], token: &str) -> bool {
+	let Some((size, expected_digest)) = token.split_once(':') else {
+		return false;
+	};
+	let Some((width, height)) = size.split_once('x').and_then(|(width, height)| {
+		Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?))
+	}) else {
+		return false;
 	};
 
-	actual_digest.eq_ignore_ascii_case(expected_digest)
+	if png_size(png) != Some((width, height))
+		|| u64::from(width) * u64::from(height) > MAX_PIXEL_COMPARISON_PIXELS
+	{
+		return false;
+	}
+
+	decode_png(png).is_some_and(|pixels| {
+		hexadecimal(Sha256::digest(&pixels)).eq_ignore_ascii_case(expected_digest)
+	})
+}
+
+/// Parses JSON data like the game does for the files that matter here: UTF-8, with a BOM
+/// being ignored.
+fn parse_json(data: &[u8]) -> Option<serde_json::Value> {
+	serde_json::from_slice(strip_bom(data)).ok()
+}
+
+/// Writes JSON in a canonical form: no whitespace, and object keys sorted by their UTF-8 bytes.
+/// Documents with the same contents have the same canonical form, and the build script of
+/// mcchanges jars writes the same text.
+fn canonical_json(value: &serde_json::Value) -> String {
+	fn write(value: &serde_json::Value, out: &mut String) {
+		match value {
+			serde_json::Value::Array(items) => {
+				out.push('[');
+				for (index, item) in items.iter().enumerate() {
+					if index > 0 {
+						out.push(',');
+					}
+					write(item, out);
+				}
+				out.push(']');
+			}
+			serde_json::Value::Object(entries) => {
+				let mut entries: Vec<_> = entries.iter().collect();
+				entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+
+				out.push('{');
+				for (index, (key, item)) in entries.into_iter().enumerate() {
+					if index > 0 {
+						out.push(',');
+					}
+					out.push_str(&serde_json::Value::from(key.as_str()).to_string());
+					out.push(':');
+					write(item, out);
+				}
+				out.push('}');
+			}
+			// The compact form of a scalar JSON value is its canonical form
+			scalar => out.push_str(&scalar.to_string())
+		}
+	}
+
+	let mut out = String::new();
+	write(value, &mut out);
+	out
+}
+
+/// The hash of an entry of a language file, as stored in `.langkeys` files: the first bytes of
+/// the SHA-256 digest of the key, a zero byte, and the value. The value is the canonical JSON
+/// of the value for JSON language files, and the text after the equals sign for legacy ones.
+fn language_key_hash(key: &str, value: &[u8]) -> LanguageKeyHash {
+	let mut hasher = Sha256::new();
+	hasher.update(key.as_bytes());
+	hasher.update([0]);
+	hasher.update(value);
+
+	let mut hash = [0; LANGUAGE_KEY_HASH_LENGTH];
+	let digest = hasher.finalize();
+	let digest: &[u8] = digest.as_ref();
+	hash.copy_from_slice(&digest[..LANGUAGE_KEY_HASH_LENGTH]);
+	hash
+}
+
+/// Parses the contents of a `.langkeys` file: the hashes of the entries of a language file, one
+/// after the other. The file must match the `langkeys:<SHA-256 digest>` token that refers to it.
+fn parse_language_keys(data: &[u8], token: &str) -> Option<HashSet<LanguageKeyHash>> {
+	let expected_digest = token.strip_prefix("langkeys:")?;
+	let (hashes, rest) = data.as_chunks::<LANGUAGE_KEY_HASH_LENGTH>();
+
+	if !rest.is_empty() || !hexadecimal(Sha256::digest(data)).eq_ignore_ascii_case(expected_digest) {
+		return None;
+	}
+
+	Some(hashes.iter().copied().collect())
 }
 
 fn strip_bom(data: &[u8]) -> &[u8] {
@@ -442,25 +619,29 @@ fn json_is_identical(a: &[u8], b: &[u8]) -> bool {
 		return true;
 	}
 
-	let parse = |data: &[u8]| serde_json::from_slice::<serde_json::Value>(strip_bom(data)).ok();
+	matches!((parse_json(a), parse_json(b)), (Some(a), Some(b)) if a == b)
+}
 
-	matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
+/// Parses a JSON language file, which has to be a JSON object.
+fn parse_json_language_file(data: &[u8]) -> Option<serde_json::Map<String, serde_json::Value>> {
+	match parse_json(data) {
+		Some(serde_json::Value::Object(entries)) => Some(entries),
+		_ => None
+	}
 }
 
 /// Removes the entries of a JSON language file that the mcchanges language file has with the
-/// same value.
-fn reduce_json_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
-	let parse = |data: &[u8]| match serde_json::from_slice(strip_bom(data)) {
-		Ok(serde_json::Value::Object(entries)) => Some(entries),
-		_ => None
-	};
-
-	let (Some(mut pack_entries), Some(mcchanges_entries)) = (parse(pack), parse(mcchanges)) else {
+/// same value, which `is_mcchanges_entry` tells for a key and a value.
+fn reduce_json_language_file(
+	pack: &[u8],
+	is_mcchanges_entry: impl Fn(&str, &serde_json::Value) -> bool
+) -> LanguageFileReduction {
+	let Some(mut pack_entries) = parse_json_language_file(pack) else {
 		return LanguageFileReduction::Unchanged;
 	};
 
 	let entry_count = pack_entries.len();
-	pack_entries.retain(|key, value| mcchanges_entries.get(key) != Some(&*value));
+	pack_entries.retain(|key, value| !is_mcchanges_entry(key, value));
 
 	if pack_entries.len() == entry_count {
 		LanguageFileReduction::Unchanged
@@ -474,38 +655,52 @@ fn reduce_json_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduc
 	}
 }
 
-/// Removes the entries of a legacy language file (`key=value` lines) that the mcchanges
-/// language file has with the same value. Comments, blank lines and line endings are kept.
-fn reduce_legacy_language_file(pack: &[u8], mcchanges: &[u8]) -> LanguageFileReduction {
-	let (Ok(pack), Ok(mcchanges)) = (std::str::from_utf8(pack), std::str::from_utf8(mcchanges))
-	else {
+/// Gets the key and value of a line of a legacy language file. Like the game does, this
+/// ignores blank lines, comments, and lines without an equals sign, and does not trim anything
+/// but the line terminator.
+fn legacy_language_entry(line: &str) -> Option<(&str, &str)> {
+	let line = line.trim_end_matches(['\r', '\n']);
+
+	if line.is_empty() || line.starts_with('#') {
+		None
+	} else {
+		line.split_once('=')
+	}
+}
+
+/// Gets the entries of a legacy language file. When a key appears several times, the game
+/// uses the last value, so that is the one that is returned.
+fn legacy_language_entries(data: &str) -> HashMap<&str, &str> {
+	data.split_inclusive('\n')
+		.filter_map(legacy_language_entry)
+		.collect()
+}
+
+/// Removes the entries of a legacy language file (`key=value` lines) that the mcchanges language
+/// file has with the same value, which `is_mcchanges_entry` tells for a key and the value the
+/// game uses for it. Comments, blank lines and line endings are kept.
+fn reduce_legacy_language_file(
+	pack: &[u8],
+	is_mcchanges_entry: impl Fn(&str, &str) -> bool
+) -> LanguageFileReduction {
+	let Ok(pack) = std::str::from_utf8(pack) else {
 		return LanguageFileReduction::Unchanged;
 	};
 
-	// Like the game does, ignore blank lines, comments, and lines without an equals sign,
-	// and do not trim anything but the line terminator
-	fn entry(line: &str) -> Option<(&str, &str)> {
-		let line = line.trim_end_matches(['\r', '\n']);
-
-		if line.is_empty() || line.starts_with('#') {
-			None
-		} else {
-			line.split_once('=')
-		}
-	}
-
-	// When a key appears several times, the game uses the last value, so that is the one
-	// to compare with. A key is only removed if the value the game would use is provided by
-	// the mcchanges, which means removing every line of that key
-	let mcchanges_values: HashMap<_, _> = mcchanges.split_inclusive('\n').filter_map(entry).collect();
-	let pack_values: HashMap<_, _> = pack.split_inclusive('\n').filter_map(entry).collect();
+	// A key is only removed if the value the game would use is provided by the mcchanges, which
+	// means removing every line of that key
+	let pack_values = legacy_language_entries(pack);
 
 	let mut reduced = String::with_capacity(pack.len());
 	let (mut removed_entries, mut kept_entries) = (0_usize, 0_usize);
 
 	for line in pack.split_inclusive('\n') {
-		match entry(line) {
-			Some((key, _)) if mcchanges_values.get(key) == pack_values.get(key) => {
+		match legacy_language_entry(line) {
+			Some((key, _))
+				if pack_values
+					.get(key)
+					.is_some_and(|value| is_mcchanges_entry(key, value)) =>
+			{
 				removed_entries += 1;
 			}
 			Some(_) => {

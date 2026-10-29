@@ -74,6 +74,12 @@ Bedrock Edition packs wiki page.
 files that are only known by their SHA-1 or SHA-256 hash. The script to build the
 jar uses it for audio files, which makes the jar much smaller. This adds the
 `sha1` crate as a dependency.
+- Hashes-only mcchanges files. The `hashed` section of `mcchanges.json` accepts more tokens:
+`png:` (the pixels of a texture), `json:` (the contents of a JSON file) and
+`langkeys:` (the hashes of the entries of a language file, stored in a `.langkeys`
+file). A mcchanges file made only of tokens holds no game files, and PackSquash
+still compares textures by pixels, JSON by contents and removes identical language
+keys.
 - The new `mcchanges_version` global option selects the game version to use
 from a mcchanges pack that holds many versions, described by a `mcchanges.json`
 file at its root. Versions only store the files they added or changed.
