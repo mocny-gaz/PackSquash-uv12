@@ -368,7 +368,7 @@ async fn textures_and_their_animation_metadata_are_only_dropped_together() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn archives_can_be_mcchangess() {
+async fn archives_can_be_mcchanges() {
 	let (archive_dir, pack_dir) = (temp_dir(), temp_dir());
 	let texture = png(1, 1, &[1, 2, 3, 255], Compression::best());
 
@@ -417,7 +417,7 @@ async fn archives_can_be_mcchangess() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn unusable_mcchangess_are_rejected() {
+async fn unusable_mcchanges_are_rejected() {
 	let dir = temp_dir();
 	write_file(dir.path(), "not_a_zip.jar", b"definitely not a ZIP file");
 
@@ -704,7 +704,7 @@ const VERSION_INDEX: &str = r#"{
 }"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_mcchangess_provide_the_files_of_the_selected_version() {
+async fn versioned_mcchanges_provide_the_files_of_the_selected_version() {
 	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
 	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
 
@@ -748,7 +748,7 @@ async fn versioned_mcchangess_provide_the_files_of_the_selected_version() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_mcchangess_can_be_directories() {
+async fn versioned_mcchanges_can_be_directories() {
 	let mcchanges_dir = temp_dir();
 	write_file(mcchanges_dir.path(), "mcchanges.json", VERSION_INDEX.as_bytes());
 	write_file(mcchanges_dir.path(), "1.0/assets/minecraft/texts/a.txt", b"a from 1.0");
@@ -772,7 +772,7 @@ async fn versioned_mcchangess_can_be_directories() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn versioned_mcchangess_reject_wrong_version_selections() {
+async fn versioned_mcchanges_reject_wrong_version_selections() {
 	let dir = temp_dir();
 	write_file(dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
 	write_file(dir.path(), "plain.jar", &zip(&[("assets/a.txt", b"a", false)], b""));

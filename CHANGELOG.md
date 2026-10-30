@@ -8,6 +8,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0-fork.1] - 2026-10-29
+
 ### Added
 
 #### Conformance
@@ -595,6 +597,7 @@ selection for OptiFine Custom Entity Models (CEM). ([#404](https://github.com/Co
   panics should be much less likely to happen, so the significant binary size
   taken by this logic was no longer warranted.
 
-[Unreleased]: https://github.com/ComunidadAylas/PackSquash/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/mocny-gaz/PackSquash-uv12/compare/v0.5.0-fork.1...HEAD
+[0.5.0-fork.1]: https://github.com/mocny-gaz/PackSquash-uv12/releases/tag/v0.5.0-fork.1
 [0.4.1]: https://github.com/ComunidadAylas/PackSquash/compare/v0.4.1...v0.4.0
 [0.4.0]: https://github.com/ComunidadAylas/PackSquash/compare/v0.3.1...v0.4.0

@@ -3,9 +3,9 @@ resolver = "3"
 members = ["packages/*"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0-fork.1"
 edition = "2024"
-repository = "https://github.com/ComunidadAylas/PackSquash"
+repository = "https://github.com/mocny-gaz/PackSquash-uv12"
 license = "AGPL-3.0-or-later"
 publish = false
 

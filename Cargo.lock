@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "packsquash"
-version = "0.4.1"
+version = "0.5.0-fork.1"
 dependencies = [
  "aes",
  "ahash",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "packsquash_cli"
-version = "0.4.1"
+version = "0.5.0-fork.1"
 dependencies = [
  "anstyle",
  "env_logger",

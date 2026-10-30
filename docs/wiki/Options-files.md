@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> **This document is for PackSquash version v0.4.1**. Different versions may use
+> **This document is for PackSquash version v0.5.0-fork.1**. Different versions may use
 > incompatible sets of options. If you have to use an older version, something
 > that we don't recommend or support, please refer to the documentation
 > appropriate for that version:
