@@ -1,10 +1,8 @@
 //! A Minecraft resource and data pack optimizer that aims to achieve the best possible compression,
 //! which allows for efficient distribution and slightly improved load times in the game, at good speed.
 
-#![allow(incomplete_features)]
 #![feature(doc_cfg)]
 #![feature(impl_trait_in_assoc_type)]
-#![feature(generic_const_exprs)]
 #![cfg_attr(windows, feature(windows_by_handle))]
 
 use ahash::{HashMap, HashSet};

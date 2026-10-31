@@ -171,8 +171,7 @@ fn execute_dasp_pipeline<const INPUT_CHANNELS: usize, const OUTPUT_CHANNELS: usi
 where
 	[f32; INPUT_CHANNELS]: Frame,
 	<[f32; INPUT_CHANNELS] as Frame>::Sample: dasp_sample::FromSample<f64>,
-	f64: dasp_sample::FromSample<<[f32; INPUT_CHANNELS] as Frame>::Sample>,
-	[(); channels_to_resample(INPUT_CHANNELS, OUTPUT_CHANNELS)]:
+	f64: dasp_sample::FromSample<<[f32; INPUT_CHANNELS] as Frame>::Sample>
 {
 	let mut is_silent = true;
 
@@ -271,8 +270,8 @@ where
 			//                     we resample before upmixing.
 			//   · Stereo to mono: we downmix to mono and then resample.
 
-			let mut resample_input_buf =
-				[const { vec![] }; channels_to_resample(INPUT_CHANNELS, OUTPUT_CHANNELS)];
+			let mut resample_input_buf: Vec<Vec<f32>> =
+				vec![vec![]; channels_to_resample(INPUT_CHANNELS, OUTPUT_CHANNELS)];
 			for vec in &mut resample_input_buf {
 				vec.reserve_exact(FRAME_BLOCK_SIZE);
 			}
