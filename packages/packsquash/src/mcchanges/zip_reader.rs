@@ -84,7 +84,8 @@ impl ZipArchive {
 
 		let malformed = || ZipReadError::MalformedCentralDirectory;
 
-		let mut entry_count = u64::from(read_u16(&data, end_record_offset + 10).ok_or_else(malformed)?);
+		let mut entry_count =
+			u64::from(read_u16(&data, end_record_offset + 10).ok_or_else(malformed)?);
 		let central_directory_size =
 			u64::from(read_u32(&data, end_record_offset + 12).ok_or_else(malformed)?);
 		let mut central_directory_offset =
@@ -121,7 +122,8 @@ impl ZipArchive {
 			}
 		}
 
-		let mut entries = HashMap::with_capacity(usize::try_from(entry_count).unwrap_or(0).min(1 << 20));
+		let mut entries =
+			HashMap::with_capacity(usize::try_from(entry_count).unwrap_or(0).min(1 << 20));
 		let mut offset = usize::try_from(central_directory_offset).map_err(|_| malformed())?;
 
 		for _ in 0..usize::try_from(entry_count).map_err(|_| malformed())? {
@@ -135,11 +137,13 @@ impl ZipArchive {
 			let compression_method = read_u16(&data, offset + 10).ok_or_else(malformed)?;
 			let crc32 = read_u32(&data, offset + 16).ok_or_else(malformed)?;
 			let mut compressed_size = u64::from(read_u32(&data, offset + 20).ok_or_else(malformed)?);
-			let mut uncompressed_size = u64::from(read_u32(&data, offset + 24).ok_or_else(malformed)?);
+			let mut uncompressed_size =
+				u64::from(read_u32(&data, offset + 24).ok_or_else(malformed)?);
 			let name_length = read_u16(&data, offset + 28).ok_or_else(malformed)? as usize;
 			let extra_length = read_u16(&data, offset + 30).ok_or_else(malformed)? as usize;
 			let comment_length = read_u16(&data, offset + 32).ok_or_else(malformed)? as usize;
-			let mut local_header_offset = u64::from(read_u32(&data, offset + 42).ok_or_else(malformed)?);
+			let mut local_header_offset =
+				u64::from(read_u32(&data, offset + 42).ok_or_else(malformed)?);
 
 			let name_start = offset + CENTRAL_DIRECTORY_HEADER_MIN_SIZE;
 			let name_bytes = data

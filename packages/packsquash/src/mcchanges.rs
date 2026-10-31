@@ -105,7 +105,9 @@ pub enum McChangesError {
 	#[error("the mcchanges pack version index is not valid: {0}")]
 	InvalidVersionIndex(String),
 	/// Thrown when the mcchanges pack holds several game versions, but none was selected.
-	#[error("the mcchanges pack holds several game versions, so mcchanges_version must be set to one of: {0}")]
+	#[error(
+		"the mcchanges pack holds several game versions, so mcchanges_version must be set to one of: {0}"
+	)]
 	VersionRequired(String),
 	/// Thrown when the selected game version is not in the mcchanges pack.
 	#[error("the mcchanges pack does not hold the game version {version}. It holds: {available}")]
@@ -610,9 +612,10 @@ fn png_token_matches(png: &[u8], token: &str) -> bool {
 	let Some((size, expected_digest)) = token.split_once(':') else {
 		return false;
 	};
-	let Some((width, height)) = size.split_once('x').and_then(|(width, height)| {
-		Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?))
-	}) else {
+	let Some((width, height)) = size
+		.split_once('x')
+		.and_then(|(width, height)| Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?)))
+	else {
 		return false;
 	};
 
@@ -701,7 +704,10 @@ fn parse_hash_list(data: &[u8], width: usize) -> Option<Vec<u128>> {
 
 	Some(
 		data.chunks_exact(width)
-			.map(|hash| hash.iter().fold(0, |hash, byte| (hash << 8) | u128::from(*byte)))
+			.map(|hash| {
+				hash.iter()
+					.fold(0, |hash, byte| (hash << 8) | u128::from(*byte))
+			})
 			.collect()
 	)
 }
@@ -762,10 +768,9 @@ fn reduce_json_language_file(
 	} else if pack_entries.is_empty() {
 		LanguageFileReduction::Redundant
 	} else {
-		serde_json::to_vec(&pack_entries)
-			.map_or(LanguageFileReduction::Unchanged, |data| {
-				LanguageFileReduction::Reduced { data }
-			})
+		serde_json::to_vec(&pack_entries).map_or(LanguageFileReduction::Unchanged, |data| {
+			LanguageFileReduction::Reduced { data }
+		})
 	}
 }
 
@@ -850,8 +855,7 @@ fn png_is_identical(a: &[u8], b: &[u8]) -> bool {
 		return false;
 	};
 
-	if size_a != size_b || u64::from(size_a.0) * u64::from(size_a.1) > MAX_PIXEL_COMPARISON_PIXELS
-	{
+	if size_a != size_b || u64::from(size_a.0) * u64::from(size_a.1) > MAX_PIXEL_COMPARISON_PIXELS {
 		return false;
 	}
 

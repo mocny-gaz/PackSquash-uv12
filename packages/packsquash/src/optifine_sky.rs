@@ -46,10 +46,7 @@ fn file_name_of(relative_path: &str) -> &str {
 
 /// Finds the byte offsets where `file_name` appears in `text` as a whole path component or
 /// value, so `b.png` is found in `source=b.png` and `source=./b.png`, but not in `source=ab.png`.
-fn file_name_occurrences<'a>(
-	text: &'a str,
-	file_name: &'a str
-) -> impl Iterator<Item = usize> + 'a {
+fn file_name_occurrences<'a>(text: &'a str, file_name: &'a str) -> impl Iterator<Item = usize> + 'a {
 	text.match_indices(file_name)
 		.map(|(offset, _)| offset)
 		.filter(|&offset| {

@@ -13,9 +13,7 @@ use json_comments::StripComments;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::config::{
-	CustomFileOptions, FileOptions, JsonFileOptions, PackEdition, PngFileOptions
-};
+use crate::config::{CustomFileOptions, FileOptions, JsonFileOptions, PackEdition, PngFileOptions};
 use crate::pack_file::asset_type::{PackFileAssetType, PackFileAssetTypeMatches};
 use crate::vfs::{VirtualFileSystem, read_to_end};
 
@@ -188,12 +186,9 @@ fn is_uuid(value: &str) -> bool {
 	let groups = value.split('-').collect::<Vec<_>>();
 
 	groups.len() == 5
-		&& groups
-			.iter()
-			.zip([8, 4, 4, 4, 12])
-			.all(|(group, length)| {
-				group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
-			})
+		&& groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+			group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+		})
 }
 
 /// Checks that a value is a valid version: an array of three non-negative integers or,
@@ -222,7 +217,11 @@ fn required_uuid<'a>(
 		.get("uuid")
 		.and_then(Value::as_str)
 		.filter(|uuid| is_uuid(uuid))
-		.ok_or_else(|| invalid(format!("{location} needs a \"uuid\" with the format 00000000-0000-0000-0000-000000000000")))
+		.ok_or_else(|| {
+			invalid(format!(
+				"{location} needs a \"uuid\" with the format 00000000-0000-0000-0000-000000000000"
+			))
+		})
 }
 
 fn validate_manifest_value(manifest: &Value) -> Result<Vec<String>, BedrockManifestError> {

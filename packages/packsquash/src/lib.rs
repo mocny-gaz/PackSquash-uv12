@@ -24,15 +24,15 @@ use futures::StreamExt;
 use futures::future;
 use thiserror::Error;
 use tokio::io::AsyncSeek;
-use tokio::io::ReadBuf;
 use tokio::io::BufReader;
+use tokio::io::ReadBuf;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
-use mcchanges::{McChanges, McChangesError, LanguageFileReduction};
 use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
+use mcchanges::{LanguageFileReduction, McChanges, McChangesError};
 #[cfg(feature = "optifine")]
 use optifine_sky::SkyImageOptimizer;
 use pack_metadata::{PackMetadata, PackMetadataError};
@@ -42,8 +42,8 @@ use squash_zip::{SquashZip, SquashZipError};
 use crate::config::PropertiesFileOptions;
 use crate::config::{
 	AudioFileOptions, CommandFunctionFileOptions, CompressedCompoundNbtTagFileOptions,
-	CustomFileOptions, FileOptions, JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions, ShaderFileOptions, SquashOptions,
-	ZipSpecConformanceLevel
+	CustomFileOptions, FileOptions, JsonFileOptions, LegacyLanguageFileOptions, PngFileOptions,
+	ShaderFileOptions, SquashOptions, ZipSpecConformanceLevel
 };
 use crate::pack_file::PackFileProcessData;
 use crate::pack_file::asset_type::{
@@ -58,11 +58,11 @@ use crate::vfs::{
 pub mod config;
 pub mod vfs;
 
-mod mcchanges;
-#[cfg(test)]
-mod copy_as_is_tests;
 mod bedrock_pack;
 mod buffered_async_spooled_temp_file;
+#[cfg(test)]
+mod copy_as_is_tests;
+mod mcchanges;
 #[cfg(feature = "optifine")]
 mod optifine_sky;
 mod pack_file;
@@ -175,7 +175,10 @@ impl PackSquasher {
 			// structures that the less conformant levels use, so only the one that follows the
 			// specification to the letter is allowed
 			if !matches!(
-				options_holder.options.global_options.zip_spec_conformance_level,
+				options_holder
+					.options
+					.global_options
+					.zip_spec_conformance_level,
 				ZipSpecConformanceLevel::Pedantic
 			) {
 				return Err(PackSquasherError::InvalidOptions(
@@ -184,7 +187,10 @@ impl PackSquasher {
 			}
 
 			// Java Edition quirks do not apply to Bedrock Edition
-			options_holder.options.global_options.work_around_minecraft_quirks = EnumSet::empty();
+			options_holder
+				.options
+				.global_options
+				.work_around_minecraft_quirks = EnumSet::empty();
 		}
 
 		let automatic_quirk_detection = options_holder
@@ -199,11 +205,11 @@ impl PackSquasher {
 
 		let read_pack_meta = !is_bedrock
 			&& (automatic_quirk_detection
-			|| automatic_asset_type_mask_detection
-			|| options_holder
-				.options
-				.global_options
-				.validate_pack_metadata_file);
+				|| automatic_asset_type_mask_detection
+				|| options_holder
+					.options
+					.global_options
+					.validate_pack_metadata_file);
 
 		// By default, allow every known asset type to match pack files. This will be adjusted later
 		// depending on the options and automatic asset type mask detection, if enabled
@@ -271,7 +277,10 @@ impl PackSquasher {
 			if let Some(pack_file_status_sender) = &pack_file_status_sender {
 				for notice in notices {
 					runtime
-						.block_on(pack_file_status_sender.send(PackSquasherStatus::Notice(Cow::Owned(notice))))
+						.block_on(
+							pack_file_status_sender
+								.send(PackSquasherStatus::Notice(Cow::Owned(notice)))
+						)
 						.ok();
 				}
 			}
@@ -556,10 +565,7 @@ impl PackSquasher {
 							.global_options
 							.skip_language_keys_identical_to_mcchanges
 					{
-						match mcchanges
-							.reduce_language_file(&*vfs, &pack_file_data)
-							.await
-						{
+						match mcchanges.reduce_language_file(&*vfs, &pack_file_data).await {
 							LanguageFileReduction::Unchanged => {}
 							LanguageFileReduction::Redundant => {
 								if let Some(tx) = pack_file_status_sender {
@@ -607,7 +613,8 @@ impl PackSquasher {
 						// Custom sky entries that mention merged images must use the image
 						// that was kept instead
 						if !copy_as_is
-							&& let Some(rewritten_entry) = sky_image_optimizer.rewritten_entry(relative_path)
+							&& let Some(rewritten_entry) =
+								sky_image_optimizer.rewritten_entry(relative_path)
 						{
 							file_data_override = Some(rewritten_entry);
 						}

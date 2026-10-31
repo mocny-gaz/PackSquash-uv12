@@ -6,9 +6,9 @@ use serde_json::json;
 use spng::{ContextFlags, DecodeFlags, Format};
 
 use super::*;
+use crate::config::{GlobalOptions, SquashOptions, ZipSpecConformanceLevel};
 use crate::mcchanges::ZipArchive;
 use crate::mcchanges::tests::{png, temp_dir, write_file};
-use crate::config::{GlobalOptions, SquashOptions, ZipSpecConformanceLevel};
 use crate::vfs::os_fs::OsFilesystem;
 use crate::{PackSquasher, PackSquasherError, PackSquasherStatus};
 
@@ -61,7 +61,10 @@ fn rgba_pixels(png: &[u8]) -> Vec<u8> {
 
 #[test]
 fn valid_manifests_are_accepted() {
-	assert_eq!(validate_manifest_value(&valid_manifest()).unwrap(), Vec::<String>::new());
+	assert_eq!(
+		validate_manifest_value(&valid_manifest()).unwrap(),
+		Vec::<String>::new()
+	);
 
 	// Semantic version strings are allowed in manifests with format version 2
 	let mut manifest = valid_manifest();
@@ -78,7 +81,10 @@ fn valid_manifests_are_accepted() {
 #[test]
 fn suspicious_manifests_get_warnings() {
 	let mut manifest = valid_manifest();
-	manifest["header"].as_object_mut().unwrap().remove("min_engine_version");
+	manifest["header"]
+		.as_object_mut()
+		.unwrap()
+		.remove("min_engine_version");
 	assert_eq!(validate_manifest_value(&manifest).unwrap().len(), 1);
 
 	let mut manifest = valid_manifest();
@@ -98,23 +104,33 @@ fn invalid_manifests_are_rejected() {
 		("missing format version", |m| {
 			m.as_object_mut().unwrap().remove("format_version");
 		}),
-		("textual format version", |m| m["format_version"] = json!("2")),
+		("textual format version", |m| {
+			m["format_version"] = json!("2")
+		}),
 		("missing header", |m| {
 			m.as_object_mut().unwrap().remove("header");
 		}),
-		("bad header UUID", |m| m["header"]["uuid"] = json!("not-a-uuid")),
+		("bad header UUID", |m| {
+			m["header"]["uuid"] = json!("not-a-uuid")
+		}),
 		("missing name", |m| {
 			m["header"].as_object_mut().unwrap().remove("name");
 		}),
 		("empty name", |m| m["header"]["name"] = json!("")),
 		("short version", |m| m["header"]["version"] = json!([1, 0])),
-		("negative version", |m| m["header"]["version"] = json!([1, -1, 0])),
+		("negative version", |m| {
+			m["header"]["version"] = json!([1, -1, 0])
+		}),
 		("no modules", |m| m["modules"] = json!([])),
-		("module UUID equals header UUID", |m| m["modules"][0]["uuid"] = json!(UUID_A)),
+		("module UUID equals header UUID", |m| {
+			m["modules"][0]["uuid"] = json!(UUID_A)
+		}),
 		("module without type", |m| {
 			m["modules"][0].as_object_mut().unwrap().remove("type");
 		}),
-		("bad min engine version", |m| m["header"]["min_engine_version"] = json!("new"))
+		("bad min engine version", |m| {
+			m["header"]["min_engine_version"] = json!("new")
+		})
 	];
 
 	for (name, mutate) in mutations {
@@ -160,20 +176,40 @@ fn files_are_classified_for_bedrock() {
 		("packsquash.toml", false, BedrockFileKind::Unknown),
 		("textures/blocks/stone.png", false, BedrockFileKind::Texture),
 		("textures/blocks/STONE.PNG", false, BedrockFileKind::Texture),
-		("textures/blocks/stone.tga", false, BedrockFileKind::Passthrough),
-		("textures/terrain_texture.json", false, BedrockFileKind::Json),
+		(
+			"textures/blocks/stone.tga",
+			false,
+			BedrockFileKind::Passthrough
+		),
+		(
+			"textures/terrain_texture.json",
+			false,
+			BedrockFileKind::Json
+		),
 		("models/entity/cow.geo.json", false, BedrockFileKind::Json),
 		("sounds/mob/cow.ogg", false, BedrockFileKind::OggAudio),
 		("sounds/mob/cow.wav", false, BedrockFileKind::Passthrough),
 		("sounds/mob/cow.fsb", false, BedrockFileKind::Passthrough),
 		("texts/en_US.lang", false, BedrockFileKind::Passthrough),
-		("materials/entity.material", false, BedrockFileKind::Passthrough),
-		("subpacks/low/textures/a.png", false, BedrockFileKind::Texture),
+		(
+			"materials/entity.material",
+			false,
+			BedrockFileKind::Passthrough
+		),
+		(
+			"subpacks/low/textures/a.png",
+			false,
+			BedrockFileKind::Texture
+		),
 		("textures/.hidden", false, BedrockFileKind::Passthrough),
 		// Icons are only special at the root
 		("textures/pack_icon.png", true, BedrockFileKind::Texture)
 	] {
-		assert_eq!(BedrockFileKind::of(path, skip_pack_icon), expected, "{path}");
+		assert_eq!(
+			BedrockFileKind::of(path, skip_pack_icon),
+			expected,
+			"{path}"
+		);
 	}
 }
 
@@ -212,8 +248,16 @@ fn bedrock_pack(pack_dir: &Path) {
 		"textures/terrain_texture.json",
 		b"{\n\t// A comment\n\t\"z_key\": [1, 2.50, 3e2],\n\t\"a_key\": {\"nested\": true} /* inline */\n}\n"
 	);
-	write_file(pack_dir, "texts/en_US.lang", b"## Comment\n\nitem.a.name=A\t## inline\n");
-	write_file(pack_dir, "materials/entity.material", b"\x00binary material\xFF");
+	write_file(
+		pack_dir,
+		"texts/en_US.lang",
+		b"## Comment\n\nitem.a.name=A\t## inline\n"
+	);
+	write_file(
+		pack_dir,
+		"materials/entity.material",
+		b"\x00binary material\xFF"
+	);
 	write_file(pack_dir, "textures/blocks/stone.tga", b"tga data");
 	write_file(pack_dir, "README.txt", b"not part of the pack");
 	write_file(pack_dir, "packsquash.toml", b"pack_directory = '.'");
@@ -317,7 +361,8 @@ fn bedrock_packs_are_squashed_with_bedrock_rules() {
 fn bedrock_json_numbers_keep_their_values() {
 	// Documents what the JSON serializer does with number notations, to make sure no
 	// value changes. 3e2 is written as 300.0, and 2.50 as 2.5
-	let value: serde_json::Value = serde_json::from_str("[1, 2.50, 3e2, 1E-3, 100000000000]").unwrap();
+	let value: serde_json::Value =
+		serde_json::from_str("[1, 2.50, 3e2, 1E-3, 100000000000]").unwrap();
 	let reparsed: serde_json::Value =
 		serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
 
@@ -353,7 +398,11 @@ fn invalid_bedrock_options_and_manifests_are_rejected() {
 	});
 	assert!(matches!(result, Err(PackSquasherError::InvalidOptions(_))));
 
-	write_file(pack_dir.path(), "manifest.json", br#"{"format_version": 2}"#);
+	write_file(
+		pack_dir.path(),
+		"manifest.json",
+		br#"{"format_version": 2}"#
+	);
 	let SquashResult { result, .. } = squash(pack_dir.path(), |_| {});
 	assert!(matches!(
 		result,
@@ -405,7 +454,11 @@ fn java_packs_are_not_affected_by_a_manifest_file() {
 		"pack.mcmeta",
 		br#"{"pack": {"pack_format": 1, "description": "Java pack"}}"#
 	);
-	write_file(pack_dir.path(), "assets/minecraft/lang/en_US.lang", b"a=1\n");
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/lang/en_US.lang",
+		b"a=1\n"
+	);
 
 	let SquashResult {
 		output, statuses, ..

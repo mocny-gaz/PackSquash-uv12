@@ -45,13 +45,12 @@ fn copy_as_is_is_parsed_without_confusing_other_options() {
 		parse(r#"{"minify_json": false}"#),
 		FileOptions::JsonFileOptions(_)
 	));
-	assert!(!matches!(
-		parse("{}"),
-		FileOptions::CustomFileOptions(_)
-	));
+	assert!(!matches!(parse("{}"), FileOptions::CustomFileOptions(_)));
 
 	// Mixing options of different kinds is an error
-	assert!(serde_json::from_str::<FileOptions>(r#"{"copy_as_is": true, "minify_json": false}"#).is_err());
+	assert!(
+		serde_json::from_str::<FileOptions>(r#"{"copy_as_is": true, "minify_json": false}"#).is_err()
+	);
 }
 
 const MODEL: &[u8] = b"{\n\t\"parent\": \"block/cube_all\",\n\t\"textures\": {\n\t\t\"all\": \"blocks/stone\"\n\t}\n}\n";
@@ -73,8 +72,16 @@ fn pack(pack_dir: &Path) -> Vec<u8> {
 	);
 	write_file(pack_dir, "assets/minecraft/models/block/a.json", MODEL);
 	write_file(pack_dir, "assets/minecraft/models/block/b.json", MODEL);
-	write_file(pack_dir, "assets/minecraft/textures/blocks/stone.png", &texture);
-	write_file(pack_dir, "assets/minecraft/textures/blocks/dirt.png", &texture);
+	write_file(
+		pack_dir,
+		"assets/minecraft/textures/blocks/stone.png",
+		&texture
+	);
+	write_file(
+		pack_dir,
+		"assets/minecraft/textures/blocks/dirt.png",
+		&texture
+	);
 	write_file(pack_dir, "assets/minecraft/lang/en_US.lang", LANGUAGE);
 	write_file(pack_dir, "assets/minecraft/custom/readme.txt", README);
 
@@ -147,7 +154,10 @@ fn files_can_be_copied_as_is_even_if_packsquash_knows_them() {
 
 	// The files that were asked to be copied have exactly the same bytes
 	assert_eq!(read("models/block/a.json").as_deref(), Some(MODEL));
-	assert_eq!(read("textures/blocks/stone.png").as_deref(), Some(&texture[..]));
+	assert_eq!(
+		read("textures/blocks/stone.png").as_deref(),
+		Some(&texture[..])
+	);
 	assert_eq!(read("lang/en_US.lang").as_deref(), Some(LANGUAGE));
 	// This includes the files that PackSquash does not know, like with force_include
 	assert_eq!(read("custom/readme.txt").as_deref(), Some(README));
@@ -165,16 +175,27 @@ fn copied_files_keep_their_name_and_are_not_changed_by_other_options() {
 	pack(pack_dir.path());
 
 	let mcchanges_dir = temp_dir();
-	write_file(mcchanges_dir.path(), "assets/minecraft/lang/en_US.lang", b"item.a.name=A\n");
-	write_file(mcchanges_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"item.a.name=A\n");
-	write_file(pack_dir.path(), "assets/minecraft/lang/fr_FR.lang", b"item.a.name=A\nitem.b.name=B\n");
+	write_file(
+		mcchanges_dir.path(),
+		"assets/minecraft/lang/en_US.lang",
+		b"item.a.name=A\n"
+	);
+	write_file(
+		mcchanges_dir.path(),
+		"assets/minecraft/lang/fr_FR.lang",
+		b"item.a.name=A\n"
+	);
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/lang/fr_FR.lang",
+		b"item.a.name=A\nitem.b.name=B\n"
+	);
 
 	let Squashed { output, .. } = squash(pack_dir.path(), |options| {
 		options.global_options.mcchanges_path = Some(mcchanges_dir.path().to_path_buf());
-		options.file_options.insert(
-			"assets/minecraft/lang/en_US.lang".to_owned(),
-			copy_as_is()
-		);
+		options
+			.file_options
+			.insert("assets/minecraft/lang/en_US.lang".to_owned(), copy_as_is());
 	});
 
 	// Entries identical to the mcchanges pack are removed, except in the file that is copied as-is
@@ -183,5 +204,8 @@ fn copied_files_keep_their_name_and_are_not_changed_by_other_options() {
 		Some(LANGUAGE)
 	);
 	let french = String::from_utf8(output.read("assets/minecraft/lang/fr_FR.lang").unwrap()).unwrap();
-	assert!(french.contains("item.b.name=B") && !french.contains("item.a.name"), "{french}");
+	assert!(
+		french.contains("item.b.name=B") && !french.contains("item.a.name"),
+		"{french}"
+	);
 }

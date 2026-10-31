@@ -3,9 +3,9 @@ use std::fs;
 use flate2::Compression;
 
 use super::*;
+use crate::config::{GlobalOptions, MinecraftMod, SquashOptions};
 use crate::mcchanges::ZipArchive;
 use crate::mcchanges::tests::{png, temp_dir, write_file};
-use crate::config::{GlobalOptions, MinecraftMod, SquashOptions};
 use crate::vfs::os_fs::OsFilesystem;
 use crate::{PackSquasher, PackSquasherStatus};
 
@@ -34,7 +34,10 @@ async fn images_not_named_by_any_entry_are_unused() {
 
 	let optimizer = optimizer(pack_dir.path(), false).await;
 
-	assert_eq!(optimizer.skip_reason(&format!("{SKY}world0/cloud.png")), None);
+	assert_eq!(
+		optimizer.skip_reason(&format!("{SKY}world0/cloud.png")),
+		None
+	);
 	assert_eq!(
 		optimizer.skip_reason(&format!("{SKY}world0/leftover.png")),
 		Some("Unused by OptiFine custom sky entries")
@@ -67,9 +70,21 @@ async fn identical_images_of_a_directory_are_merged() {
 	let pack_dir = temp_dir();
 	let p = pack_dir.path();
 
-	write_file(p, &format!("{SKY}world0/sky1.properties"), b"source=./b.png\nblend=add\n");
-	write_file(p, &format!("{SKY}world0/sky2.properties"), b"source = a.png\r\n");
-	write_file(p, &format!("{SKY}world0/sky3.properties"), b"source=c.png\n");
+	write_file(
+		p,
+		&format!("{SKY}world0/sky1.properties"),
+		b"source=./b.png\nblend=add\n"
+	);
+	write_file(
+		p,
+		&format!("{SKY}world0/sky2.properties"),
+		b"source = a.png\r\n"
+	);
+	write_file(
+		p,
+		&format!("{SKY}world0/sky3.properties"),
+		b"source=c.png\n"
+	);
 	for (name, data) in [("a", b"same"), ("b", b"same"), ("c", b"diff")] {
 		write_file(p, &format!("{SKY}world0/{name}.png"), data);
 	}
@@ -84,7 +99,11 @@ async fn identical_images_of_a_directory_are_merged() {
 		Some("Merged with an identical OptiFine custom sky image")
 	);
 	for kept in ["world0/a.png", "world0/c.png", "world1/a.png"] {
-		assert_eq!(optimizer.skip_reason(&format!("{SKY}{kept}")), None, "{kept}");
+		assert_eq!(
+			optimizer.skip_reason(&format!("{SKY}{kept}")),
+			None,
+			"{kept}"
+		);
 	}
 
 	assert_eq!(
@@ -94,8 +113,16 @@ async fn identical_images_of_a_directory_are_merged() {
 		Some(&b"source=./a.png\nblend=add\n"[..])
 	);
 	// Entries that do not mention merged images are left alone
-	for untouched in ["world0/sky2.properties", "world0/sky3.properties", "world1/sky.properties"] {
-		assert!(optimizer.rewritten_entry(&format!("{SKY}{untouched}")).is_none());
+	for untouched in [
+		"world0/sky2.properties",
+		"world0/sky3.properties",
+		"world1/sky.properties"
+	] {
+		assert!(
+			optimizer
+				.rewritten_entry(&format!("{SKY}{untouched}"))
+				.is_none()
+		);
 	}
 }
 
@@ -108,12 +135,20 @@ async fn images_mentioned_from_other_directories_are_not_merged() {
 	write_file(p, &format!("{SKY}world0/a.png"), b"same");
 	write_file(p, &format!("{SKY}world0/b.png"), b"same");
 	// This entry may mean its own b.png, or the one of world0
-	write_file(p, &format!("{SKY}world1/sky.properties"), b"source=../world0/b.png\n");
+	write_file(
+		p,
+		&format!("{SKY}world1/sky.properties"),
+		b"source=../world0/b.png\n"
+	);
 
 	let optimizer = optimizer(p, true).await;
 
 	assert_eq!(optimizer.skip_reason(&format!("{SKY}world0/b.png")), None);
-	assert!(optimizer.rewritten_entry(&format!("{SKY}world0/sky.properties")).is_none());
+	assert!(
+		optimizer
+			.rewritten_entry(&format!("{SKY}world0/sky.properties"))
+			.is_none()
+	);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -129,7 +164,11 @@ async fn unused_images_are_found_after_merging() {
 	let optimizer = optimizer(p, true).await;
 
 	// b.png was merged into a.png, which the entry now uses. d.png has no entry
-	assert!(optimizer.skip_reason(&format!("{SKY}world0/b.png")).is_some());
+	assert!(
+		optimizer
+			.skip_reason(&format!("{SKY}world0/b.png"))
+			.is_some()
+	);
 	assert_eq!(optimizer.skip_reason(&format!("{SKY}world0/a.png")), None);
 	assert_eq!(
 		optimizer.skip_reason(&format!("{SKY}world0/d.png")),
@@ -281,10 +320,12 @@ fn squashing_leaves_out_sky_images_only_if_asked() {
 				assert!(output.contains(&sky_file(file)), "{file} in {case}");
 			}
 
-			let sky2 =
-				String::from_utf8(output.read(&sky_file("sky2.properties")).unwrap()).unwrap();
+			let sky2 = String::from_utf8(output.read(&sky_file("sky2.properties")).unwrap()).unwrap();
 			if merge {
-				assert!(sky2.contains("cloud.png") && !sky2.contains("copy.png"), "{sky2}");
+				assert!(
+					sky2.contains("cloud.png") && !sky2.contains("copy.png"),
+					"{sky2}"
+				);
 			} else {
 				assert!(sky2.contains("copy.png"), "{sky2}");
 			}
