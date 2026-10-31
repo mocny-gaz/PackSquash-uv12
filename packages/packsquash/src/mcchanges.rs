@@ -60,15 +60,36 @@ const PNG_HEADER: [u8; 16] = [
 /// memory needed to decode them.
 const MAX_PIXEL_COMPARISON_PIXELS: u64 = 4096 * 4096;
 
-/// The length of the hash of a language entry in a `.langkeys` file. 96 bits make accidental
-/// collisions impossible for all practical purposes.
+/// The length of the hash of a language entry in a `langkeys:` `.langkeys` file. 96 bits make
+/// accidental collisions impossible for all practical purposes.
 const LANGUAGE_KEY_HASH_LENGTH: usize = 12;
+
+/// The length of the hash of a language entry in `langfull:` and `langdelta:` `.langkeys` files.
+/// 64 bits are enough: the chance that a different entry has the same hash as one of the 10000
+/// entries of a language file is smaller than one in a quadrillion.
+const COMPACT_LANGUAGE_KEY_HASH_LENGTH: usize = 8;
+
+/// How many `langdelta:` files can be applied on top of a `langfull:` one, at most.
+const MAX_LANGUAGE_KEY_DELTAS: usize = 64;
 
 /// The suffix of the files with the language entry hashes of a language file.
 const LANGUAGE_KEYS_SUFFIX: &str = ".langkeys";
 
-/// The hash of a language entry: a key and its value.
-type LanguageKeyHash = [u8; LANGUAGE_KEY_HASH_LENGTH];
+/// The hashes of the entries of a language file. A hash is the first `width` bytes of the SHA-256
+/// digest of an entry, read as a number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LanguageKeySet {
+	width: usize,
+	hashes: HashSet<u128>
+}
+
+impl LanguageKeySet {
+	/// Checks whether the language file has an entry with the given key and value.
+	fn contains(&self, key: &str, value: &[u8]) -> bool {
+		self.hashes
+			.contains(&language_key_hash(key, value, self.width))
+	}
+}
 
 /// An error that may occur while loading a mcchanges pack.
 #[derive(Error, Debug)]
@@ -135,7 +156,7 @@ enum McChangesEntry {
 	/// The hash of the contents of the file, as `algorithm:hexadecimal digest`.
 	Hash(String),
 	/// The hashes of the entries of a language file. The file itself is not known.
-	LanguageKeys(HashSet<LanguageKeyHash>)
+	LanguageKeys(LanguageKeySet)
 }
 
 /// A loaded mcchanges pack, ready to be used to find redundant pack files.
@@ -257,7 +278,7 @@ impl McChanges {
 				.map(McChangesEntry::Data);
 		};
 
-		for layer in layers {
+		for (index, layer) in layers.iter().enumerate() {
 			if let Some(data) = self
 				.read_raw(vfs, &format!("{}/{relative_path}", layer.version))
 				.await
@@ -266,18 +287,18 @@ impl McChanges {
 			}
 
 			if let Some(hash) = layer.hashed_files.get(relative_path) {
-				if hash.starts_with("langkeys:") {
+				if hash.starts_with("langkeys:")
+					|| hash.starts_with("langfull:")
+					|| hash.starts_with("langdelta:")
+				{
 					// A language file whose keys can't be loaded is left as an unmatchable hash
-					let keys = self
-						.read_raw(
-							vfs,
-							&format!("{}/{relative_path}{LANGUAGE_KEYS_SUFFIX}", layer.version)
-						)
-						.await
-						.and_then(|keys| parse_language_keys(&keys, hash));
-
 					return Some(
-						keys.map_or_else(|| McChangesEntry::Hash(hash.clone()), McChangesEntry::LanguageKeys)
+						self.load_language_keys(vfs, layers, index, relative_path)
+							.await
+							.map_or_else(
+								|| McChangesEntry::Hash(hash.clone()),
+								McChangesEntry::LanguageKeys
+							)
 					);
 				}
 
@@ -290,6 +311,81 @@ impl McChanges {
 		}
 
 		None
+	}
+
+	/// Loads the hashes of the entries of a language file whose token is in the layer with the
+	/// given index. A `langdelta:` token only has the changes from the previous version of the file,
+	/// so this follows the older layers that mention the file until a `langfull:` (or an old
+	/// `langkeys:`) token, then applies the changes in order. Every `.langkeys` file must match the
+	/// digest of its token.
+	async fn load_language_keys<V: VirtualFileSystem>(
+		&self,
+		vfs: &V,
+		layers: &[VersionLayer],
+		start: usize,
+		relative_path: &str
+	) -> Option<LanguageKeySet> {
+		let mut index = start;
+		let mut deltas = Vec::new();
+
+		loop {
+			let layer = &layers[index];
+			let (kind, digest) = layer.hashed_files.get(relative_path)?.split_once(':')?;
+			let data = self
+				.read_raw(
+					vfs,
+					&format!("{}/{relative_path}{LANGUAGE_KEYS_SUFFIX}", layer.version)
+				)
+				.await?;
+
+			if !hexadecimal(Sha256::digest(&data)).eq_ignore_ascii_case(digest) {
+				return None;
+			}
+
+			match kind {
+				"langkeys" if deltas.is_empty() => {
+					return Some(LanguageKeySet {
+						width: LANGUAGE_KEY_HASH_LENGTH,
+						hashes: parse_hash_list(&data, LANGUAGE_KEY_HASH_LENGTH)?
+							.into_iter()
+							.collect()
+					});
+				}
+				"langfull" => {
+					let mut hashes: HashSet<u128> =
+						parse_hash_list(&data, COMPACT_LANGUAGE_KEY_HASH_LENGTH)?
+							.into_iter()
+							.collect();
+
+					for (added, removed) in deltas.iter().rev() {
+						for hash in removed {
+							hashes.remove(hash);
+						}
+						hashes.extend(added);
+					}
+
+					return Some(LanguageKeySet {
+						width: COMPACT_LANGUAGE_KEY_HASH_LENGTH,
+						hashes
+					});
+				}
+				"langdelta" if deltas.len() < MAX_LANGUAGE_KEY_DELTAS => {
+					deltas.push(parse_language_key_delta(&data)?);
+				}
+				_ => return None
+			}
+
+			// The previous change of the file is in the next older version that mentions it
+			index = layers
+				.iter()
+				.enumerate()
+				.skip(index + 1)
+				.find(|(_, layer)| {
+					layer.hashed_files.contains_key(relative_path)
+						|| layer.removed_files.contains(relative_path)
+				})
+				.map(|(index, _)| index)?;
+		}
 	}
 
 	/// Checks whether including the given pack file in the result ZIP file is redundant
@@ -463,12 +559,12 @@ impl McChanges {
 			}
 			(McChangesEntry::LanguageKeys(keys), true) => {
 				reduce_json_language_file(&pack_data, |key, value| {
-					keys.contains(&language_key_hash(key, canonical_json(value).as_bytes()))
+					keys.contains(key, canonical_json(value).as_bytes())
 				})
 			}
 			(McChangesEntry::LanguageKeys(keys), false) => {
 				reduce_legacy_language_file(&pack_data, |key, value| {
-					keys.contains(&language_key_hash(key, value.as_bytes()))
+					keys.contains(key, value.as_bytes())
 				})
 			}
 			(McChangesEntry::Hash(_), _) => LanguageFileReduction::Unchanged
@@ -578,33 +674,51 @@ fn canonical_json(value: &serde_json::Value) -> String {
 	out
 }
 
-/// The hash of an entry of a language file, as stored in `.langkeys` files: the first bytes of
-/// the SHA-256 digest of the key, a zero byte, and the value. The value is the canonical JSON
-/// of the value for JSON language files, and the text after the equals sign for legacy ones.
-fn language_key_hash(key: &str, value: &[u8]) -> LanguageKeyHash {
+/// The hash of an entry of a language file, as stored in `.langkeys` files: the first `width` bytes
+/// of the SHA-256 digest of the key, a zero byte, and the value, read as a big endian number. The
+/// value is the canonical JSON of the value for JSON language files, and the text after the equals
+/// sign for legacy ones.
+fn language_key_hash(key: &str, value: &[u8], width: usize) -> u128 {
 	let mut hasher = Sha256::new();
 	hasher.update(key.as_bytes());
 	hasher.update([0]);
 	hasher.update(value);
 
-	let mut hash = [0; LANGUAGE_KEY_HASH_LENGTH];
 	let digest = hasher.finalize();
 	let digest: &[u8] = digest.as_ref();
-	hash.copy_from_slice(&digest[..LANGUAGE_KEY_HASH_LENGTH]);
-	hash
+
+	digest[..width]
+		.iter()
+		.fold(0, |hash, byte| (hash << 8) | u128::from(*byte))
 }
 
-/// Parses the contents of a `.langkeys` file: the hashes of the entries of a language file, one
-/// after the other. The file must match the `langkeys:<SHA-256 digest>` token that refers to it.
-fn parse_language_keys(data: &[u8], token: &str) -> Option<HashSet<LanguageKeyHash>> {
-	let expected_digest = token.strip_prefix("langkeys:")?;
-	let (hashes, rest) = data.as_chunks::<LANGUAGE_KEY_HASH_LENGTH>();
-
-	if !rest.is_empty() || !hexadecimal(Sha256::digest(data)).eq_ignore_ascii_case(expected_digest) {
+/// Parses hashes of `width` bytes that are stored one after the other. Fails if the length of the
+/// data is not a multiple of `width`.
+fn parse_hash_list(data: &[u8], width: usize) -> Option<Vec<u128>> {
+	if !data.len().is_multiple_of(width) {
 		return None;
 	}
 
-	Some(hashes.iter().copied().collect())
+	Some(
+		data.chunks_exact(width)
+			.map(|hash| hash.iter().fold(0, |hash, byte| (hash << 8) | u128::from(*byte)))
+			.collect()
+	)
+}
+
+/// Parses a `langdelta:` file: the number of added hashes as a little endian 32 bit number, the added
+/// hashes, and then the removed hashes, which are the rest of the file.
+fn parse_language_key_delta(data: &[u8]) -> Option<(Vec<u128>, Vec<u128>)> {
+	let (count, hashes) = data.split_first_chunk::<4>()?;
+	let added_length = usize::try_from(u32::from_le_bytes(*count))
+		.ok()?
+		.checked_mul(COMPACT_LANGUAGE_KEY_HASH_LENGTH)?;
+	let (added, removed) = hashes.split_at_checked(added_length)?;
+
+	Some((
+		parse_hash_list(added, COMPACT_LANGUAGE_KEY_HASH_LENGTH)?,
+		parse_hash_list(removed, COMPACT_LANGUAGE_KEY_HASH_LENGTH)?
+	))
 }
 
 fn strip_bom(data: &[u8]) -> &[u8] {

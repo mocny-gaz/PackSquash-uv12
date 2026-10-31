@@ -1412,3 +1412,98 @@ fn squashing_with_a_hashes_jar_leaves_out_what_the_game_already_has() {
 	assert!(language.contains("changed") && language.contains("\"d\""), "{language}");
 	assert!(!language.contains("\"a\"") && !language.contains("\"c\""), "{language}");
 }
+
+/// A language file in three versions, with the compact tokens that `build_mcchanges_compact.py`
+/// makes: 1.0 is `{"a": "1", "b": "2", "c": "3"}` (`langfull:`), 1.1 changes b, drops c and adds d
+/// (`langdelta:`), and 1.2 changes a (`langdelta:`). The files and digests are computed in Python.
+const COMPACT_PATH: &str = "assets/minecraft/lang/es_es.json";
+const COMPACT_FULL: &str = "0a934f412f7d21f7a3d88d977a7b71a1d2d8137896948869";
+const COMPACT_FULL_DIGEST: &str = "d5667f7ec050db21476ba6aca2c4923c46f8d01931fed26a8f1eaf08b692923c";
+const COMPACT_DELTA_1: &str = "0200000096703a88476bd470a86f71ce026628900a934f412f7d21f7a3d88d977a7b71a1";
+const COMPACT_DELTA_1_DIGEST: &str = "54f5a050d25af063ea91d852bd0b2c17aa657d8d1c5e2c18f968a54e7b0dd523";
+const COMPACT_DELTA_2: &str = "0100000069603f60206d0f88d2d8137896948869";
+const COMPACT_DELTA_2_DIGEST: &str = "9437d065f8dbb8285378d2b80143ad6d4d48e0a2e9ed601422ac157dcff4ba6a";
+
+/// What reducing a pack language file gives, for a compact jar with the three versions.
+/// `tamper_1_1` breaks the digest of the 1.1 key file, and `without_base` removes the `langfull:` file
+/// of 1.0, so that the chain of changes has no start.
+async fn compact_reduction(version: &str, pack: &[u8], tamper_1_1: bool, without_base: bool) -> LanguageFileReduction {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(pack_dir.path(), COMPACT_PATH, pack);
+
+	let mut delta_1 = from_hex(COMPACT_DELTA_1);
+	if tamper_1_1 {
+		delta_1.push(0);
+	}
+
+	let mut hashed = json!({
+		"1.1": { COMPACT_PATH: format!("langdelta:{COMPACT_DELTA_1_DIGEST}") },
+		"1.2": { COMPACT_PATH: format!("langdelta:{COMPACT_DELTA_2_DIGEST}") }
+	});
+	let mut files = vec![
+		(format!("1.1/{COMPACT_PATH}.langkeys"), delta_1),
+		(format!("1.2/{COMPACT_PATH}.langkeys"), from_hex(COMPACT_DELTA_2))
+	];
+	if !without_base {
+		hashed["1.0"] = json!({ COMPACT_PATH: format!("langfull:{COMPACT_FULL_DIGEST}") });
+		files.push((format!("1.0/{COMPACT_PATH}.langkeys"), from_hex(COMPACT_FULL)));
+	}
+
+	let index = json!({"format": 1, "kind": "hashes", "versions": ["1.0", "1.1", "1.2"], "hashed": hashed}).to_string();
+	let mut entries: Vec<(&str, &[u8], bool)> = vec![("mcchanges.json", index.as_bytes(), true)];
+	entries.extend(files.iter().map(|(name, data)| (name.as_str(), data.as_slice(), true)));
+	write_file(jar_dir.path(), "compact.jar", &zip(&entries, b""));
+
+	McChanges::open(&OsFilesystem, &jar_dir.path().join("compact.jar"), Some(version))
+		.await
+		.unwrap()
+		.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), COMPACT_PATH))
+		.await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn compact_language_keys_apply_the_changes_of_every_version() {
+	let pack = br#"{"a": "one", "b": "2", "d": "4", "z": "26"}"#;
+
+	// 1.2 has {a: one, b: two, d: 4}
+	assert_eq!(
+		compact_reduction("1.2", pack, false, false).await,
+		LanguageFileReduction::Reduced { data: br#"{"b":"2","z":"26"}"#.to_vec() }
+	);
+	// 1.1 has {a: 1, b: two, d: 4}
+	assert_eq!(
+		compact_reduction("1.1", pack, false, false).await,
+		LanguageFileReduction::Reduced { data: br#"{"a":"one","b":"2","z":"26"}"#.to_vec() }
+	);
+	// 1.0 has {a: 1, b: 2, c: 3}
+	assert_eq!(
+		compact_reduction("1.0", pack, false, false).await,
+		LanguageFileReduction::Reduced { data: br#"{"a":"one","d":"4","z":"26"}"#.to_vec() }
+	);
+	// The whole file is the same as the 1.2 one
+	assert_eq!(
+		compact_reduction("1.2", br#"{"d": "4", "b": "two", "a": "one"}"#, false, false).await,
+		LanguageFileReduction::Redundant
+	);
+	// An entry that an older version had, and a newer one changed, is not removed
+	assert_eq!(
+		compact_reduction("1.2", br#"{"c": "3", "b": "2"}"#, false, false).await,
+		LanguageFileReduction::Unchanged
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn compact_language_keys_that_cannot_be_trusted_are_not_used() {
+	let pack = br#"{"a": "one", "d": "4"}"#;
+
+	// A change with the wrong digest breaks the versions after it, but not the ones before
+	assert_eq!(compact_reduction("1.2", pack, true, false).await, LanguageFileReduction::Unchanged);
+	assert_eq!(compact_reduction("1.1", pack, true, false).await, LanguageFileReduction::Unchanged);
+	assert_eq!(
+		compact_reduction("1.0", br#"{"a": "1"}"#, true, false).await,
+		LanguageFileReduction::Redundant
+	);
+
+	// Changes without the file that they change are useless
+	assert_eq!(compact_reduction("1.2", pack, false, true).await, LanguageFileReduction::Unchanged);
+}

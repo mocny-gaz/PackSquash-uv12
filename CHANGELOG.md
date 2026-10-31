@@ -82,6 +82,9 @@ jar uses it for audio files, which makes the jar much smaller. This adds the
 file). A mcchanges file made only of tokens holds no game files, and PackSquash
 still compares textures by pixels, JSON by contents and removes identical language
 keys.
+- Compact language keys in hashes-only mcchanges files: `langfull:` and `langdelta:` tokens
+store 8 byte hashes, and a new version only stores the entries that changed. This makes the file
+about four times smaller. The `langkeys:` token still works.
 - The new `mcchanges_version` global option selects the game version to use
 from a mcchanges pack that holds many versions, described by a `mcchanges.json`
 file at its root. Versions only store the files they added or changed.

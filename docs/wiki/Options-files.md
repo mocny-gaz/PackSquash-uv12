@@ -614,6 +614,16 @@ root, with this structure:
     PackSquash can still remove the keys that are identical to the game, as
     [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
     describes. A whole language file that is identical is dropped by that option.
+  - `langfull:<digest>` and `langdelta:<digest>`: the compact form of `langkeys:`. The
+    `<path>.langkeys` file next to the files of the version holds 8 byte hashes, and the
+    digest is the SHA-256 digest of that file. A `langfull:` file lists the hashes of every
+    entry (sorted). A `langdelta:` file only has the changes since the last version that
+    mentions the same file: a little endian 32 bit number with the count of added hashes, the
+    added hashes, and then the removed hashes. PackSquash starts at the selected version, goes
+    back until a `langfull:` (or `langkeys:`) token, and applies the changes in order. A file
+    with a wrong digest, or a change without its start, is not used. The hash of an entry is the
+    first bytes of the SHA-256 digest of the key, a zero byte, and the value (the canonical JSON
+    of the value for JSON files, the text after the equals sign for `.lang` files).
 
   A token that PackSquash does not understand never matches, so the file is kept.
 
