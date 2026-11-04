@@ -262,3 +262,25 @@ async fn deeply_nested_value_works() {
 	)
 	.await;
 }
+
+#[tokio::test]
+async fn raw_control_characters_in_strings_are_accepted_like_the_game_does() {
+	successful_process_test(
+		"{\"description\": \"line one\nline two\ttabbed\"}",
+		PackFileAssetType::GenericJson,
+		Default::default(),
+		"{\"description\":\"line one\\nline two\\ttabbed\"}"
+	)
+	.await;
+}
+
+#[tokio::test]
+async fn raw_control_characters_work_together_with_comments() {
+	successful_process_test(
+		"{\n// it\'s a \"comment\"\n\"description\": \"a\nb\"}",
+		PackFileAssetType::GenericJsonWithComments,
+		Default::default(),
+		"{\"description\":\"a\\nb\"}"
+	)
+	.await;
+}

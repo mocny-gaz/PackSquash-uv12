@@ -486,3 +486,23 @@ async fn well_formed_real_and_complex_pack_mcmeta_works() {
 		"Unexpected bounding format version range"
 	);
 }
+
+#[tokio::test]
+async fn pack_mcmeta_with_raw_line_breaks_in_strings_works_like_in_the_game() {
+	read_metadata(
+		"{\n\t\"pack\": {\n\t\t\"pack_format\": 7,\n\t\t\"description\": \"My pack\nsecond line\"\n\t}\n}",
+		[PackType::ClientResources]
+	)
+	.await
+	.expect("Raw control characters in strings should be accepted");
+}
+
+#[tokio::test]
+async fn pack_mcmeta_that_is_really_invalid_still_fails() {
+	assert!(
+		read_metadata("{\"pack\": }", [PackType::ClientResources])
+			.await
+			.is_err(),
+		"Invalid JSON should still be rejected"
+	);
+}

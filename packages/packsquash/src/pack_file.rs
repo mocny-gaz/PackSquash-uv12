@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
-pub use util::strip_utf8_bom;
+pub use util::{escape_control_characters_in_strings, is_control_character_error, strip_utf8_bom};
 
 use crate::pack_file::asset_type::PackFileAssetType;
 use crate::squash_zip::FileListingCircumstances;

@@ -1,25 +1,19 @@
 # Task list of the fork
 
-Updated 2026-10-31. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-02. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line.
 
 ## This very moment
 
-- [ ] t2 `release.py` said the program imports `VCRUNTIME140.dll`, and rustc warned about `generic_const_exprs`. Both fixed, owner checks (patch 0016, new `release.py`: it now builds with the GNU toolchain like the CI, run `python release.py setup` once) (owner)
-- [ ] n8 `--include-previews` crash `File is not a zip file`. A damaged saved download is now found and downloaded again, and the error names the version. Could not reproduce it from a clean folder, so run it again; if it still fails send the first lines (owner)
-- [ ] N7 Dependabot (1 critical, 1 high, 10 moderate, 3 low): `tokio`, `libz-sys`, `ctutils`, `certifi` (patch 0013) and `filelock` (13 alerts, patch 0015). Apply them, push, check the page (owner)
+- [ ] r1 Apply patch 0017 (PackSquash accepts raw line breaks and tabs inside strings of `pack.mcmeta` and other JSON files, like the game does). Build, then run the pack in `C:\p\pla` again. The error was `control character found while parsing a string at line 5` (owner)
+- [ ] r2 Fork README: add an index and a docs page that explains how to use everything, what is default and what is not, and the new options (AI, next)
+- [ ] r3 Options builder page (`packsquash-options-builder.html`) is done. It warns about a folder in `mcchanges_path` with a version set, and writes every option correctly. Try it (owner)
 
-## Now
+## Features (the AI prepares the patches, the owner builds, then applies)
 
-- [ ] N1 Apply patches 0011, 0012, 0013, 0014, 0015, 0016 with `apply_patches.py` (0010 is already in master) (owner)
-- [ ] N6 Run nightly `cargo fmt --all` once, commit (owner)
-- [ ] N4 First release: `python release.py setup`, then `python release.py release --dry-run`, then `python release.py release` (owner)
-- [ ] N5 Publish the jars in the `mc-changes` repository as GitHub Release files, put README.md and PUBLISHING.md in it. Rebuild the jars with the new `build_mcchanges_jar.py` first (owner)
-
-## Features (the AI starts after the first release)
-
-- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.rar` read only, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip (AI)
-- [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report (AI)
+- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: library module written but NOT compiled or tested (`WIP-archive-input.patch`), CLI part and tests missing (AI)
+- [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like, also when it is an archive of any kind. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report. STATE: designed, not written (AI)
+- [ ] f4 Auto detect the game version when `mcchanges_version` is blank: try every version of the mcchanges jar and use the best match. STATE: designed, not written (AI)
 - [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (AI)
 
 ## Later
@@ -37,12 +31,14 @@ block under the task. Fixed things move to Done, in one short line.
 
 - [x] 0001 to 0008: skip files same as vanilla (mcchanges), versions, Bedrock, language keys, sky images, `copy_as_is`, shader `#include`, audio hashes
 - [x] 0010: hash tokens (`png:`, `json:`, `langkeys:`), in master as "mc-changes ready"
-- [x] 0011 release prep (0.5.0-fork.1, runners, no wiki sync). 0012 task list. 0013 and 0015 dependency fixes. 0014 compact language keys (`langfull:`, `langdelta:`)
+- [x] 0011 to 0016 applied: release prep, task list, dependency fixes, compact language keys (`langfull:`, `langdelta:`), no `generic_const_exprs`
+- [x] First release 0.5.0-fork.1 (GNU build with WinLibs, `release.py`). `cargo fmt` run. Jars rebuilt and published as Release files in `mc-changes`
+- [x] Dependabot alerts fixed. `--include-previews` crash fixed. `msvcrt.dll` check fixed
 - [x] Tools outside the repository: `build_mcchanges_jar.py` (compact, 40% of the threads, reuses `C:\amc\work`), `old_build_mcchanges_jar.py`, `release.py`, `apply_patches.py`, READMEs, `mc-changes` README
-- [x] t1: Bedrock jars have no folders because they have no language files to store (see the answer in chat)
+- [x] t1: Bedrock jars have no folders because they have no language files to store
 
 ## Rules
 
 - Scripts and their READMEs are separate files, never in a patch. A change of this file goes inside another patch.
-- Send each patch or file when it is finished, then go on with this list. Send this file again after progress.
+- Send each patch or file when it is finished, then go on with this list. Send this file again after progress, cleaned: no pasted logs, fixed things only in Done.
 - Simple English. Windows 11 and cmd commands.

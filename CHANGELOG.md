@@ -8,6 +8,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Raw control characters inside strings, like a line break or a tab typed in the middle of
+  the `description` of a `pack.mcmeta`, no longer make PackSquash fail with `control character
+  found while parsing a string`. The game accepts them, so PackSquash now does too. This also
+  applies to the other JSON files of a pack.
+
 ## [0.5.0-fork.1] - 2026-10-29
 
 ### Added

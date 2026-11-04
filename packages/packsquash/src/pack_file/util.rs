@@ -32,6 +32,52 @@ pub fn strip_utf8_bom(buf: &[u8]) -> &[u8] {
 	&buf[start_index..]
 }
 
+/// Checks whether a JSON parsing error was caused by a raw control character (like a line break or a
+/// tab) inside a string. The JSON parser we use rejects them, but the game reads JSON files in a lenient
+/// way and accepts them, so packs that have them work in the game.
+pub fn is_control_character_error(error: &serde_json::Error) -> bool {
+	error.is_syntax() && error.to_string().starts_with("control character")
+}
+
+/// Returns the JSON data with the raw control characters inside strings replaced with their escape
+/// sequences, which is how the game, being lenient, reads them. The data outside strings, and the
+/// contents of valid strings, are not changed. Comments must be removed first, because a quote inside
+/// a comment would confuse this function.
+pub fn escape_control_characters_in_strings(data: &[u8]) -> Vec<u8> {
+	let mut output = Vec::with_capacity(data.len() + 16);
+	let (mut in_string, mut escaped) = (false, false);
+
+	for &byte in data {
+		if !in_string {
+			in_string = byte == b'"';
+			output.push(byte);
+		} else if escaped {
+			escaped = false;
+			output.push(byte);
+		} else {
+			match byte {
+				b'\\' => {
+					escaped = true;
+					output.push(byte);
+				}
+				b'"' => {
+					in_string = false;
+					output.push(byte);
+				}
+				b'\n' => output.extend_from_slice(b"\\n"),
+				b'\r' => output.extend_from_slice(b"\\r"),
+				b'\t' => output.extend_from_slice(b"\\t"),
+				0x08 => output.extend_from_slice(b"\\b"),
+				0x0C => output.extend_from_slice(b"\\f"),
+				0x00..=0x1F => output.extend_from_slice(format!("\\u{byte:04x}").as_bytes()),
+				_ => output.push(byte)
+			}
+		}
+	}
+
+	output
+}
+
 /// Checks whether the specified byte buffer begins with a byte order mark
 /// character.
 pub fn starts_with_bom(buf: impl AsRef<[u8]>) -> bool {
@@ -189,5 +235,45 @@ impl<R: Read> Read for AccountingRead<'_, R> {
 			.ok_or(io::Error::other("Read byte count overflow"))?;
 
 		Ok(read_bytes)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn control_characters_in_strings_are_escaped() {
+		assert_eq!(
+			escape_control_characters_in_strings(b"{\"a\": \"one\ntwo\r\n\tthree\x01\"}"),
+			br#"{"a": "one\ntwo\r\n\tthree\u0001"}"#
+		);
+	}
+
+	#[test]
+	fn valid_json_is_not_changed() {
+		let json = b"{\n\t\"a\": \"one\\ntwo \\\" \\\\\",\r\n\t\"b\": [1, 2]\n}";
+		assert_eq!(escape_control_characters_in_strings(json), json);
+		assert_eq!(
+			escape_control_characters_in_strings("{\"a\":\"ñ \u{1F600}\"}".as_bytes()),
+			"{\"a\":\"ñ \u{1F600}\"}".as_bytes()
+		);
+	}
+
+	#[test]
+	fn an_escaped_quote_does_not_end_the_string() {
+		assert_eq!(
+			escape_control_characters_in_strings(b"\"a\\\"\nb\""),
+			br#""a\"\nb""#
+		);
+	}
+
+	#[test]
+	fn only_control_character_errors_are_recognized() {
+		let control = serde_json::from_str::<serde_json::Value>("\"a\nb\"").unwrap_err();
+		let other = serde_json::from_str::<serde_json::Value>("{\"a\": }").unwrap_err();
+
+		assert!(is_control_character_error(&control));
+		assert!(!is_control_character_error(&other));
 	}
 }

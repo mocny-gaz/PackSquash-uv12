@@ -1,6 +1,6 @@
 //! Contains code to optimize JSON files.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, io::Read as _};
 
 use bytes::{BufMut, BytesMut};
 use json_comments::StripComments;
@@ -13,7 +13,10 @@ use crate::config::JsonFileOptions;
 use crate::pack_file::AsyncReadAndSizeHint;
 use crate::pack_file::asset_type::PackFileAssetType;
 
-use super::{PackFile, PackFileConstructor, util::strip_utf8_bom};
+use super::{
+	PackFile, PackFileConstructor,
+	util::{escape_control_characters_in_strings, is_control_character_error, strip_utf8_bom}
+};
 
 use self::debloater::Debloater;
 use self::unbounded_depth_json_value::UnboundedDepthJsonValue;
@@ -80,16 +83,37 @@ impl Decoder for OptimizerDecoder {
 		// it's valid. Check whether we should parse and discard comments, too. We also disable
 		// recursion limits to support complex JSON structures, which may be found in some practical
 		// packs
-		let mut json_value = if self.optimization_settings.always_allow_comments
-			|| asset_type_has_comments_extension(self.asset_type)
-		{
+		let allow_comments = self.optimization_settings.always_allow_comments
+			|| asset_type_has_comments_extension(self.asset_type);
+
+		let parsed = if allow_comments {
 			UnboundedDepthJsonValue::deserialize(|| {
 				serde_json::de::IoRead::new(StripComments::new(strip_utf8_bom(src)))
-			})?
+			})
 		} else {
 			UnboundedDepthJsonValue::deserialize(|| {
 				serde_json::de::SliceRead::new(strip_utf8_bom(src))
-			})?
+			})
+		};
+
+		let mut json_value = match parsed {
+			// The game accepts raw control characters (like line breaks) in strings, so a pack that
+			// has them works in the game. Be as lenient as the game is: escape them and try again
+			Err(error) if is_control_character_error(&error) => {
+				let mut text = Vec::with_capacity(src.len());
+				if allow_comments {
+					// Reading from a slice can not fail
+					StripComments::new(strip_utf8_bom(src))
+						.read_to_end(&mut text)
+						.ok();
+				} else {
+					text.extend_from_slice(strip_utf8_bom(src));
+				}
+				let text = escape_control_characters_in_strings(&text);
+
+				UnboundedDepthJsonValue::deserialize(|| serde_json::de::SliceRead::new(&text))?
+			}
+			result => result?
 		};
 
 		// All concrete asset types start with a JSON object (aka struct, map)

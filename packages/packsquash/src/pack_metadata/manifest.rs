@@ -7,7 +7,7 @@
 use std::{
 	cmp, fmt,
 	hash::{Hash, Hasher},
-	io,
+	io::{self, Read as _},
 	ops::{Deref, RangeInclusive},
 	path::Path
 };
@@ -23,7 +23,10 @@ use strum::VariantArray;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 
-use crate::{pack_file::strip_utf8_bom, vfs::VirtualFileSystem};
+use crate::{
+	pack_file::{escape_control_characters_in_strings, is_control_character_error, strip_utf8_bom},
+	vfs::VirtualFileSystem
+};
 
 /// The format version a pack can declare compatibility with.
 ///
@@ -889,11 +892,23 @@ impl PackMetadata {
 			.read_to_end(&mut manifest_buf)
 			.await?;
 
-		Ok(
-			pack_type.deserialize_meta(&mut serde_json::Deserializer::from_reader(
-				StripComments::new(strip_utf8_bom(&manifest_buf))
-			))?
-		)
+		let manifest = strip_utf8_bom(&manifest_buf);
+
+		match pack_type.deserialize_meta(&mut serde_json::Deserializer::from_reader(
+			StripComments::new(manifest)
+		)) {
+			// The game accepts raw control characters (like line breaks) in strings, so a pack that
+			// has them works in the game. Be as lenient as the game is
+			Err(error) if is_control_character_error(&error) => {
+				let mut stripped = Vec::with_capacity(manifest.len());
+				StripComments::new(manifest).read_to_end(&mut stripped)?;
+
+				Ok(pack_type.deserialize_meta(&mut serde_json::Deserializer::from_slice(
+					&escape_control_characters_in_strings(&stripped)
+				))?)
+			}
+			result => Ok(result?)
+		}
 	}
 
 	/// Returns the smallest format version range that encompasses all the format version subranges
