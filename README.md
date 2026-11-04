@@ -14,6 +14,22 @@ Everything about the work in this fork is written down in
 [HANDOFF.md](HANDOFF.md): what each change does, why, where the code is, how to
 build, test and release, and what is still open.
 
+## Index
+
+- [Usage guide](docs/fork/USAGE.md): quick start, what is on by default, the
+  mcchanges feature step by step, common problems.
+- [What this fork adds](#what-this-fork-adds)
+- [Options reference](docs/wiki/Options-files.md): every option, with its default
+  and allowed values.
+- [mcchanges jars](https://github.com/mocny-gaz/mc-changes): the downloads and the
+  file format.
+- [Bedrock Edition packs](docs/wiki/Bedrock-Edition-packs.md)
+- [Releases](https://github.com/mocny-gaz/PackSquash-uv12/releases): the program
+  for Windows.
+- [Changelog](CHANGELOG.md)
+- [Task list](docs/fork/TASKS.md) and [hand-off notes](HANDOFF.md)
+- [The original README](#heres-the-original-readme)
+
 ## What this fork adds
 
 - **mcchanges: leave out what vanilla already has** (original issue
@@ -23,11 +39,11 @@ build, test and release, and what is still open.
   compared by pixels, and JSON files by contents.
 - **Many game versions in one file.** `mcchanges_version` selects a game version
   from a single mcchanges jar that stores each version as a small change on top
-  of the version before it. Audio files are stored only as hashes.
-  `tools/mcchanges-jar` has a script that downloads the files and builds that jar
-  for Java Edition and for Bedrock Edition, and updates it when new game versions
-  come out, and an AI prompt that drives it. The files inside belong to Mojang, so
-  build the jar on your computer and do not publish it.
+  of the version before it. Audio files are stored only as hashes. Ready-made
+  jars that hold only hashes, no game files, are in the Releases of the
+  [mc-changes](https://github.com/mocny-gaz/mc-changes) repository, together with
+  the script that builds and updates them for Java Edition and for Bedrock
+  Edition.
 - **Language files** (original issue
   [#197](https://github.com/ComunidadAylas/PackSquash/issues/197)). With an
   mcchanges file, entries that have the same value as vanilla are removed from
@@ -53,7 +69,8 @@ build, test and release, and what is still open.
 - **Quieter command line.** Files that your options ask to leave out are no
   longer reported as warnings.
 
-A minimal example, in your PackSquash options file:
+A minimal example, in your PackSquash options file (the jar comes from the
+[mc-changes](https://github.com/mocny-gaz/mc-changes) Releases):
 
 ```toml
 mcchanges_path = 'C:\amc\mcchanges-java.jar'

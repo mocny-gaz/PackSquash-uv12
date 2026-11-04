@@ -1,19 +1,19 @@
 # Task list of the fork
 
-Updated 2026-11-02. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-04. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line.
 
 ## This very moment
 
 - [ ] r1 Apply patch 0017 (PackSquash accepts raw line breaks and tabs inside strings of `pack.mcmeta` and other JSON files, like the game does). Build, then run the pack in `C:\p\pla` again. The error was `control character found while parsing a string at line 5` (owner)
-- [ ] r2 Fork README: add an index and a docs page that explains how to use everything, what is default and what is not, and the new options (AI, next)
-- [ ] r3 Options builder page (`packsquash-options-builder.html`) is done. It warns about a folder in `mcchanges_path` with a version set, and writes every option correctly. Try it (owner)
+- [ ] until f3 is made make me an artifact where i can build the toml with all the new features (also make it look like that win11 debloat oled and simple so doesnt look ai). STATE: published as an Artifact, link in the chat. Try it and tell me what to change (owner)
+- [ ] in readme (of fork) make an index or some url to docs where you explain how to use it whats default and not and other stuff like that. STATE: patch 0018 has the README index and `docs/fork/USAGE.md`. It also removes the old `tools/mcchanges-jar` from the repository (the script lives in `mc-changes` and in `packsquash-tools`). Apply it after 0017 (owner)
 
-## Features (the AI prepares the patches, the owner builds, then applies)
+## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: library module written but NOT compiled or tested (`WIP-archive-input.patch`), CLI part and tests missing (AI)
+- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: library module written, compiled, 9 tests pass; CLI part, docs and end to end test missing (AI, next)
 - [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like, also when it is an archive of any kind. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report. STATE: designed, not written (AI)
-- [ ] f4 Auto detect the game version when `mcchanges_version` is blank: try every version of the mcchanges jar and use the best match. STATE: designed, not written (AI)
+- [ ] f4 make auto detect (run against every version of mcchanges) when mcchanges_version = is left blank. STATE: designed, not written (AI)
 - [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (AI)
 
 ## Later

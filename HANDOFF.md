@@ -10,7 +10,7 @@ guessed. Keep it up to date: update it in the same patch that changes the work.
 - Written by an AI (Claude) at the request of the fork owner, in a Linux sandbox. The
   owner works on Windows, with the project in `C:\apscl`, and keeps the mcchanges
   jars in `C:\amc`.
-- Last update of this file: 2026-10-26.
+- Last update of this file: 2026-11-04.
 
 ## 1. Working agreements with the owner
 
@@ -180,9 +180,9 @@ The field is still called `found_unresolvable_moj_import`.
 
 ## 4. File map
 
-The plain text guides for the owner are in `docs/fork/`: `FORK-EXPLAINED.txt` (what each
-change does), `FIRST-RELEASE-GUIDE.txt` (git, build, release) and `MCCHANGES-JAR-GUIDE.txt`
-(building and using the jars).
+The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in
+`docs/fork/`: `FORK-EXPLAINED.txt` (what each change does), `FIRST-RELEASE-GUIDE.txt` (git,
+build, release) and `MCCHANGES-JAR-GUIDE.txt` (where the jars come from, short).
 
 | Path | Purpose |
 | :--- | :--- |
@@ -194,32 +194,31 @@ change does), `FIRST-RELEASE-GUIDE.txt` (git, build, release) and `MCCHANGES-JAR
 | `packages/packsquash/src/copy_as_is_tests.rs` | Tests of `copy_as_is`. |
 | `packages/packsquash/src/lib.rs` | Wiring in `PackSquasher::run` and the per-file task. |
 | `packages/packsquash/src/config/mod.rs` | New options and the `PackEdition` enum. |
-| `tools/mcchanges-jar/` | `build_mcchanges_jar.py` and the AI prompt. |
+| `docs/fork/USAGE.md` | User guide: quick start, defaults, mcchanges, problems. |
 | `docs/wiki/Options-files.md` | Option documentation. |
 | `docs/wiki/Bedrock-Edition-packs.md` | Bedrock page. |
 | `CHANGELOG.md` | Everything is under "Unreleased". |
 
-## 5. The jar builder (`tools/mcchanges-jar/build_mcchanges_jar.py`)
+## 5. The jar builder (outside this repository)
 
-Python 3, standard library only. Subcommands: `java`, `bedrock`, `pack` (offline).
+The scripts are not part of PackSquash and are not in this repository. The owner keeps
+them in `C:\amc\packsquash-tools\`:
 
-```
-python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar
-python tools\mcchanges-jar\build_mcchanges_jar.py java --output C:\amc\mcchanges-java.jar --update
-python tools\mcchanges-jar\build_mcchanges_jar.py bedrock --output C:\amc\mcchanges-bedrock.jar --count 5
-```
+| Folder | What |
+| :--- | :--- |
+| `01-mcchanges-builder` | `build_mcchanges_jar.py` (the builder), its tests, README and AI hand-off. |
+| `03-release-script` | `release.py`: builds and publishes a release, following the checklist in `docs/wiki/New-release-checklist-(for-maintainers).md`. |
+| `04-apply-patches` | `apply_patches.py`: applies patch files to this repository. |
 
-- Java: Mojang manifest, releases from `--first` (default 1.6.1), client jar plus
-  language files and `sounds.json` from the asset index, sounds as SHA-1 hashes.
-- Bedrock: tags of `Mojang/bedrock-samples` (without previews), `resource_pack` folder.
-  Tags are listed with `git ls-remote`, with the GitHub API as fallback. Each download
-  is about 150 MB.
-- `--audio hash|none|full`. `--update` appends versions and gives the same file as a
-  full rebuild. Every build is verified by rebuilding each version from the output.
-- Work files stay in `mcchanges-work`, so an interrupted run continues.
-- Tested: against a local mock of the Mojang servers, and with real Bedrock releases.
-  Not tested: the real Mojang servers (the sandbox could not reach them).
-- The jar contains Mojang files. Do not publish it. The README and the guides say so.
+A copy of the builder, the format description and the finished jars are in the repository
+[mc-changes](https://github.com/mocny-gaz/mc-changes). The jars are Release files there.
+
+- Commands of the builder: `java`, `bedrock`, `pack` (offline) and `info`. Everything is
+  written in `C:\amc` (jars and the `work` folder), never in this repository.
+- Default jars hold only hashes (`mcchanges-java.jar`, `mcchanges-bedrock.jar`). With
+  `--full` it writes `mcchanges-full-*.jar`, which hold the game files of Mojang. Do not
+  publish those.
+- Every build is verified by rebuilding each version from the output.
 
 ## 6. Build, test and lint
 

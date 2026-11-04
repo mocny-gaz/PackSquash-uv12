@@ -117,23 +117,24 @@ and so on. It stops at the first folder that has the file, or at the first
 version that deleted it.
 
 How to build it and keep it up to date:
-  - tools/mcchanges-jar/build_mcchanges_jar.py downloads the releases, packs them,
-    and checks the result, for Java Edition and Bedrock Edition. The same command
-    with --update appends new versions. In my test, an update gave a file
-    identical to a full rebuild.
+  - build_mcchanges_jar.py downloads the releases, packs them, and checks the
+    result, for Java Edition and Bedrock Edition. The same command with --update
+    appends new versions. The script is not in this repository. It is in the
+    mc-changes repository (https://github.com/mocny-gaz/mc-changes), in its
+    tools folder, together with the finished jars (Release files).
   - Audio files are stored only as hashes (SHA-1 for Java, taken from the Mojang
     asset index without downloading the sounds, SHA-256 for Bedrock). PackSquash
     leaves out the sounds of a pack that have the same hash.
   - Archives with more than 65535 entries are supported (ZIP64).
-  - tools/mcchanges-jar/mcchanges-jar-prompt.md is the prompt for an AI. It tells
-    the AI how to download the releases from Mojang, run the script, check the
-    result, and update the jar later.
+  - mcchanges-jar-prompt.md (next to the script) is the prompt for an AI. It tells
+    the AI how to run the script, check the result, and update the jar later.
   - Not tested: the real Mojang servers. My sandbox cannot reach them. The Java
     steps were tested against a local copy of their behavior.
   - Tested with real data: two Bedrock releases from Mojang/bedrock-samples gave an
     82 MB jar with 4769 sound hashes.
   - Not measured: the size of a full Java jar.
-  - The jar holds Mojang files. Do not publish it (see MCCHANGES-JAR-GUIDE.txt).
+  - The default jar holds only hashes. A full jar (--full) holds Mojang files. Do not
+    publish it (see MCCHANGES-JAR-GUIDE.txt).
 
 Idea for your HTML tool:
   - The user loads the jar once. The tool reads mcchanges.json and shows a

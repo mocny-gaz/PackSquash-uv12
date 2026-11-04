@@ -91,14 +91,10 @@ PackSquash only warns if `min_engine_version` is missing, if there is no
 
 [`mcchanges_path`](Options-files.md#mcchanges_path) also works with Bedrock Edition
 packs. It leaves out the files that are identical to the vanilla ones, which makes
-the pack smaller. The fork has a script that builds an mcchanges jar for Bedrock
-Edition from the official `Mojang/bedrock-samples` releases:
-
-```
-python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar --count 5
-```
-
-Then add it to your options file, with one of the versions that it has:
+the pack smaller. Download `mcchanges-bedrock.jar` from the Releases of the
+[mc-changes](https://github.com/mocny-gaz/mc-changes) repository. It is built from
+the official `Mojang/bedrock-samples` releases and holds only hashes. Then add it
+to your options file, with one of the versions that it has:
 
 ```toml
 mcchanges_path = 'mcchanges-bedrock.jar'

@@ -8,6 +8,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Fork documentation: a usage guide (`docs/fork/USAGE.md`) and an index in the README. The
+  builder script for the mcchanges jars is no longer in this repository. It is in the
+  [mc-changes](https://github.com/mocny-gaz/mc-changes) repository, together with the jars.
+
 ### Fixed
 
 - Raw control characters inside strings, like a line break or a tab typed in the middle of

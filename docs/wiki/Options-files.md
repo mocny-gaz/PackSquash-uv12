@@ -632,17 +632,15 @@ that version first, then the directories of the previous versions, and stops at
 the first version that has the file or deleted it. This keeps a mcchanges pack
 for many versions close to the size of a few full versions.
 
-The fork includes a script that downloads the files and builds such a file for you,
-for Java Edition and for Bedrock Edition. It compares each version with the version
-right before it, and it can update an existing file when new game versions come out:
-
-```
-python tools/mcchanges-jar/build_mcchanges_jar.py java --output mcchanges-java.jar
-python tools/mcchanges-jar/build_mcchanges_jar.py bedrock --output mcchanges-bedrock.jar
-```
-
-The files inside belong to Mojang, so build the file on your computer and do not
-publish it. Archives with more than 65535 entries are supported.
+Ready-made hashes-only files for Java Edition and for Bedrock Edition are in the
+Releases of the [mc-changes](https://github.com/mocny-gaz/mc-changes) repository
+(`mcchanges-java.jar` and `mcchanges-bedrock.jar`). The `tools` folder of that
+repository has the script that builds them. It compares each version with the
+version right before it, and it can update an existing file when new game
+versions come out. A hashes-only file holds no game files. A file with the game
+files themselves (`mcchanges-full-*.jar`) belongs to Mojang, so keep it on your
+computer and do not publish it. Archives with more than 65535 entries are
+supported.
 
 Example:
 
