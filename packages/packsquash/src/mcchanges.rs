@@ -174,6 +174,83 @@ enum McChangesEntry {
 	LanguageKeys(LanguageKeySet)
 }
 
+/// The result of choosing the game version of a versioned mcchanges pack automatically.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VersionDetection {
+	/// The chosen game version.
+	pub(crate) version: String,
+	/// How many pack files are identical to the files of the chosen version.
+	pub(crate) identical_files: usize,
+	/// How many versions were compared.
+	pub(crate) versions_compared: usize,
+	/// The other versions with as many identical files as the chosen one, from the newest to the oldest.
+	pub(crate) tied_versions: Vec<String>,
+	/// The best of the versions that have fewer identical files, and how many.
+	pub(crate) next_best: Option<(String, usize)>
+}
+
+impl VersionDetection {
+	/// Describes the choice for the user.
+	pub(crate) fn describe(&self) -> String {
+		if self.identical_files == 0 {
+			return format!(
+				"mcchanges_version is not set, so PackSquash compared the pack with the {} game versions of \
+				the mcchanges pack. No pack file is identical to a file of any of them, so no file is left \
+				out. The newest version, {}, was used",
+				self.versions_compared, self.version
+			);
+		}
+
+		let mut message = format!(
+			"mcchanges_version is not set, so PackSquash compared the pack with the {} game versions of \
+			the mcchanges pack and chose {}, which has {} identical pack files",
+			self.versions_compared, self.version, self.identical_files
+		);
+
+		if !self.tied_versions.is_empty() {
+			message.push_str(&format!(
+				". {} other versions have as many ({}), and the newest of them was chosen",
+				self.tied_versions.len(),
+				self.tied_versions
+					.iter()
+					.take(5)
+					.cloned()
+					.collect::<Vec<_>>()
+					.join(", ") + if self.tied_versions.len() > 5 {
+					", ..."
+				} else {
+					""
+				}
+			));
+		}
+
+		if let Some((version, count)) = &self.next_best {
+			message.push_str(&format!(
+				". The next best version is {version} with {count}"
+			));
+		}
+
+		message.push_str(". To use another version, set mcchanges_version");
+
+		message
+	}
+}
+
+/// Tells whether a path is of a file that identifies the pack itself, and that must always be kept.
+fn is_pack_identity_file(relative_path: &str) -> bool {
+	matches!(
+		relative_path,
+		"pack.mcmeta" | "pack.png" | "manifest.json" | "pack_icon.png" | "bug_pack_icon.png"
+	)
+}
+
+/// Tells whether a hash token is of a language file.
+fn is_language_token(token: &str) -> bool {
+	token.starts_with("langkeys:")
+		|| token.starts_with("langfull:")
+		|| token.starts_with("langdelta:")
+}
+
 /// A loaded mcchanges pack, ready to be used to find redundant pack files.
 pub(crate) struct McChanges {
 	source: McChangesSource,
@@ -203,6 +280,66 @@ impl McChanges {
 		path: &Path,
 		version: Option<&str>
 	) -> Result<Self, McChangesError> {
+		let mut mcchanges = Self::open_source(vfs, path).await?;
+
+		mcchanges.layers = match (mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
+			(Some(index), version) => Some(Self::select_version(&index, version)?),
+			(None, None) => None,
+			(None, Some(_)) => return Err(mcchanges.not_versioned_error(vfs, path))
+		};
+
+		Ok(mcchanges)
+	}
+
+	/// Loads the mcchanges pack like [`Self::open`], but chooses the game version of a versioned
+	/// mcchanges pack by itself: the version that has the most files identical to the files of the
+	/// pack at `pack_directory`. If more than one version has the most, the newest of them is used.
+	/// This is what is done when no game version is set. If `explicit` is set, the user asked for the
+	/// automatic choice, so a mcchanges pack that is not versioned is an error. Otherwise, such a
+	/// mcchanges pack is used as it is. The second value is `None` if no choice was made.
+	pub(crate) async fn open_auto<V: VirtualFileSystem>(
+		vfs: &V,
+		path: &Path,
+		pack_directory: &Path,
+		traversal_options: IteratorTraversalOptions,
+		explicit: bool
+	) -> Result<(Self, Option<VersionDetection>), McChangesError> {
+		let mut mcchanges = Self::open_source(vfs, path).await?;
+
+		let Some(index) = mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await else {
+			return if explicit {
+				Err(mcchanges.not_versioned_error(vfs, path))
+			} else {
+				Ok((mcchanges, None))
+			};
+		};
+
+		let index = Self::parse_version_index(&index)?;
+
+		if index.versions.is_empty() {
+			return Err(McChangesError::InvalidVersionIndex(
+				"the list of versions is empty".to_string()
+			));
+		}
+
+		let pack_files = vfs
+			.file_iterator(pack_directory, traversal_options)
+			.filter_map(Result::ok)
+			.collect::<Vec<_>>();
+		let detection = mcchanges.detect_version(vfs, &index, &pack_files).await;
+		let position = index
+			.versions
+			.iter()
+			.position(|version| *version == detection.version)
+			.expect("the detected version comes from the index");
+
+		mcchanges.layers = Some(Self::version_layers(index, position));
+
+		Ok((mcchanges, Some(detection)))
+	}
+
+	/// Loads the files of the mcchanges pack, without choosing a game version.
+	async fn open_source<V: VirtualFileSystem>(vfs: &V, path: &Path) -> Result<Self, McChangesError> {
 		let unreadable = |source: io::Error| McChangesError::Unreadable {
 			path: path.display().to_string(),
 			source
@@ -219,18 +356,10 @@ impl McChanges {
 			McChangesSource::Archive(ZipArchive::parse(archive_data)?)
 		};
 
-		let mut mcchanges = Self {
+		Ok(Self {
 			source,
 			layers: None
-		};
-
-		mcchanges.layers = match (mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
-			(Some(index), version) => Some(Self::select_version(&index, version)?),
-			(None, None) => None,
-			(None, Some(_)) => return Err(mcchanges.not_versioned_error(vfs, path))
-		};
-
-		Ok(mcchanges)
+		})
 	}
 
 	/// Builds the error for a mcchanges pack that has no version index, but has a game version
@@ -293,11 +422,8 @@ impl McChanges {
 		names
 	}
 
-	/// Parses the version index and returns the layers of the selected version.
-	fn select_version(
-		index: &[u8],
-		version: Option<&str>
-	) -> Result<Vec<VersionLayer>, McChangesError> {
+	/// Parses the version index.
+	fn parse_version_index(index: &[u8]) -> Result<VersionIndexFile, McChangesError> {
 		let index = serde_json::from_slice::<VersionIndexFile>(index)
 			.map_err(|err| McChangesError::InvalidVersionIndex(err.to_string()))?;
 
@@ -307,6 +433,16 @@ impl McChanges {
 				index.format
 			)));
 		}
+
+		Ok(index)
+	}
+
+	/// Parses the version index and returns the layers of the selected version.
+	fn select_version(
+		index: &[u8],
+		version: Option<&str>
+	) -> Result<Vec<VersionLayer>, McChangesError> {
+		let index = Self::parse_version_index(index)?;
 
 		let available = index.versions.join(", ");
 		let Some(version) = version else {
@@ -319,10 +455,16 @@ impl McChanges {
 			});
 		};
 
+		Ok(Self::version_layers(index, selected_position))
+	}
+
+	/// Builds the layers of the version at the given position of the index, from the newest layer to
+	/// the oldest.
+	fn version_layers(index: VersionIndexFile, selected_position: usize) -> Vec<VersionLayer> {
 		let mut removed = index.removed;
 		let mut hashed = index.hashed;
 
-		Ok(index.versions[..=selected_position]
+		index.versions[..=selected_position]
 			.iter()
 			.rev()
 			.map(|version| VersionLayer {
@@ -333,7 +475,147 @@ impl McChanges {
 					.unwrap_or_default(),
 				hashed_files: hashed.remove(version).unwrap_or_default()
 			})
-			.collect())
+			.collect()
+	}
+
+	/// Counts, for every game version of the index, how many of the pack files are identical to the
+	/// file with the same path in that version, and picks the version with the most. The newest wins
+	/// a tie. Pack files that identify the pack and language files are not counted, because they
+	/// do not tell the game version.
+	///
+	/// A path can only change in the versions that mention it, so the pack file is compared once
+	/// with each of those, and the result counts for every version until the next one that mentions
+	/// the path. This makes the work almost independent of the number of versions.
+	async fn detect_version<V: VirtualFileSystem>(
+		&self,
+		vfs: &V,
+		index: &VersionIndexFile,
+		pack_files: &[VfsPackFileIterEntry]
+	) -> VersionDetection {
+		/// What a version says about a path.
+		enum Definition<'a> {
+			Data(Vec<u8>),
+			Hash(&'a str),
+			/// The version deletes the file, or it is something that is not compared.
+			NoMatch
+		}
+
+		let version_count = index.versions.len();
+		let no_hashes = HashMap::new();
+		let removed = index
+			.versions
+			.iter()
+			.map(|version| {
+				index
+					.removed
+					.get(version)
+					.map(|files| files.iter().map(String::as_str).collect::<HashSet<_>>())
+					.unwrap_or_default()
+			})
+			.collect::<Vec<_>>();
+		let hashed = index
+			.versions
+			.iter()
+			.map(|version| index.hashed.get(version).unwrap_or(&no_hashes))
+			.collect::<Vec<_>>();
+
+		// Differences between the count of a version and the one before it
+		let mut changes = vec![0_i64; version_count + 1];
+
+		for pack_file in pack_files {
+			let path = pack_file.relative_path.as_str();
+
+			if is_pack_identity_file(path) || path.contains("/lang/") {
+				continue;
+			}
+
+			let mut definitions = Vec::new();
+
+			for (position, version) in index.versions.iter().enumerate() {
+				if let Some(data) = self.read_raw(vfs, &format!("{version}/{path}")).await {
+					definitions.push((position, Definition::Data(data)));
+				} else if let Some(token) = hashed[position].get(path) {
+					definitions.push((
+						position,
+						if is_language_token(token) {
+							Definition::NoMatch
+						} else {
+							Definition::Hash(token)
+						}
+					));
+				} else if removed[position].contains(path) {
+					definitions.push((position, Definition::NoMatch));
+				}
+			}
+
+			if definitions
+				.iter()
+				.all(|(_, definition)| matches!(definition, Definition::NoMatch))
+			{
+				continue;
+			}
+
+			let Some(pack_data) = read_file(vfs, &pack_file.file_path).await else {
+				continue;
+			};
+
+			for (definition_index, (position, definition)) in definitions.iter().enumerate() {
+				let identical = match definition {
+					Definition::Data(data) if path.ends_with(".png") => {
+						png_is_identical(&pack_data, data)
+					}
+					Definition::Data(data) if path.ends_with(".json") => {
+						json_is_identical(&pack_data, data)
+					}
+					Definition::Data(data) => pack_data == *data,
+					Definition::Hash(token) => hash_matches(&pack_data, token),
+					Definition::NoMatch => false
+				};
+
+				if identical {
+					let end = definitions
+						.get(definition_index + 1)
+						.map_or(version_count, |(next_position, _)| *next_position);
+
+					changes[*position] += 1;
+					changes[end] -= 1;
+				}
+			}
+		}
+
+		let mut identical_files = Vec::with_capacity(version_count);
+		let mut running_total = 0_i64;
+
+		for change in &changes[..version_count] {
+			running_total += change;
+			identical_files.push(running_total as usize);
+		}
+
+		let best_count = identical_files.iter().copied().max().unwrap_or(0);
+		let best_position = identical_files
+			.iter()
+			.rposition(|count| *count == best_count)
+			.expect("an index with versions has a best version");
+
+		VersionDetection {
+			version: index.versions[best_position].clone(),
+			identical_files: best_count,
+			versions_compared: version_count,
+			tied_versions: identical_files
+				.iter()
+				.enumerate()
+				.rev()
+				.filter(|(position, count)| **count == best_count && *position != best_position)
+				.map(|(position, _)| index.versions[position].clone())
+				.collect(),
+			next_best: identical_files
+				.iter()
+				.enumerate()
+				.rev()
+				.filter(|(_, count)| **count < best_count)
+				.max_by_key(|(position, count)| (**count, *position))
+				.map(|(position, count)| (index.versions[position].clone(), *count))
+		}
 	}
 
 	/// Reads a file at the given path, relative to the root of the mcchanges pack, if it
@@ -369,10 +651,7 @@ impl McChanges {
 			}
 
 			if let Some(hash) = layer.hashed_files.get(relative_path) {
-				if hash.starts_with("langkeys:")
-					|| hash.starts_with("langfull:")
-					|| hash.starts_with("langdelta:")
-				{
+				if is_language_token(hash) {
 					// A language file whose keys can't be loaded is left as an unmatchable hash
 					return Some(
 						self.load_language_keys(vfs, layers, index, relative_path)
@@ -484,10 +763,7 @@ impl McChanges {
 		let relative_path = pack_file.relative_path.as_str();
 
 		// The pack metadata, manifest and icons identify the pack itself, and must always be kept
-		if matches!(
-			relative_path,
-			"pack.mcmeta" | "pack.png" | "manifest.json" | "pack_icon.png" | "bug_pack_icon.png"
-		) {
+		if is_pack_identity_file(relative_path) {
 			return false;
 		}
 

@@ -62,7 +62,7 @@ The options that this fork adds:
 | Option | Default | What it does |
 | :--- | :--- | :--- |
 | `mcchanges_path` | not set, so **off** | Leaves out the pack files that are identical to the game files in this jar, ZIP file, or folder. |
-| `mcchanges_version` | not set | The game version to compare with. Required for a jar that holds many versions. An error for any other path. |
+| `mcchanges_version` | not set, so **automatic** | The game version to compare with. If it is not set, empty or `auto`, PackSquash tries every version of a jar that holds many versions, and uses the best match. An error for any other path. |
 | `skip_language_keys_identical_to_mcchanges` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
 | `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
 | `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
@@ -195,15 +195,32 @@ mcchanges_path = 'C:\amc\mcchanges-java.jar'
 mcchanges_version = '1.21.4'
 ```
 
-`mcchanges_version` must be the game version that your pack is for. To see the
+`mcchanges_version` is the game version that your pack is for. To see the
 versions that a jar has, open `mcchanges.json` in the jar with any ZIP program
 and read the `versions` list.
+
+If you leave `mcchanges_version` out, PackSquash compares your pack with every
+version of the jar and uses the version that has the most files identical to
+your pack. When two versions are equal, it uses the newer one. It prints what it
+chose:
+
+```
+mcchanges_version is not set, so PackSquash compared the pack with the 87 game
+versions of the mcchanges pack and chose 1.21.4, which has 412 identical pack
+files. The next best version is 1.21.3 with 409. To use another version, set
+mcchanges_version
+```
+
+This is the best match, not always your target version. Set the version yourself
+when you know it. If no file of your pack is identical to a file of any version,
+PackSquash says so and leaves out no file. Language files do not count for the
+choice. The choice takes about as long as squashing without it.
 
 ### 3. Pick the right kind of `mcchanges_path`
 
 | `mcchanges_path` points to | `mcchanges_version` |
 | :--- | :--- |
-| A jar from `mc-changes`, or any ZIP or folder with a `mcchanges.json` file at its root | **Required** |
+| A jar from `mc-changes`, or any ZIP or folder with a `mcchanges.json` file at its root | Set it, or leave it out for the automatic choice |
 | The client `.jar` of one game version, or a folder with its files | **Do not set it.** PackSquash fails if you do |
 
 A folder like `C:\amc\` is not a jar from `mc-changes`. Point to the jar file
@@ -291,6 +308,7 @@ packsquash.exe packsquash.toml
 
 | What you see | Cause and fix |
 | :--- | :--- |
+| `mcchanges_version is set, but ...` and you set `auto` or a version for a plain game jar | `auto` and versions only work for a jar from `mc-changes`. Remove `mcchanges_version`. |
 | `mcchanges_version is set, but the folder ... has no mcchanges.json file` | `mcchanges_path` points to a folder. Set it to the jar file itself, like `C:\amc\mcchanges-java.jar`. The message lists the jar files that the folder has. |
 | `mcchanges_version is set, but the file ... has no mcchanges.json file inside` | The file is a game jar, not a jar from `mc-changes`. Remove `mcchanges_version`, or use `mcchanges-java.jar`. |
 | `mcchanges_path ... can't be read` | The path does not exist, or PackSquash can not read it. Check the spelling. In cmd, `dir C:\amc\mcchanges-java.jar` must list the file. |
@@ -317,5 +335,4 @@ the original one.
 
 These are planned and are in no release. See [TASKS.md](TASKS.md):
 
-- A blank `mcchanges_version` that tries every version and uses the best match.
 - A simple dark GUI that writes the options file.

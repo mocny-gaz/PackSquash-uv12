@@ -1842,3 +1842,368 @@ async fn compact_language_keys_that_cannot_be_trusted_are_not_used() {
 		LanguageFileReduction::Unchanged
 	);
 }
+
+/// Opens `vanilla.jar` (see [`versioned_jar`]) with the automatic choice of the game version, for a pack
+/// that has the given text files in `assets/minecraft/texts`.
+async fn detect(files: &[(&str, &str)]) -> VersionDetection {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+
+	for (name, content) in files {
+		write_file(
+			pack_dir.path(),
+			&format!("assets/minecraft/texts/{name}.txt"),
+			content.as_bytes()
+		);
+	}
+
+	let (mcchanges, detection) = McChanges::open_auto(
+		&OsFilesystem,
+		&jar_dir.path().join("vanilla.jar"),
+		pack_dir.path(),
+		IteratorTraversalOptions::default(),
+		false
+	)
+	.await
+	.unwrap();
+
+	assert!(mcchanges.layers.is_some());
+
+	detection.expect("a versioned mcchanges pack makes a choice")
+}
+
+// The files of the versions of `versioned_jar`, with `VERSION_INDEX`:
+//   1.0: a = "a from 1.0", b = "b from 1.0"
+//   1.1: a = "a from 1.1", b = "b from 1.0" (inherited)
+//   1.2: a = "a from 1.1" (inherited), c = "c from 1.2", b deleted
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_version_with_the_most_identical_files_is_chosen() {
+	let detection = detect(&[("a", "a from 1.0"), ("b", "b from 1.0")]).await;
+
+	assert_eq!(detection.version, "1.0");
+	assert_eq!(detection.identical_files, 2);
+	assert_eq!(detection.versions_compared, 3);
+	assert!(detection.tied_versions.is_empty());
+	assert_eq!(detection.next_best, Some(("1.1".to_string(), 1)));
+
+	let detection = detect(&[("a", "a from 1.1"), ("b", "b from 1.0")]).await;
+
+	assert_eq!(
+		(detection.version.as_str(), detection.identical_files),
+		("1.1", 2)
+	);
+
+	let detection = detect(&[("a", "a from 1.1"), ("c", "c from 1.2")]).await;
+
+	assert_eq!(
+		(detection.version.as_str(), detection.identical_files),
+		("1.2", 2)
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_newest_version_wins_a_tie() {
+	// "a from 1.1" is the file of 1.1 and 1.2
+	let detection = detect(&[("a", "a from 1.1")]).await;
+
+	assert_eq!(detection.version, "1.2");
+	assert_eq!(detection.identical_files, 1);
+	assert_eq!(detection.tied_versions, ["1.1"]);
+	assert!(
+		detection.describe().contains("chose 1.2"),
+		"{}",
+		detection.describe()
+	);
+	assert!(
+		detection
+			.describe()
+			.contains("1 other versions have as many (1.1)")
+	);
+
+	// "b from 1.0" is the file of 1.0 and 1.1, and 1.2 deletes it
+	let detection = detect(&[("b", "b from 1.0")]).await;
+
+	assert_eq!(detection.version, "1.1");
+	assert_eq!(detection.tied_versions, ["1.0"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn without_identical_files_the_newest_version_is_used() {
+	let detection = detect(&[("a", "something else"), ("z", "not in the game")]).await;
+
+	assert_eq!(detection.version, "1.2");
+	assert_eq!(detection.identical_files, 0);
+	assert!(
+		detection.describe().contains("No pack file is identical"),
+		"{}",
+		detection.describe()
+	);
+
+	// An empty pack
+	assert_eq!(detect(&[]).await.identical_files, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hashes_are_used_to_choose_the_version() {
+	let token = |content: &[u8]| format!("sha256:{}", hexadecimal(Sha256::digest(content)));
+	let index = json!({
+		"format": 1,
+		"versions": ["1.0", "1.1"],
+		"hashed": {
+			"1.0": {
+				"assets/minecraft/texts/x.txt": token(b"one"),
+				"assets/minecraft/lang/en_us.json": "langkeys:0123456789abcdef"
+			},
+			"1.1": {"assets/minecraft/texts/x.txt": token(b"two")}
+		}
+	})
+	.to_string();
+
+	for (content, expected) in [("one", "1.0"), ("two", "1.1")] {
+		let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+		write_file(
+			jar_dir.path(),
+			"hashes.jar",
+			&zip(&[("mcchanges.json", index.as_bytes(), true)], b"")
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/minecraft/texts/x.txt",
+			content.as_bytes()
+		);
+		// Language files do not tell the version, so they are not counted
+		write_file(pack_dir.path(), "assets/minecraft/lang/en_us.json", b"{}");
+		write_file(pack_dir.path(), "pack.mcmeta", b"{}");
+
+		let (_, detection) = McChanges::open_auto(
+			&OsFilesystem,
+			&jar_dir.path().join("hashes.jar"),
+			pack_dir.path(),
+			IteratorTraversalOptions::default(),
+			false
+		)
+		.await
+		.unwrap();
+		let detection = detection.unwrap();
+
+		assert_eq!(detection.version, expected, "{content}");
+		assert_eq!(detection.identical_files, 1, "{content}");
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_automatic_choice_works_with_directories() {
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(
+		mcchanges_dir.path(),
+		"mcchanges.json",
+		VERSION_INDEX.as_bytes()
+	);
+	write_file(
+		mcchanges_dir.path(),
+		"1.0/assets/minecraft/texts/a.txt",
+		b"a from 1.0"
+	);
+	write_file(
+		mcchanges_dir.path(),
+		"1.1/assets/minecraft/texts/a.txt",
+		b"a from 1.1"
+	);
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/texts/a.txt",
+		b"a from 1.0"
+	);
+
+	let (_, detection) = McChanges::open_auto(
+		&OsFilesystem,
+		mcchanges_dir.path(),
+		pack_dir.path(),
+		IteratorTraversalOptions::default(),
+		false
+	)
+	.await
+	.unwrap();
+
+	assert_eq!(detection.unwrap().version, "1.0");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_mcchanges_pack_without_versions_is_used_as_it_is_when_the_version_is_blank() {
+	let (mcchanges_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(mcchanges_dir.path(), "assets/minecraft/texts/a.txt", b"a");
+
+	let (mcchanges, detection) = McChanges::open_auto(
+		&OsFilesystem,
+		mcchanges_dir.path(),
+		pack_dir.path(),
+		IteratorTraversalOptions::default(),
+		false
+	)
+	.await
+	.unwrap();
+
+	assert!(detection.is_none() && mcchanges.layers.is_none());
+
+	// But the user asked for the automatic choice, which can't be done
+	let error = McChanges::open_auto(
+		&OsFilesystem,
+		mcchanges_dir.path(),
+		pack_dir.path(),
+		IteratorTraversalOptions::default(),
+		true
+	)
+	.await
+	.err()
+	.expect("an explicit automatic choice needs a versioned mcchanges pack");
+
+	assert!(matches!(error, McChangesError::NotVersioned(_)), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_index_without_versions_is_an_error() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(
+		jar_dir.path(),
+		"empty.jar",
+		&zip(
+			&[("mcchanges.json", br#"{"format": 1, "versions": []}"#, true)],
+			b""
+		)
+	);
+
+	let error = McChanges::open_auto(
+		&OsFilesystem,
+		&jar_dir.path().join("empty.jar"),
+		pack_dir.path(),
+		IteratorTraversalOptions::default(),
+		false
+	)
+	.await
+	.err()
+	.expect("an index without versions is not usable");
+
+	assert!(
+		matches!(error, McChangesError::InvalidVersionIndex(_)),
+		"{error}"
+	);
+}
+
+/// Squashes a pack with textures against a versioned mcchanges pack, with the given game version option.
+/// Returns the notices and the names of the pack files that the output ZIP file has.
+fn squash_with_version(version: Option<&str>) -> (Vec<String>, Vec<String>) {
+	let (jar_dir, pack_dir, output_dir) = (temp_dir(), temp_dir(), temp_dir());
+	let pixels = |value: u8| png(2, 2, &[value; 16], Compression::none());
+	let index = r#"{"format": 1, "versions": ["1.0", "1.1"]}"#;
+
+	write_file(
+		jar_dir.path(),
+		"vanilla.jar",
+		&zip(
+			&[
+				("mcchanges.json", index.as_bytes(), true),
+				(
+					"1.0/assets/minecraft/textures/blocks/stone.png",
+					&pixels(10),
+					true
+				),
+				(
+					"1.0/assets/minecraft/textures/blocks/dirt.png",
+					&pixels(30),
+					true
+				),
+				(
+					"1.1/assets/minecraft/textures/blocks/stone.png",
+					&pixels(20),
+					true
+				)
+			],
+			b""
+		)
+	);
+	write_file(
+		pack_dir.path(),
+		"pack.mcmeta",
+		br#"{"pack": {"pack_format": 1, "description": "Test pack"}}"#
+	);
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/textures/blocks/stone.png",
+		&pixels(20)
+	);
+	write_file(
+		pack_dir.path(),
+		"assets/minecraft/textures/blocks/dirt.png",
+		&pixels(30)
+	);
+
+	let output_path = output_dir.path().join("pack.zip");
+	let mut global_options = GlobalOptions {
+		mcchanges_path: Some(jar_dir.path().join("vanilla.jar")),
+		mcchanges_version: version.map(String::from),
+		output_file_path: output_path.clone(),
+		..GlobalOptions::default()
+	};
+	global_options.zip_compression_iterations = 1;
+
+	let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+
+	PackSquasher::new()
+		.run(
+			OsFilesystem,
+			SquashOptions {
+				pack_directory: pack_dir.path().to_path_buf(),
+				global_options,
+				file_options: Default::default()
+			},
+			Some(sender)
+		)
+		.expect("Squashing a valid pack should succeed");
+
+	let mut notices = Vec::new();
+	while let Ok(status) = receiver.try_recv() {
+		if let PackSquasherStatus::Notice(notice) = status {
+			notices.push(notice.into_owned());
+		}
+	}
+
+	let output = ZipArchive::parse(fs::read(output_path).unwrap()).unwrap();
+	let kept = [
+		"pack.mcmeta",
+		"assets/minecraft/textures/blocks/stone.png",
+		"assets/minecraft/textures/blocks/dirt.png"
+	]
+	.into_iter()
+	.filter(|name| output.contains(name))
+	.map(String::from)
+	.collect();
+
+	(notices, kept)
+}
+
+#[test]
+fn a_blank_game_version_is_chosen_when_squashing() {
+	// 1.1 has both textures as they are in the pack, and 1.0 only has dirt
+	for version in [None, Some(""), Some("  "), Some("auto"), Some(" AUTO ")] {
+		let (notices, kept) = squash_with_version(version);
+
+		assert_eq!(kept, ["pack.mcmeta"], "{version:?}");
+		assert!(
+			notices.iter().any(|notice| notice.contains("chose 1.1")),
+			"{version:?}: {notices:?}"
+		);
+	}
+
+	// A version that is set is used as it is, with no choice
+	let (notices, kept) = squash_with_version(Some("1.0"));
+
+	assert_eq!(
+		kept,
+		["pack.mcmeta", "assets/minecraft/textures/blocks/stone.png"]
+	);
+	assert!(
+		!notices.iter().any(|notice| notice.contains("chose")),
+		"{notices:?}"
+	);
+}

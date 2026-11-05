@@ -244,9 +244,14 @@ pub struct GlobalOptions {
 	/// **Default value**: not set (do not compare pack files with any mcchanges pack)
 	pub mcchanges_path: Option<PathBuf>,
 	/// The game version to use from the mcchanges pack, if it holds the assets of several game
-	/// versions in a single file or directory. This option is required for those mcchanges packs
-	/// and not allowed for the others. The `mcchanges_path` option documents how a
-	/// mcchanges pack can hold several versions.
+	/// versions in a single file or directory. It is not allowed for the other mcchanges packs. The
+	/// `mcchanges_path` option documents how a mcchanges pack can hold several versions.
+	///
+	/// If this option is not set, is empty, or is `auto`, the game version is chosen automatically:
+	/// the one whose files are identical to the most pack files, and the newest of them if several
+	/// versions tie. The pack files that identify the pack and the language files are not counted.
+	/// If no pack file is identical to a file of any version, the newest version is used, which
+	/// leaves out no file. A notice tells which version was chosen.
 	///
 	/// **Default value**: not set
 	pub mcchanges_version: Option<String>,

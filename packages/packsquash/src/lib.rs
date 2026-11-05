@@ -303,18 +303,49 @@ impl PackSquasher {
 			.mcchanges_path
 			.as_deref()
 			.map(|mcchanges_path| {
-				runtime.block_on(McChanges::open(
-					&*vfs,
-					mcchanges_path,
-					options_holder
-						.options
-						.global_options
-						.mcchanges_version
-						.as_deref()
-				))
+				let global_options = &options_holder.options.global_options;
+
+				// A game version that is not set, empty or "auto" is chosen automatically, if the mcchanges
+				// pack has several versions
+				let configured_version = global_options
+					.mcchanges_version
+					.as_deref()
+					.filter(|version| !version.trim().is_empty());
+
+				match configured_version
+					.filter(|version| !version.trim().eq_ignore_ascii_case("auto"))
+				{
+					Some(version) => runtime
+						.block_on(McChanges::open(&*vfs, mcchanges_path, Some(version)))
+						.map(|mcchanges| (mcchanges, None)),
+					None => runtime.block_on(McChanges::open_auto(
+						&*vfs,
+						mcchanges_path,
+						&options_holder.options.pack_directory,
+						IteratorTraversalOptions {
+							ignore_system_and_hidden_files: global_options
+								.ignore_system_and_hidden_files
+						},
+						configured_version.is_some()
+					))
+				}
 			})
-			.transpose()?
-			.map(Arc::new);
+			.transpose()?;
+
+		let mcchanges = mcchanges.map(|(mcchanges, detection)| {
+			if let (Some(detection), Some(pack_file_status_sender)) =
+				(&detection, &pack_file_status_sender)
+			{
+				runtime
+					.block_on(
+						pack_file_status_sender
+							.send(PackSquasherStatus::Notice(Cow::Owned(detection.describe())))
+					)
+					.ok();
+			}
+
+			Arc::new(mcchanges)
+		});
 
 		// Find out which OptiFine custom sky images can be left out, if they are to be, and how
 		// the sky entries need to change when images are merged

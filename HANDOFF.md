@@ -75,7 +75,8 @@ does not warn about them.
 ### 3.2 Versioned mcchanges files (`mcchanges_version`)
 
 A jar or folder with a `mcchanges.json` at its root holds many game versions.
-`mcchanges_version` is required for it, and an error for anything else. Format
+`mcchanges_version` selects the version, and it is an error for anything else. If it
+is not set, empty or `auto`, `McChanges::open_auto` chooses the version (see 3.12). Format
 (version 1):
 
 ```json
@@ -219,6 +220,26 @@ The field is still called `found_unresolvable_moj_import`.
 - Tested: 17 unit tests of `bulk.rs`, 6 of the options, and an end to end script of 13 runs with the
   built program (dry run, normal, second run, prefix and suffix, overwrite with and without backup,
   a bad pack, option errors, file option tables). Not tested: Windows paths and long paths.
+
+### 3.12 Automatic game version (f4)
+
+- `McChanges::open_auto` (in `mcchanges.rs`) is used by `lib.rs` when `mcchanges_version` is not set,
+  empty (after trim) or `auto` (any case). `open` is still used for an explicit version. A path that is
+  not versioned is used as it is for a blank version, and is an error (`NotVersioned`) for `auto`.
+- `detect_version` counts identical files per version without comparing every file with every version.
+  A path only changes in the versions that mention it (a data file `VERSION/PATH`, a `hashed` token, or a
+  `removed` entry), so each pack file is compared once per mentioning version, and the result counts for
+  every version until the next mention (a difference array). Skipped: `pack.mcmeta` and the other
+  pack identity files (`is_pack_identity_file`), anything with `/lang/` in its path, and language tokens.
+  The comparison is the one of `is_redundant` (PNG pixels, canonical JSON, bytes, tokens), without the
+  texture and `.mcmeta` pairing.
+- Ties go to the newest version. With no identical file at all, the newest version is used and the
+  notice says that no file is left out (the first plan was an error; this cannot drop a needed file).
+- `VersionDetection::describe` makes the notice, which `lib.rs` sends as `PackSquasherStatus::Notice`.
+- Tested: 8 unit tests (`mcchanges/tests.rs`: best version, tie, no match, hashes, directory,
+  not versioned, empty index) plus a squash test, and an end to end script with the built program and
+  the real `mcchanges-java.jar`. With 8000 pack files and the real 87 version jar, a debug build took
+  2.2 s for the choice and 1.4 s to check the same files against one given version.
 
 ## 4. File map
 

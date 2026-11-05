@@ -613,7 +613,22 @@ mcchanges_path = 'C:\path\to\1.8.9.jar'
 
 A mcchanges pack can hold the assets of many game versions in a single file or
 directory. This option selects which version PackSquash compares the pack with.
-It is required for those mcchanges packs, and an error for the others.
+It is an error for mcchanges packs that do not hold many versions.
+
+If this option is not set, is empty, or is `auto`, PackSquash chooses the version
+by itself. It compares the pack with every version of the mcchanges pack, and uses
+the one that has the most pack files identical to its files. If several versions
+have as many, it uses the newest of them. PackSquash prints which version it chose,
+how many files are identical to it, and the best version that has fewer. The pack
+files that identify the pack (like `pack.mcmeta`) and the language files are not
+counted, because they do not tell the game version. If no pack file is identical
+to a file of any version, PackSquash uses the newest version, which leaves out no
+file, and says so.
+
+The chosen version is the best match, which is not always the game version that the
+pack is for. If you know that version, set it. For a mcchanges pack that does not
+hold many versions, an unset, empty option does nothing, as before, and `auto` is an
+error.
 
 A mcchanges pack holds several versions if it has a `mcchanges.json` file at its
 root, with this structure:

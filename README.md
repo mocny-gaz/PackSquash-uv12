@@ -47,7 +47,8 @@ build, test and release, and what is still open.
   See the [usage guide](docs/fork/USAGE.md#bulk-every-pack-in-a-folder).
 - **Many game versions in one file.** `mcchanges_version` selects a game version
   from a single mcchanges jar that stores each version as a small change on top
-  of the version before it. Audio files are stored only as hashes. Ready-made
+  of the version before it. If you leave it out, PackSquash tries every version
+  and uses the best match. Audio files are stored only as hashes. Ready-made
   jars that hold only hashes, no game files, are in the Releases of the
   [mc-changes](https://github.com/mocny-gaz/mc-changes) repository, together with
   the script that builds and updates them for Java Edition and for Bedrock

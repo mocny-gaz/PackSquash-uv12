@@ -111,6 +111,12 @@ You asked for "only add the new version if it only adds files". The chosen
 format covers that case and the others. A version that changes or deletes files
 also fits, because changes are stored as new files and deletions are listed.
 
+If you leave mcchanges_version out (or write auto), PackSquash tries every version:
+it counts how many of your files are identical to the files of each version, and
+uses the version with the most, the newer one if two are equal. It prints the
+version it chose. Set the version yourself if you know it. If no file is
+identical to any version, it uses the newest version, which leaves out nothing.
+
 How PackSquash reads it: you set mcchanges_version = '1.21.4'. For each
 file, PackSquash looks in the 1.21.4 folder first, then in the version before,
 and so on. It stops at the first folder that has the file, or at the first
