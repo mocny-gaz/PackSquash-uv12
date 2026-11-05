@@ -21,6 +21,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `bulk_output_suffix`, `bulk_overwrite` (replaces archives, atomically, with `bulk_backup` on by
   default), `bulk_dry_run`, `bulk_report_file`, `bulk_archive_extensions` and `bulk_scan_depth`.
   A failed pack does not stop the others.
+- `skip_optifine_sky_entries_with_missing_images` leaves out OptiFine custom sky entries whose image
+  (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
+  texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
+  missing number. Not for packs that are still being made.
 - `mcchanges_version` can be left out (or empty, or `auto`) for a mcchanges jar that holds many game
   versions: PackSquash compares the pack with every version, uses the one with the most identical
   files (the newest if several tie), and prints which version it chose.

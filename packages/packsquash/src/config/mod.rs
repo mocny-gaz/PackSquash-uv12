@@ -292,6 +292,27 @@ pub struct GlobalOptions {
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
 	pub merge_identical_optifine_sky_images: bool,
+	/// OptiFine custom sky entries are `.properties` files that name an image, which can be in any
+	/// directory of the pack. If the image is not in the pack, old versions of OptiFine ignore the
+	/// entry, but new versions draw the missing texture (a pink and black pattern) in the sky. When
+	/// this option is enabled, PackSquash leaves out the entries whose image is a file of the
+	/// `assets/minecraft/optifine` directory that the pack does not have. This is also useful to
+	/// fix the skies of a pack that is converted to another version. OptiFine loads the numbered
+	/// entries (`sky1.properties`, `sky2.properties`, ...) of a directory in order, and stops at the
+	/// first number that does not exist, so an entry is kept if an entry with a higher number is
+	/// kept, and PackSquash says so. Images of other directories are not checked, as the game or
+	/// another pack can provide them.
+	///
+	/// **Do not use this option on a pack that is still being made.** If the image is going to be
+	/// added later, its entry is gone, and the work of adding it back is lost. It does not know
+	/// about images that other packs provide either.
+	///
+	/// This option has no effect unless `allow_mods` contains OptiFine.
+	///
+	/// **Default value**: `false`
+	#[cfg(feature = "optifine")]
+	#[doc(cfg(feature = "optifine"))]
+	pub skip_optifine_sky_entries_with_missing_images: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include
 	/// in the result ZIP file.
@@ -371,6 +392,8 @@ impl Default for GlobalOptions {
 			skip_unused_optifine_sky_images: false,
 			#[cfg(feature = "optifine")]
 			merge_identical_optifine_sky_images: false,
+			#[cfg(feature = "optifine")]
+			skip_optifine_sky_entries_with_missing_images: false,
 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
 			allow_mods: EnumSet::empty(),
 			threads: hardware_threads,

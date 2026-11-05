@@ -18,7 +18,8 @@ async fn optimizer(pack_dir: &Path, merge_identical_images: bool) -> SkyImageOpt
 		pack_dir,
 		IteratorTraversalOptions::default(),
 		true,
-		merge_identical_images
+		merge_identical_images,
+		false
 	)
 	.await
 }
@@ -200,6 +201,7 @@ fn squash_sky(
 	pack_dir: &Path,
 	skip_unused_images: bool,
 	merge_identical_images: bool,
+	skip_missing_image_entries: bool,
 	allow_optifine: bool
 ) -> SquashedSky {
 	let output_dir = temp_dir();
@@ -208,6 +210,7 @@ fn squash_sky(
 	let mut global_options = GlobalOptions {
 		skip_unused_optifine_sky_images: skip_unused_images,
 		merge_identical_optifine_sky_images: merge_identical_images,
+		skip_optifine_sky_entries_with_missing_images: skip_missing_image_entries,
 		output_file_path: output_path.clone(),
 		..GlobalOptions::default()
 	};
@@ -289,7 +292,7 @@ fn squashing_leaves_out_sky_images_only_if_asked() {
 		let SquashedSky {
 			output,
 			intentionally_skipped
-		} = squash_sky(pack_dir.path(), skip_unused, merge, allow_optifine);
+		} = squash_sky(pack_dir.path(), skip_unused, merge, false, allow_optifine);
 
 		let case = format!("skip unused {skip_unused}, merge {merge}, OptiFine {allow_optifine}");
 		let acts = allow_optifine;
@@ -330,5 +333,311 @@ fn squashing_leaves_out_sky_images_only_if_asked() {
 				assert!(sky2.contains("copy.png"), "{sky2}");
 			}
 		}
+	}
+}
+
+/// Scans a pack with the option that leaves out the entries whose image is missing.
+async fn missing_image_optimizer(pack_dir: &Path) -> SkyImageOptimizer {
+	SkyImageOptimizer::scan(
+		&OsFilesystem,
+		pack_dir,
+		IteratorTraversalOptions::default(),
+		false,
+		false,
+		true
+	)
+	.await
+}
+
+const MISSING_IMAGE_REASON: &str = "OptiFine custom sky entry whose image is missing";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_entry_whose_image_is_missing_is_left_out() {
+	let pack_dir = temp_dir();
+	write_file(
+		pack_dir.path(),
+		&format!("{SKY}world0/sky1.properties"),
+		SKY_ENTRY
+	);
+	write_file(pack_dir.path(), &format!("{SKY}world0/cloud.png"), b"");
+	write_file(
+		pack_dir.path(),
+		&format!("{SKY}world0/sky2.properties"),
+		b"source=./aurora.png\nstartFadeIn=6:00\n"
+	);
+
+	let optimizer = missing_image_optimizer(pack_dir.path()).await;
+
+	assert_eq!(
+		optimizer.skip_reason(&format!("{SKY}world0/sky1.properties")),
+		None
+	);
+	assert_eq!(
+		optimizer.skip_reason(&format!("{SKY}world0/sky2.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+	assert!(
+		optimizer
+			.notices()
+			.iter()
+			.any(|notice| notice.contains("sky2.properties")
+				&& notice.contains("aurora.png")
+				&& notice.contains("was left out")),
+		"{:?}",
+		optimizer.notices()
+	);
+	assert!(
+		optimizer
+			.notices()
+			.iter()
+			.any(|notice| notice.contains("Do not use skip_optifine_sky_entries_with_missing_images")),
+		"the warning is there: {:?}",
+		optimizer.notices()
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_entry_that_a_later_entry_needs_is_kept() {
+	let pack_dir = temp_dir();
+	let sky = |name: &str| format!("{SKY}world0/{name}");
+	write_file(
+		pack_dir.path(),
+		&sky("sky1.properties"),
+		b"source=./aurora.png\n"
+	);
+	write_file(pack_dir.path(), &sky("sky2.properties"), SKY_ENTRY);
+	write_file(pack_dir.path(), &sky("cloud.png"), b"");
+	write_file(
+		pack_dir.path(),
+		&sky("sky3.properties"),
+		b"source=./gone.png\n"
+	);
+	write_file(
+		pack_dir.path(),
+		&sky("sky4.properties"),
+		b"source=./gone2.png\n"
+	);
+
+	let optimizer = missing_image_optimizer(pack_dir.path()).await;
+
+	// sky1 is before the working sky2, so it stays. sky3 and sky4 are at the end, so they go
+	assert_eq!(optimizer.skip_reason(&sky("sky1.properties")), None);
+	assert_eq!(optimizer.skip_reason(&sky("sky2.properties")), None);
+	assert_eq!(
+		optimizer.skip_reason(&sky("sky3.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+	assert_eq!(
+		optimizer.skip_reason(&sky("sky4.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+	assert!(
+		optimizer
+			.notices()
+			.iter()
+			.any(|notice| notice.contains("sky1.properties")
+				&& notice.contains("was kept")
+				&& notice.contains("stops loading entries at the first missing number"))
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_entry_between_missing_ones_is_left_out_with_them() {
+	let pack_dir = temp_dir();
+	let sky = |name: &str| format!("{SKY}world0/{name}");
+	write_file(pack_dir.path(), &sky("sky1.properties"), SKY_ENTRY);
+	write_file(pack_dir.path(), &sky("cloud.png"), b"");
+	write_file(
+		pack_dir.path(),
+		&sky("sky2.properties"),
+		b"source=./a.png\n"
+	);
+	write_file(
+		pack_dir.path(),
+		&sky("sky10.properties"),
+		b"source=./b.png\n"
+	);
+
+	let optimizer = missing_image_optimizer(pack_dir.path()).await;
+
+	// The numbers are compared as numbers, so sky10 comes after sky2
+	assert_eq!(optimizer.skip_reason(&sky("sky1.properties")), None);
+	assert_eq!(
+		optimizer.skip_reason(&sky("sky2.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+	assert_eq!(
+		optimizer.skip_reason(&sky("sky10.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_ways_to_name_an_image_follow_optifine() {
+	let sky = |name: &str| format!("{SKY}world0/{name}");
+	let optifine = "assets/minecraft/optifine/";
+
+	// (the source property, the file that makes the image exist, is the entry left out when the image is not there)
+	for (source, image, left_out_without_image) in [
+		("./x.png", sky("x.png"), true),
+		("~/sky/world0/x.png", sky("x.png"), true),
+		(
+			"assets/minecraft/optifine/sky/world0/x.png",
+			sky("x.png"),
+			true
+		),
+		("minecraft:optifine/sky/world0/x.png", sky("x.png"), true),
+		("optifine/sky/world0/x.png", sky("x.png"), true),
+		("/~/sky/world0/x.png", sky("x.png"), true),
+		("source with spaces ./x.png", sky("x.png"), false),
+		// The game or another pack can provide these
+		(
+			"textures/environment/x.png",
+			"assets/minecraft/textures/environment/x.png".to_owned(),
+			false
+		),
+		(
+			"minecraft:textures/environment/x.png",
+			"assets/minecraft/textures/environment/x.png".to_owned(),
+			false
+		),
+		(
+			"other:optifine/sky/x.png",
+			"assets/other/optifine/sky/x.png".to_owned(),
+			false
+		),
+		// A path that goes up is not followed
+		("../x.png", format!("{optifine}sky/x.png"), false),
+		("./../x.png", format!("{optifine}sky/x.png"), false),
+		("", sky("x.png"), false),
+		("./a\\b.png", sky("x.png"), false)
+	] {
+		for (has_image, expected_skip) in [(false, left_out_without_image), (true, false)] {
+			let pack_dir = temp_dir();
+			write_file(
+				pack_dir.path(),
+				&sky("sky1.properties"),
+				format!("source={source}\n").as_bytes()
+			);
+
+			if has_image {
+				write_file(pack_dir.path(), &image, b"");
+			}
+
+			let optimizer = missing_image_optimizer(pack_dir.path()).await;
+
+			assert_eq!(
+				optimizer.skip_reason(&sky("sky1.properties")).is_some(),
+				expected_skip,
+				"source {source:?}, image present: {has_image}"
+			);
+		}
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_entry_without_a_source_uses_the_image_with_its_number() {
+	let pack_dir = temp_dir();
+	let sky = |name: &str| format!("{SKY}world0/{name}");
+	write_file(
+		pack_dir.path(),
+		&sky("sky1.properties"),
+		b"startFadeIn=6:00\n"
+	);
+	write_file(
+		pack_dir.path(),
+		&sky("sky2.properties"),
+		b"startFadeIn=6:00\n"
+	);
+	write_file(pack_dir.path(), &sky("sky2.png"), b"");
+	// The default of the sun and the moon is not known
+	write_file(pack_dir.path(), &sky("sun.properties"), b"blend=add\n");
+	write_file(
+		pack_dir.path(),
+		&sky("moon_phases.properties"),
+		b"source=./moon.png\n"
+	);
+
+	let optimizer = missing_image_optimizer(pack_dir.path()).await;
+
+	// sky2 has its image, so it stays and sky1 is kept for it
+	assert_eq!(optimizer.skip_reason(&sky("sky1.properties")), None);
+	assert_eq!(optimizer.skip_reason(&sky("sky2.properties")), None);
+	assert_eq!(optimizer.skip_reason(&sky("sun.properties")), None);
+	// The ones that are not in the numbered sequence do not depend on the others
+	assert_eq!(
+		optimizer.skip_reason(&sky("moon_phases.properties")),
+		Some(MISSING_IMAGE_REASON)
+	);
+}
+
+#[test]
+fn the_source_of_an_entry_is_read_like_a_properties_file() {
+	for (text, expected) in [
+		("source=./a.png\n", SourceProperty::Set("./a.png")),
+		("source = ./a.png  \n", SourceProperty::Set("./a.png")),
+		("source: ./a.png\n", SourceProperty::Set("./a.png")),
+		("  source ./a.png\n", SourceProperty::Set("./a.png")),
+		(
+			"# source=./x.png\n! source=./y.png\nsource=./a.png\n",
+			SourceProperty::Set("./a.png")
+		),
+		(
+			"source=./a.png\nsource=./b.png\n",
+			SourceProperty::Set("./b.png")
+		),
+		(
+			"sources=./a.png\nsource_x=./a.png\nSource=./a.png\n",
+			SourceProperty::Unset
+		),
+		("startFadeIn=6:00\n", SourceProperty::Unset),
+		("", SourceProperty::Unset),
+		("source=./a.png\nblend=\\\nadd\n", SourceProperty::Unclear),
+		(
+			"source=./a.png\r\nblend=add\r\n",
+			SourceProperty::Set("./a.png")
+		)
+	] {
+		assert_eq!(source_property(text), expected, "{text:?}");
+	}
+}
+
+#[test]
+fn squashing_leaves_out_entries_with_missing_images_only_if_asked() {
+	for (option, allow_optifine, expect_left_out) in [
+		(true, true, true),
+		(false, true, false),
+		(true, false, false)
+	] {
+		let pack_dir = temp_dir();
+		sky_pack(pack_dir.path());
+		write_file(
+			pack_dir.path(),
+			&format!("{SKY}world0/sky3.properties"),
+			b"source=./aurora.png\n"
+		);
+
+		let SquashedSky {
+			output,
+			intentionally_skipped
+		} = squash_sky(pack_dir.path(), false, false, option, allow_optifine);
+		let case = format!("option {option}, OptiFine {allow_optifine}");
+
+		// Without OptiFine support, the entries are not in the result at all
+		assert_eq!(
+			output.contains(&format!("{SKY}world0/sky3.properties")),
+			allow_optifine && !expect_left_out,
+			"{case}"
+		);
+		assert_eq!(
+			intentionally_skipped.contains(&format!("{SKY}world0/sky3.properties")),
+			expect_left_out,
+			"{case}"
+		);
+		assert_eq!(
+			output.contains(&format!("{SKY}world0/sky2.properties")),
+			allow_optifine,
+			"{case}"
+		);
 	}
 }

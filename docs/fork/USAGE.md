@@ -66,6 +66,7 @@ The options that this fork adds:
 | `skip_language_keys_identical_to_mcchanges` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
 | `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
 | `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
+| `skip_optifine_sky_entries_with_missing_images` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
 | `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
@@ -282,6 +283,25 @@ merge_identical_optifine_sky_images = true
 - `merge_identical_optifine_sky_images` keeps the first of several identical
   images in a directory and points the sky entries to it. Unused images are
   found after the merge.
+
+A third option fixes the skies of finished packs:
+
+```toml
+allow_mods = ['OptiFine']
+skip_optifine_sky_entries_with_missing_images = true
+```
+
+If `sky3.properties` names `aurora.png` and the pack does not have that file, old
+OptiFine versions ignore the entry, but new versions draw a pink and black texture.
+This option leaves such entries out, and prints which ones. It also helps when a pack
+is converted to another version.
+
+**Do not use it on a pack that is still being made.** If the image is added later, the
+entry has to be written again. PackSquash only checks images in
+`assets/minecraft/optifine`, because the game or another pack can provide the others.
+OptiFine stops loading entries at the first missing number, so an entry with a later
+entry after it is kept, and PackSquash says so. Only custom skies are checked, not
+connected textures or custom items.
 
 ## Copy files untouched
 

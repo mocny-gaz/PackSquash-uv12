@@ -32,6 +32,7 @@
   - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
+  - [`skip_optifine_sky_entries_with_missing_images`](#skip_optifine_sky_entries_with_missing_images)
   - [`archive_pack_search_depth`](#archive_pack_search_depth)
   - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
   - [`bulk_input_directory`](#bulk_input_directory)
@@ -785,6 +786,47 @@ Example:
 ```toml
 allow_mods = ['OptiFine']
 merge_identical_optifine_sky_images = true
+```
+
+### `skip_optifine_sky_entries_with_missing_images`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+OptiFine custom sky entries are `.properties` files that name the image that they
+draw. If the image is not in the pack, old versions of OptiFine ignore the entry,
+but new versions draw the missing texture, a pink and black pattern, in the sky. This
+also happens when a pack is converted to another version and an image is lost on the
+way. When this option is enabled, PackSquash leaves out the entries whose image is a
+file of the `assets/minecraft/optifine` directory that the pack does not have.
+
+PackSquash finds the image like OptiFine does: `path/file.png` is relative to
+`assets/minecraft`, `~/path/file.png` to `assets/minecraft/optifine`, `./path/file.png`
+to the directory of the entry, and `namespace:path/file.png` to the namespace. An entry
+without `source` uses `sky<n>.png` next to it. PackSquash does not guess: an entry is
+kept if its image is somewhere that the game or another pack can provide (any
+directory other than `assets/minecraft/optifine`, and other namespaces), or if its path
+is written in a way that is not understood.
+
+OptiFine loads the numbered entries of a directory (`sky1.properties`, `sky2.properties`,
+and so on) in order, and stops at the first number that does not exist. Leaving out an
+entry in the middle would hide the entries after it. So PackSquash only leaves out an
+entry if every entry with a higher number is left out too. It tells you which entries
+it left out, and which ones it kept for this reason.
+
+**Do not use this option on a pack that is still being made.** If the image is going
+to be added later, the entry is gone, and writing it again is lost work. Use it on
+finished packs, or to fix the skies of a pack that was converted to another version.
+
+This option has no effect unless `allow_mods` contains OptiFine. It does not look at
+other OptiFine files, like connected textures or custom items, only at custom skies.
+
+Example:
+
+```toml
+allow_mods = ['OptiFine']
+skip_optifine_sky_entries_with_missing_images = true
 ```
 
 ### `archive_pack_search_depth`

@@ -354,9 +354,11 @@ impl PackSquasher {
 			let global_options = &options_holder.options.global_options;
 			let skip_unused_images = global_options.skip_unused_optifine_sky_images;
 			let merge_identical_images = global_options.merge_identical_optifine_sky_images;
+			let skip_missing_image_entries =
+				global_options.skip_optifine_sky_entries_with_missing_images;
 
 			(!is_bedrock
-				&& (skip_unused_images || merge_identical_images)
+				&& (skip_unused_images || merge_identical_images || skip_missing_image_entries)
 				&& global_options
 					.allow_mods
 					.contains(config::MinecraftMod::Optifine))
@@ -368,11 +370,26 @@ impl PackSquasher {
 						ignore_system_and_hidden_files: global_options.ignore_system_and_hidden_files
 					},
 					skip_unused_images,
-					merge_identical_images
+					merge_identical_images,
+					skip_missing_image_entries
 				))
 			})
 			.map(Arc::new)
 		};
+
+		// Tell the user what was found about the custom sky entries
+		#[cfg(feature = "optifine")]
+		if let (Some(sky_image_optimizer), Some(pack_file_status_sender)) =
+			(&sky_image_optimizer, &pack_file_status_sender)
+		{
+			for notice in sky_image_optimizer.notices() {
+				runtime
+					.block_on(
+						pack_file_status_sender.send(PackSquasherStatus::Notice(Cow::Owned(notice.clone())))
+					)
+					.ok();
+			}
+		}
 
 		runtime.block_on(async {
 			let pack_file_iter = vfs.file_iterator(

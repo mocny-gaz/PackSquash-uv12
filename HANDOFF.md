@@ -241,6 +241,25 @@ The field is still called `found_unresolvable_moj_import`.
   the real `mcchanges-java.jar`. With 8000 pack files and the real 87 version jar, a debug build took
   2.2 s for the choice and 1.4 s to check the same files against one given version.
 
+### 3.13 OptiFine sky entries with a missing image (r2)
+
+- `optifine_sky.rs`: `SkyImageOptimizer::scan` has a third flag, `skip_missing_image_entries`, from the global
+  option `skip_optifine_sky_entries_with_missing_images`. It collects all pack paths, reads the `source` of each
+  entry like a Java properties file (`source_property`: last one wins, comments, `=` `:` or space; a line that ends with a
+  backslash makes the entry unclear, so it is kept), and resolves it like OptiFine does (`source_image_path`, from the
+  official `sky.properties` doc: `path` is relative to assets/minecraft, `~/` to assets/minecraft/optifine, `./` to the
+  entry, `ns:path` to the namespace). No source means `sky<n>.png` next to a `sky<n>.properties` entry.
+- Only an image under `assets/minecraft/optifine/` that is not in the pack counts as missing, because the game and other
+  packs can provide the rest. Unclear paths, `..`, other namespaces and `/` paths are kept.
+- OptiFine stops loading `sky<n>.properties` at the first missing number, so entries are checked from the highest number
+  down, and an entry is only left out if every higher numbered entry is left out too. `sun.properties`,
+  `moon_phases.properties` and other names are not in the sequence.
+- The result is `skipped_entries` (reported as intentionally skipped files, with the reason "OptiFine custom sky entry whose
+  image is missing") and `notices()`, which `lib.rs` sends as notices, with a warning about unfinished packs.
+- Not done: other OptiFine properties (CTM `tiles`, CIT `texture`/`model`, random entities, and so on). The owner wrote
+  "sky models and others"; the same approach applies, one resolver per file type.
+- Tested: 9 new unit tests and a squash test; an end to end run with the CLI.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in
