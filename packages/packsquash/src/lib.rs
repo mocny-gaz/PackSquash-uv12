@@ -54,6 +54,7 @@ use crate::vfs::{
 };
 
 pub mod config;
+pub mod pack_archive;
 pub mod vfs;
 
 mod bedrock_pack;

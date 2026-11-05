@@ -10,13 +10,14 @@ step, and the common problems. Every option is described in full in
 1. [Quick start](#quick-start)
 2. [How options work](#how-options-work)
 3. [What is on by default and what is not](#what-is-on-by-default-and-what-is-not)
-4. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
-5. [Language files](#language-files)
-6. [Bedrock Edition packs](#bedrock-edition-packs)
-7. [OptiFine custom skies](#optifine-custom-skies)
-8. [Copy files untouched](#copy-files-untouched)
-9. [Common problems](#common-problems)
-10. [Not built yet](#not-built-yet)
+4. [A pack in an archive](#a-pack-in-an-archive)
+5. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
+6. [Language files](#language-files)
+7. [Bedrock Edition packs](#bedrock-edition-packs)
+8. [OptiFine custom skies](#optifine-custom-skies)
+9. [Copy files untouched](#copy-files-untouched)
+10. [Common problems](#common-problems)
+11. [Not built yet](#not-built-yet)
 
 ## Quick start
 
@@ -66,6 +67,8 @@ The options that this fork adds:
 | `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
+| `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
+| `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
 
 Things that are always on, with no option:
 
@@ -77,6 +80,37 @@ Things that are always on, with no option:
   still fail.
 
 Every other option keeps the default of the original PackSquash.
+
+## A pack in an archive
+
+`pack_directory` can be an archive file instead of a directory:
+
+```toml
+pack_directory = 'C:\packs\my_pack.7z'
+output_file_path = 'C:\packs\my_pack.zip'
+```
+
+- Without other programs: ZIP, 7z, and TAR alone or with gzip, xz, Zstandard or bzip2
+  (`.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`).
+- RAR needs a helper program: `bsdtar`, `tar`, `7z`, `7zz`, `7za` or `unrar`. Windows 10 and
+  later have `tar.exe`. If it can not read your file, install 7-Zip and add its folder to the
+  `PATH`.
+- PackSquash finds the format by looking inside the file. The name does not matter.
+- The pack is the directory with `pack.mcmeta` and `assets` or `data`, or with a Bedrock
+  `manifest.json`. It can be in a subfolder of the archive, up to `archive_pack_search_depth`
+  levels deep.
+- One pack per run. If the archive has more, PackSquash lists them and stops.
+- The pack is extracted to a temporary folder, which is deleted at the end. You need free disk
+  space for the pack. Links and unsafe names in the archive are never extracted.
+- The result is always a ZIP file.
+- Archives with a password are not supported.
+
+To look deeper, or to allow more data:
+
+```toml
+archive_pack_search_depth = 6
+archive_max_extracted_mib = 32768
+```
 
 ## mcchanges: leave out what the game already has
 
@@ -214,7 +248,11 @@ packsquash.exe packsquash.toml
 | `control character found while parsing a string` | The pack has a raw line break or tab in a JSON string. Use a build that has this fix (after `0.5.0-fork.1`). |
 | Files that you expected to be left out stay in | The version is wrong, or the file really differs from the game file. See which files are skipped: run `set PACKSQUASH_LOG=trace` in cmd, then run the program again. |
 | The pack looks wrong in the game | Put the files back with `copy_as_is`, turn off `mcchanges_path`, and open an issue in this repository with the options file. |
-| `rar` or `7z` input does not work | Archive input is not built yet. See the next section. |
+| `is a file, but not an archive that PackSquash can read` | `pack_directory` points to a file that is not a ZIP, 7z, TAR or RAR archive. |
+| `No pack was found in the archive` | The archive has no `pack.mcmeta` with `assets` or `data`, or the pack is deeper than 4 levels. Raise `archive_pack_search_depth`. |
+| `The archive ... has 2 packs` | One run squashes one pack. Extract the one you want, or make an archive with only that pack. |
+| `this archive needs a helper program` | RAR files need `bsdtar`, `7z` or `unrar`. Install 7-Zip and add its folder to the `PATH`. |
+| `the archive is too big` | The pack is bigger than `archive_max_extracted_mib`. Raise it. |
 
 Report problems with the fork in
 [this repository](https://github.com/mocny-gaz/PackSquash-uv12/issues), not in
@@ -224,7 +262,6 @@ the original one.
 
 These are planned and are in no release. See [TASKS.md](TASKS.md):
 
-- A pack as an archive of any kind (`.7z`, `.tar`, `.rar` and others) as input.
 - Bulk squash of every pack in a directory.
 - A blank `mcchanges_version` that tries every version and uses the best match.
 - A simple dark GUI that writes the options file.

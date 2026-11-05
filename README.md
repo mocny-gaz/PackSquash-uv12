@@ -37,6 +37,10 @@ build, test and release, and what is still open.
   `mcchanges_path`, files that are identical to the vanilla files (a folder, a
   ZIP, or a client `.jar`) are left out of the result ZIP file. Textures are
   compared by pixels, and JSON files by contents.
+- **A pack in an archive.** `pack_directory` can be a ZIP, 7z, TAR (also `.tar.gz`,
+  `.tar.xz`, `.tar.zst`, `.tar.bz2`) or RAR file. PackSquash finds the pack inside by
+  its contents, also in a subfolder, extracts it to a temporary folder, and writes the
+  usual ZIP file. See the [usage guide](docs/fork/USAGE.md#a-pack-in-an-archive).
 - **Many game versions in one file.** `mcchanges_version` selects a game version
   from a single mcchanges jar that stores each version as a small change on top
   of the version before it. Audio files are stored only as hashes. Ready-made

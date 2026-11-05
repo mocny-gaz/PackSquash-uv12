@@ -236,7 +236,29 @@ expand: the shader is copied as is, and syntax errors are tentative. This is the
 fallback that the upstream author described. It is not a full resolver.
 
 
-8. THINGS I DID NOT VERIFY
+8. A PACK IN AN ARCHIVE
+----------------------
+
+pack_directory can now be a file. PackSquash looks at the first bytes of the file,
+not at its name, to find the format:
+
+  - ZIP, 7z and TAR (also .tar.gz, .tar.xz, .tar.zst, .tar.bz2) are read by PackSquash
+    itself.
+  - RAR needs a program that is installed: bsdtar, tar, 7z, 7zz, 7za or unrar.
+
+Then it lists the files in the archive and looks for a pack: a folder with
+pack.mcmeta and assets or data, or a Bedrock manifest.json. The pack may be in a
+subfolder (archive_pack_search_depth, default 4 levels). It extracts only that pack to
+a temporary folder, squashes it, and deletes the folder. The result is a ZIP file, as
+always. With more than one pack, PackSquash stops and lists them.
+
+Safety: names with .. or a drive letter are rejected, links are never extracted, and
+archive_max_extracted_mib (default 16384) stops very big archives. For RAR, the helper
+program does the extraction, so PackSquash deletes links and checks the size after it.
+
+Not tested: real RAR files, and tar.exe of Windows.
+
+9. THINGS I DID NOT VERIFY
 --------------------------
 
   - The game itself. I tested with automated tests only.

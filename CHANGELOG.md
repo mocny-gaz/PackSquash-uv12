@@ -8,6 +8,15 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `pack_directory` can be an archive that holds the pack: ZIP, 7z, TAR, TAR with gzip, xz,
+  Zstandard or bzip2, and RAR through a helper program (`bsdtar`, `tar`, `7z`, `7zz`, `7za` or
+  `unrar`). The format and the pack are found by looking at the contents, also inside a
+  subdirectory. The pack is extracted to a temporary directory that is deleted at the end.
+  Links and unsafe names are never extracted. New command-line options:
+  `archive_pack_search_depth` and `archive_max_extracted_mib`.
+
 ### Changed
 
 - Fork documentation: a usage guide (`docs/fork/USAGE.md`) and an index in the README. The

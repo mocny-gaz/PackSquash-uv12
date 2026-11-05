@@ -22,6 +22,7 @@ ahash = "0.8.12"
 aho-corasick = "1.1.5"
 arcstr = { version = "1.2.0", features = ["serde"] }
 bytes = "1.12.1"
+bzip2 = "0.6.1"
 crc32fast = "1.5.2"
 dasp_frame = "0.11.0"
 dasp_interpolate = { version = "0.11.0", features = ["sinc"] }
@@ -44,6 +45,7 @@ itertools = "0.15.0"
 java-properties = { version = "2.0.0", optional = true }
 json_comments = "0.2.2"
 jsonpath_lib = "0.3.0"
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz"] }
 memchr = "2.8.3"
 obfstr = "0.4.6"
 # Temporarily pinned to v0.3.0 to buy us time for a proper zero-entry codebook generation fix
@@ -54,6 +56,7 @@ rand_xoshiro = "0.8.1"
 regex = "1.13.1"
 rgb = "0.8.53"
 rubato = "0.16.2"
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = {
   version = "1.0.154",
@@ -63,6 +66,7 @@ serde_json = {
   ]
 }
 serde_stacker = "0.1.14"
+sevenz-rust2 = { version = "0.24.2", default-features = false }
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 spng = {
@@ -82,6 +86,7 @@ sysinfo = {
     "system",
   ]
 }
+tar = { version = "0.4.46", default-features = false }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tinyvec = "1.13.3"
@@ -110,6 +115,7 @@ tokio-util = {
 uuid = "1.28.0"
 vorbis_rs = { version = "0.5.6", default-features = false }
 walkdir = "2.5.0"
+zip = { version = "9.2.0", default-features = false, features = ["deflate", "deflate64"] }
 zopfli = {
   version = "0.8.4",
   default-features = false,
@@ -123,6 +129,7 @@ zopfli = {
 criterion = { version = "=0.5.1", features = ["html_reports"] }
 futures = { version = "0.3.34", default-features = false, features = ["std"] }
 pretty_assertions = "1.4.1"
+sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["compress", "util"] }
 tar = { version = "0.4.46", default-features = false }
 tokio-test = "0.4.6"
 xz2 = "0.1.7"

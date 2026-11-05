@@ -32,6 +32,8 @@
   - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
+  - [`archive_pack_search_depth`](#archive_pack_search_depth)
+  - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
@@ -132,6 +134,36 @@ available options.
 
 The absolute or relative path to the directory where the pack that will be
 optimized resides.
+
+The path can also be a file: an archive that holds the pack. PackSquash finds out
+what the archive is by looking at its first bytes, not at its name, so
+`my_pack.bin` and `my_pack.mcpack` work if they are ZIP files. These formats
+work without any other program:
+
+- ZIP (`.zip`, `.mcpack`, and a Java Edition pack that was zipped)
+- 7z (`.7z`)
+- TAR (`.tar`), alone or compressed with gzip (`.tar.gz`), xz (`.tar.xz`),
+  Zstandard (`.tar.zst`) or bzip2 (`.tar.bz2`)
+
+RAR files need a helper program that PackSquash runs, if it is installed:
+`bsdtar`, `tar`, `7z`, `7zz`, `7za` or `unrar`, in this order, until one works.
+Windows 10 and later have `tar.exe`, which can read some RAR files. For the
+others, install 7-Zip or `unrar` and add its folder to the `PATH` environment
+variable.
+
+The pack in the archive is the directory that has a `pack.mcmeta` file and an
+`assets` or `data` directory, or the directory of a Bedrock Edition resource
+pack `manifest.json`. It can be in a subdirectory of the archive. See
+[`archive_pack_search_depth`](#archive_pack_search_depth). An archive can have
+only one pack: PackSquash stops with an error that lists the packs if it finds
+more.
+
+PackSquash extracts the pack to a temporary directory, optimizes it from there,
+and deletes the directory at the end. Links and files with unsafe names in the
+archive are never extracted. The result is always a ZIP file, as for a
+directory. Encrypted archives are not supported. The command-line program does
+this. A program that uses the library directly has the `pack_archive` module for
+it.
 
 If you use a literal string (i.e., surround the path with single quotes, `'like
 this'`) you won't need to escape any characters, but you won't be able to write
@@ -729,6 +761,45 @@ Example:
 ```toml
 allow_mods = ['OptiFine']
 merge_identical_optifine_sky_images = true
+```
+
+### `archive_pack_search_depth`
+
+**Type**: [Integer](https://toml.io/en/v1.0.0#integer), from 1 to 16
+
+**Default value**: `4`
+
+How many directory levels below the root of an archive PackSquash looks into to
+find the pack, when [`pack_directory`](#pack_directory) is an archive. A pack in
+the root of the archive is at level 0. With `4`, a pack in
+`a/b/c/d/` is found, and a pack in `a/b/c/d/e/` is not. A higher value is slower
+on archives with many directories. This option has no effect when
+`pack_directory` is a directory. Only the command-line program reads it.
+
+Example:
+
+```toml
+pack_directory = 'C:\path\to\pack.7z'
+archive_pack_search_depth = 6
+```
+
+### `archive_max_extracted_mib`
+
+**Type**: [Integer](https://toml.io/en/v1.0.0#integer), from 1 to 1048576
+
+**Default value**: `16384` (16 GiB)
+
+The most data that PackSquash extracts from an archive, in MiB, when
+[`pack_directory`](#pack_directory) is an archive. If the pack in the archive is
+bigger, PackSquash stops with an error before it fills the disk. Extracting more
+than 500000 entries is also an error. This option has no effect when
+`pack_directory` is a directory. Only the command-line program reads it.
+
+Example:
+
+```toml
+pack_directory = 'C:\path\to\pack.zip'
+archive_max_extracted_mib = 2048
 ```
 
 ### `zip_spec_conformance_level`

@@ -11,18 +11,23 @@ use std::{
 
 use env_logger::{Builder, Target, WriteStyle};
 use error_hints::{FORK_TROUBLESHOOTING_URL, UPSTREAM_TROUBLESHOOTING_URL};
+use fork_options::{ForkOptions, has_fork_options, split_fork_options};
 use getopts::{Options, ParsingStyle};
 use log::{Level, LevelFilter, debug, error, info, trace, warn};
 use packsquash::{
-	PackSquasher, PackSquasherError, PackSquasherStatus, PackSquasherWarning, config::SquashOptions,
+	PackSquasher, PackSquasherError, PackSquasherStatus, PackSquasherWarning,
+	config::SquashOptions,
+	pack_archive::{ExtractLimits, ExtractedPacks, extract_packs, scan_archive},
 	vfs::os_fs::OsFilesystem
 };
 use terminal_style::{environment_allows_color, environment_allows_emoji};
 use terminal_title_controller::TerminalTitleController;
 use tokio::{runtime, select, sync::mpsc::channel, time::sleep};
+use toml::{Table, Value};
 use tz::UtcDateTime;
 
 mod error_hints;
+mod fork_options;
 mod terminal_style;
 mod terminal_title_controller;
 mod terminal_title_setter;
@@ -186,8 +191,8 @@ fn read_options_file_and_squash(
 	};
 
 	// Deserialize the options struct contained in the string
-	let squash_options = match toml::from_str::<SquashOptions>(&options_string) {
-		Ok(squash_options) => squash_options,
+	let (mut squash_options, fork_options) = match parse_options(&options_string) {
+		Ok(parsed_options) => parsed_options,
 		Err(deserialize_error) => {
 			error!(
 				"An error occurred while parsing the options file from {user_friendly_options_path}: {deserialize_error}"
@@ -198,6 +203,17 @@ fn read_options_file_and_squash(
 	};
 
 	info!("Options read. Processing pack...");
+
+	// If the pack is in an archive, extract it. The extracted files are deleted when the
+	// binding is dropped at the end of this function, after the squash operation ends
+	let _extracted_pack = match prepare_archive_input(&mut squash_options, &fork_options) {
+		Ok(extracted_pack) => extracted_pack,
+		Err(archive_error) => {
+			error!("{archive_error}");
+
+			return 4;
+		}
+	};
 
 	let output_file_path = squash_options.global_options.output_file_path.clone();
 	let start_instant = Instant::now();
@@ -257,6 +273,131 @@ fn read_options_file_and_squash(
 			0
 		}
 	)
+}
+
+/// Parses the text of an options file. The options that only this program reads are split off
+/// before the rest is read as the options of the library. Without those options, the text is
+/// parsed directly, which gives error messages that point to the position of the error.
+fn parse_options(options_string: &str) -> Result<(SquashOptions, ForkOptions), String> {
+	let mut table = options_string
+		.parse::<Table>()
+		.map_err(|error| error.to_string())?;
+
+	if !has_fork_options(&table) {
+		return toml::from_str::<SquashOptions>(options_string)
+			.map(|squash_options| (squash_options, ForkOptions::default()))
+			.map_err(|error| error.to_string());
+	}
+
+	let fork_options = split_fork_options(&mut table)?;
+
+	Value::Table(table)
+		.try_into::<SquashOptions>()
+		.map(|squash_options| (squash_options, fork_options))
+		.map_err(|error| error.to_string())
+}
+
+/// Describes the packs of an archive for an error message.
+fn describe_packs<'a>(roots: impl Iterator<Item = &'a str>) -> String {
+	let names: Vec<_> = roots
+		.map(|root| {
+			if root.is_empty() {
+				"(the root of the archive)".to_string()
+			} else {
+				root.to_string()
+			}
+		})
+		.collect();
+
+	if names.len() > 10 {
+		format!("{}, and {} more", names[..10].join(", "), names.len() - 10)
+	} else {
+		names.join(", ")
+	}
+}
+
+/// If the pack directory is a file, treats it as an archive, finds the pack inside, and extracts it into
+/// a temporary directory. The pack directory option is changed to point to the extracted pack. The result
+/// has to be kept until the squash operation ends, because the temporary directory is deleted when it is dropped.
+/// Returns `None` if the pack directory is not a file.
+fn prepare_archive_input(
+	squash_options: &mut SquashOptions,
+	fork_options: &ForkOptions
+) -> Result<Option<ExtractedPacks>, String> {
+	let archive_path = squash_options.pack_directory.clone();
+
+	if !archive_path.is_file() {
+		return Ok(None);
+	}
+
+	let display = archive_path.display();
+	let depth = fork_options.archive_pack_search_depth;
+
+	info!("{display} is a file. Looking for a pack inside it...");
+
+	let scan = match scan_archive(&archive_path, depth) {
+		Ok(Some(scan)) => scan,
+		Ok(None) => {
+			return Err(format!(
+				"{display} is a file, but not an archive that PackSquash can read. \
+				Set pack_directory to a directory, or to a ZIP, 7z, TAR (also .tar.gz, .tar.xz, .tar.zst and .tar.bz2) or RAR archive"
+			));
+		}
+		Err(error) => return Err(format!("Couldn't read the archive {display}: {error}"))
+	};
+
+	let several_packs_error = |roots: &[String]| {
+		format!(
+			"The archive {display} has {} packs: {}. PackSquash squashes one pack per run. \
+			Set pack_directory to an archive or a directory that has a single pack",
+			roots.len(),
+			describe_packs(roots.iter().map(String::as_str))
+		)
+	};
+
+	if let Some(roots) = &scan.pack_roots {
+		match roots.len() {
+			0 => {
+				return Err(format!(
+					"No pack was found in the archive {display}. A pack has a pack.mcmeta file and an \
+					assets or data directory, or a manifest.json file of a Bedrock Edition resource pack. \
+					It can be at most {depth} directories deep, which archive_pack_search_depth changes"
+				));
+			}
+			1 => {}
+			_ => return Err(several_packs_error(roots))
+		}
+	}
+
+	info!(
+		"Extracting the pack from the {} archive...",
+		scan.format.name()
+	);
+
+	let extracted_packs = extract_packs(
+		&archive_path,
+		&scan,
+		depth,
+		ExtractLimits {
+			max_bytes: fork_options.archive_max_extracted_bytes,
+			..ExtractLimits::default()
+		}
+	)
+	.map_err(|error| format!("Couldn't extract the pack from the archive {display}: {error}"))?;
+
+	if extracted_packs.packs.len() != 1 {
+		return Err(several_packs_error(
+			&extracted_packs
+				.packs
+				.iter()
+				.map(|(root, _)| root.clone())
+				.collect::<Vec<_>>()
+		));
+	}
+
+	squash_options.pack_directory = extracted_packs.packs[0].1.clone();
+
+	Ok(Some(extracted_packs))
 }
 
 fn squash(

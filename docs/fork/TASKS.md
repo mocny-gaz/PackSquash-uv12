@@ -10,7 +10,7 @@ block under the task. Fixed things move to Done, in one short line.
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: done and tested here (unit tests, 34 end to end runs). Sent as patch 0020 right after 0019 (AI)
+- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: patch 0020 is written and tested here (unit tests and 34 end to end runs). Not tested: real RAR files and Windows `tar.exe`. Apply after 0019, build, then try your own archives, also a `.rar` (owner)
 - [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like, also when it is an archive of any kind. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report. STATE: designed, not written (AI)
 - [ ] f4 make auto detect (run against every version of mcchanges) when mcchanges_version = is left blank. STATE: designed, not written (AI)
 - [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (AI)

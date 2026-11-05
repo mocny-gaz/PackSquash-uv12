@@ -178,6 +178,26 @@ The field is still called `found_unresolvable_moj_import`.
 - `vfs.rs` has `read_to_end` and `read_file` helpers.
 - The CLI crate is unchanged apart from the warning logic.
 
+### 3.10 Archive input (F1)
+
+- Library module `pack_archive.rs` (+ `pack_archive/tests.rs`): `detect_format` looks at the first
+  bytes (ZIP, 7z, RAR, gzip, xz, Zstandard, bzip2, TAR by the `ustar` magic). `scan_archive` lists
+  the entries and finds pack roots: a directory with `pack.mcmeta` and `assets/` or `data/`, or a
+  Bedrock `manifest.json` with a resources module. `extract_packs` extracts only the packs into a
+  temporary directory (`ExtractedPacks`, deleted on drop). Names with `..`, absolute paths, drive
+  letters and backslash tricks are rejected, links and special entries are skipped, and there are
+  limits for bytes and entries.
+- Pure Rust readers: `zip`, `sevenz-rust2`, `tar`, `bzip2` (libbz2-rs-sys), `lzma-rust2` (xz) and
+  `ruzstd`. RAR is the only `ArchiveFormat::Helper` case: `extract_with_helper` runs `bsdtar`, `tar`,
+  `7z`, `7zz`, `7za` or `unrar`, then `clean_helper_output` deletes links and checks the limits.
+- CLI: `fork_options.rs` reads and removes `archive_pack_search_depth` and `archive_max_extracted_mib`
+  from the options table before `SquashOptions` is read (without them, the text is parsed directly,
+  so error messages keep their line numbers). `prepare_archive_input` in `main.rs` runs when
+  `pack_directory` is a file. Exit code 4 is an archive error.
+- Tested: 10 unit tests of the module, 5 of the CLI options, and an end to end script of 34 runs
+  (every format, no extension, subfolder, depth, two packs, no pack, limit, traversal in a TAR, a fake
+  `bsdtar` that makes a link). Not tested: real RAR files, Windows `tar.exe`.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in
@@ -192,6 +212,9 @@ build, release) and `MCCHANGES-JAR-GUIDE.txt` (where the jars come from, short).
 | `packages/packsquash/src/bedrock_pack.rs` (+ `tests.rs`) | Bedrock manifest validation, classification, defaults. |
 | `packages/packsquash/src/optifine_sky.rs` (+ `tests.rs`) | Sky image optimizer. |
 | `packages/packsquash/src/copy_as_is_tests.rs` | Tests of `copy_as_is`. |
+| `packages/packsquash/src/pack_archive.rs` (+ `pack_archive/tests.rs`) | Archive detection, pack search and safe extraction. |
+| `packages/packsquash_cli/src/bin/packsquash/fork_options.rs` | Options that only the CLI reads (archive limits). |
+| `packages/packsquash_cli/src/bin/packsquash/error_hints.rs` | The `How to fix` lines printed after an error. |
 | `packages/packsquash/src/lib.rs` | Wiring in `PackSquasher::run` and the per-file task. |
 | `packages/packsquash/src/config/mod.rs` | New options and the `PackEdition` enum. |
 | `docs/fork/USAGE.md` | User guide: quick start, defaults, mcchanges, problems. |
