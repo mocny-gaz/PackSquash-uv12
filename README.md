@@ -1,8 +1,8 @@
 # my fork of packsquash, where i use ai to add stuff that i want
 
-Thanks to all the PackSquash contributors for creating such a wonderful tool.
+**Thanks to all the PackSquash contributors for creating such a wonderful tool.** <3
 
-This is my fork of PackSquash. I use AI (Claude) to add the features that I want
+This is my fork of PackSquash. I use ai (claude) to add the features that I want
 here, and I check them with automated tests. The changes are not reviewed or
 endorsed by the PackSquash maintainers, so please report problems with this fork
 in this repository, not in the original one. Packs that do not use the new
