@@ -41,6 +41,10 @@ build, test and release, and what is still open.
   `.tar.xz`, `.tar.zst`, `.tar.bz2`) or RAR file. PackSquash finds the pack inside by
   its contents, also in a subfolder, extracts it to a temporary folder, and writes the
   usual ZIP file. See the [usage guide](docs/fork/USAGE.md#a-pack-in-an-archive).
+- **Bulk squash.** `bulk_input_directory` squashes every pack found in a folder, whether it is
+  a folder or an archive, with the result next to the input (`squashed_NAME.zip`). It has a
+  custom prefix and suffix, an overwrite option that keeps a backup, a dry run and a report.
+  See the [usage guide](docs/fork/USAGE.md#bulk-every-pack-in-a-folder).
 - **Many game versions in one file.** `mcchanges_version` selects a game version
   from a single mcchanges jar that stores each version as a small change on top
   of the version before it. Audio files are stored only as hashes. Ready-made

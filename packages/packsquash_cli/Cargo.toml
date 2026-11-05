@@ -87,5 +87,9 @@ mimalloc = {
 winapi-util = "0.1.11"
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 
+[dev-dependencies]
+tar = { version = "0.4.46", default-features = false }
+tempfile = "3.27.0"
+
 [lints]
 workspace = true

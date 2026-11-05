@@ -198,6 +198,28 @@ The field is still called `found_unresolvable_moj_import`.
   (every format, no extension, subfolder, depth, two packs, no pack, limit, traversal in a TAR, a fake
   `bsdtar` that makes a link). Not tested: real RAR files, Windows `tar.exe`.
 
+### 3.11 Bulk mode (F2)
+
+- CLI only: `bulk.rs` (+ `bulk/tests.rs`) and the `bulk_*` options parsed in `fork_options.rs`
+  (`BulkOptions`, removed from the table before `SquashOptions` is read; the table is kept, and every
+  pack gets its own `SquashOptions` from a clone with `pack_directory` and `output_file_path` set).
+  `bulk::run` gets the squash function as a parameter, so the tests use a fake one.
+- `discover` walks the tree without following links. A pack directory is not searched inside. Files
+  are opened as archives only if their extension is in `bulk_archive_extensions` (`jar` is not), then
+  `scan_archive` decides by contents. Names that look like earlier results (prefix and suffix) are skipped.
+- Archives are extracted once with `extract_packs`, all their packs are squashed, and the temporary
+  directory is deleted. Several packs in one archive: `PREFIX + STEM + _ + FOLDER + SUFFIX + .zip`.
+- Safety: `Guard` refuses a result that is an input, a directory, or already given to another pack.
+  `bulk_overwrite` writes `STEM.zip.squashing`, checks that `STEM.zip` is the original or does not
+  exist, moves the original to `NAME.ext.original` (refuses if it exists), then renames. If the last
+  rename fails, the original is put back. A directory is never replaced. A failed squash removes the
+  temporary file and keeps the original.
+- `bulk_scan_depth`: a pack or archive directly in the input directory is level 1.
+- Exit codes: 1 if any pack failed, 4 for a bad input directory or an archive error, 3 for bad options.
+- Tested: 17 unit tests of `bulk.rs`, 6 of the options, and an end to end script of 13 runs with the
+  built program (dry run, normal, second run, prefix and suffix, overwrite with and without backup,
+  a bad pack, option errors, file option tables). Not tested: Windows paths and long paths.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in
@@ -214,6 +236,7 @@ build, release) and `MCCHANGES-JAR-GUIDE.txt` (where the jars come from, short).
 | `packages/packsquash/src/copy_as_is_tests.rs` | Tests of `copy_as_is`. |
 | `packages/packsquash/src/pack_archive.rs` (+ `pack_archive/tests.rs`) | Archive detection, pack search and safe extraction. |
 | `packages/packsquash_cli/src/bin/packsquash/fork_options.rs` | Options that only the CLI reads (archive limits). |
+| `packages/packsquash_cli/src/bin/packsquash/bulk.rs` (+ `bulk/tests.rs`) | Bulk mode: search, names, safe replacement, report. |
 | `packages/packsquash_cli/src/bin/packsquash/error_hints.rs` | The `How to fix` lines printed after an error. |
 | `packages/packsquash/src/lib.rs` | Wiring in `PackSquasher::run` and the per-file task. |
 | `packages/packsquash/src/config/mod.rs` | New options and the `PackEdition` enum. |

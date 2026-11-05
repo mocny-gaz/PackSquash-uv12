@@ -26,6 +26,7 @@ use tokio::{runtime, select, sync::mpsc::channel, time::sleep};
 use toml::{Table, Value};
 use tz::UtcDateTime;
 
+mod bulk;
 mod error_hints;
 mod fork_options;
 mod terminal_style;
@@ -191,7 +192,7 @@ fn read_options_file_and_squash(
 	};
 
 	// Deserialize the options struct contained in the string
-	let (mut squash_options, fork_options) = match parse_options(&options_string) {
+	let (mut squash_options, fork_options, options_table) = match parse_options(&options_string) {
 		Ok(parsed_options) => parsed_options,
 		Err(deserialize_error) => {
 			error!(
@@ -201,6 +202,36 @@ fn read_options_file_and_squash(
 			return 3;
 		}
 	};
+
+	if let Some(bulk_options) = &fork_options.bulk {
+		if options_table.contains_key("pack_directory")
+			|| options_table.contains_key("output_file_path")
+		{
+			warn!("The bulk mode is on, so pack_directory and output_file_path are ignored");
+		}
+
+		info!("Options read. Bulk mode is on.");
+
+		let extract_limits = ExtractLimits {
+			max_bytes: fork_options.archive_max_extracted_bytes,
+			..ExtractLimits::default()
+		};
+
+		// A title that goes through phases for a single pack makes no sense for many packs
+		drop(title_controller);
+
+		return bulk::run(
+			bulk_options,
+			fork_options.archive_pack_search_depth,
+			extract_limits,
+			&options_table,
+			&mut |pack_options| {
+				squash(pack_options, None)
+					.map(|_| ())
+					.map_err(|err| describe_error(&err, false))
+			}
+		);
+	}
 
 	info!("Options read. Processing pack...");
 
@@ -220,28 +251,7 @@ fn read_options_file_and_squash(
 
 	squash(squash_options, title_controller).map_or_else(
 		|err| {
-			error!(
-				"Pack processing error: {}{}{}\n\
-				More help for this fork: <{}>\n\
-				Original PackSquash troubleshooting: <{}>\n\
-				For more details, set the PACKSQUASH_LOG environment variable to debug and run \
-				PackSquash again. In cmd: set PACKSQUASH_LOG=debug",
-				err,
-				// We print both informational and error pack file status updates.
-				// If the error was in one of those, hint the user at the status
-				// update that contains the most information about the error
-				if matches!(err, PackSquasherError::PackFileError) {
-					"\nAnother error message with more information was emitted before. \
-					You might need to scroll up to see it."
-				} else {
-					""
-				},
-				error_hints::hint(&err)
-					.map(|hint| format!("\nHow to fix: {hint}"))
-					.unwrap_or_default(),
-				FORK_TROUBLESHOOTING_URL,
-				UPSTREAM_TROUBLESHOOTING_URL
-			);
+			error!("{}", describe_error(&err, true));
 
 			128
 		},
@@ -275,25 +285,66 @@ fn read_options_file_and_squash(
 	)
 }
 
+/// Describes a pack processing error for the user, with a hint for the likely fix. The links to the
+/// documentation are left out when `with_links` is false, which is the case for every pack of a bulk
+/// run, because the bulk run prints them once at the end.
+fn describe_error(err: &PackSquasherError, with_links: bool) -> String {
+	format!(
+		"Pack processing error: {}{}{}{}",
+		err,
+		// We print both informational and error pack file status updates.
+		// If the error was in one of those, hint the user at the status
+		// update that contains the most information about the error
+		if matches!(err, PackSquasherError::PackFileError) {
+			"\nAnother error message with more information was emitted before. \
+			You might need to scroll up to see it."
+		} else {
+			""
+		},
+		error_hints::hint(err)
+			.map(|hint| format!("\nHow to fix: {hint}"))
+			.unwrap_or_default(),
+		if with_links {
+			format!(
+				"\nMore help for this fork: <{FORK_TROUBLESHOOTING_URL}>\n\
+				Original PackSquash troubleshooting: <{UPSTREAM_TROUBLESHOOTING_URL}>\n\
+				For more details, set the PACKSQUASH_LOG environment variable to debug and run \
+				PackSquash again. In cmd: set PACKSQUASH_LOG=debug"
+			)
+		} else {
+			String::new()
+		}
+	)
+}
+
 /// Parses the text of an options file. The options that only this program reads are split off
 /// before the rest is read as the options of the library. Without those options, the text is
 /// parsed directly, which gives error messages that point to the position of the error.
-fn parse_options(options_string: &str) -> Result<(SquashOptions, ForkOptions), String> {
+fn parse_options(options_string: &str) -> Result<(SquashOptions, ForkOptions, Table), String> {
 	let mut table = options_string
 		.parse::<Table>()
 		.map_err(|error| error.to_string())?;
 
 	if !has_fork_options(&table) {
 		return toml::from_str::<SquashOptions>(options_string)
-			.map(|squash_options| (squash_options, ForkOptions::default()))
+			.map(|squash_options| (squash_options, ForkOptions::default(), table))
 			.map_err(|error| error.to_string());
 	}
 
 	let fork_options = split_fork_options(&mut table)?;
 
-	Value::Table(table)
+	// The bulk mode sets the pack directory of every pack by itself, but the options need one to be read
+	let mut table_to_read = table.clone();
+
+	if fork_options.bulk.is_some() {
+		table_to_read
+			.entry("pack_directory")
+			.or_insert_with(|| Value::String(".".to_string()));
+	}
+
+	Value::Table(table_to_read)
 		.try_into::<SquashOptions>()
-		.map(|squash_options| (squash_options, fork_options))
+		.map(|squash_options| (squash_options, fork_options, table))
 		.map_err(|error| error.to_string())
 }
 
@@ -349,7 +400,8 @@ fn prepare_archive_input(
 	let several_packs_error = |roots: &[String]| {
 		format!(
 			"The archive {display} has {} packs: {}. PackSquash squashes one pack per run. \
-			Set pack_directory to an archive or a directory that has a single pack",
+			Set pack_directory to an archive or a directory that has a single pack, \
+			or set bulk_input_directory to squash all of them",
 			roots.len(),
 			describe_packs(roots.iter().map(String::as_str))
 		)

@@ -16,6 +16,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   subdirectory. The pack is extracted to a temporary directory that is deleted at the end.
   Links and unsafe names are never extracted. New command-line options:
   `archive_pack_search_depth` and `archive_max_extracted_mib`.
+- Bulk mode: `bulk_input_directory` squashes every pack (directory or archive) found in a
+  directory, with each result next to its input as `squashed_NAME.zip`. Options: `bulk_output_prefix`,
+  `bulk_output_suffix`, `bulk_overwrite` (replaces archives, atomically, with `bulk_backup` on by
+  default), `bulk_dry_run`, `bulk_report_file`, `bulk_archive_extensions` and `bulk_scan_depth`.
+  A failed pack does not stop the others.
 
 ### Changed
 

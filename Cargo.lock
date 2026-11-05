@@ -1896,6 +1896,8 @@ dependencies = [
  "log",
  "mimalloc",
  "packsquash",
+ "tar",
+ "tempfile",
  "tokio",
  "toml",
  "tz-rs",

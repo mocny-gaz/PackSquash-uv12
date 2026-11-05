@@ -34,6 +34,15 @@
   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
   - [`archive_pack_search_depth`](#archive_pack_search_depth)
   - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
+  - [`bulk_input_directory`](#bulk_input_directory)
+  - [`bulk_output_prefix`](#bulk_output_prefix)
+  - [`bulk_output_suffix`](#bulk_output_suffix)
+  - [`bulk_overwrite`](#bulk_overwrite)
+  - [`bulk_backup`](#bulk_backup)
+  - [`bulk_dry_run`](#bulk_dry_run)
+  - [`bulk_report_file`](#bulk_report_file)
+  - [`bulk_archive_extensions`](#bulk_archive_extensions)
+  - [`bulk_scan_depth`](#bulk_scan_depth)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
@@ -133,7 +142,7 @@ available options.
 **Default value**: none (**required**)
 
 The absolute or relative path to the directory where the pack that will be
-optimized resides.
+optimized resides. It is not used in the [bulk mode](#bulk_input_directory).
 
 The path can also be a file: an archive that holds the pack. PackSquash finds out
 what the archive is by looking at its first bytes, not at its name, so
@@ -801,6 +810,119 @@ Example:
 pack_directory = 'C:\path\to\pack.zip'
 archive_max_extracted_mib = 2048
 ```
+
+### `bulk_input_directory`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: not set, so the bulk mode is off
+
+When set, PackSquash squashes every pack that it finds in this directory, one after
+the other, instead of the single pack of [`pack_directory`](#pack_directory). A pack
+is a directory with a `pack.mcmeta` file and an `assets` or `data` directory (or a
+Bedrock Edition resource pack), or an archive that has such a pack. See
+`pack_directory` for the archive formats.
+
+PackSquash searches the subdirectories too, up to [`bulk_scan_depth`](#bulk_scan_depth)
+levels. It does not search inside a pack, and it does not follow links. Every result
+is a ZIP file next to its input, named `PREFIX` + the name of the pack + `SUFFIX` +
+`.zip`, where the name of an archive has no extension. An archive with several packs
+gives one result per pack, named with the directory of the pack in the archive:
+`PREFIX` + `archive_directory` + `SUFFIX` + `.zip`.
+
+In the bulk mode, `pack_directory` and `output_file_path` are ignored. All the other
+options, and the options of files, are used for every pack. If a pack fails, PackSquash
+goes on with the next one, prints what failed, and exits with the code 1 at the end.
+
+Inputs whose name starts with the prefix and ends with the suffix are skipped, because
+they are the results of an earlier run. This only applies if the prefix or the suffix
+is not empty. Only the command-line program has the bulk mode.
+
+Example:
+
+```toml
+bulk_input_directory = 'C:\path\to\packs'
+```
+
+### `bulk_output_prefix`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: `'squashed_'`
+
+The text that every result file name starts with in the bulk mode. It can be empty. It
+can not have characters that are not allowed in a file name, like `/` or `:`.
+
+### `bulk_output_suffix`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: `''`
+
+The text that every result file name ends with, before `.zip`, in the bulk mode. Like the
+prefix, it can be empty and it can not have `/` or `:`.
+
+### `bulk_overwrite`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+In the bulk mode, replaces the original archive with the squashed pack. `pack.7z` is
+replaced by `pack.zip`, and `pack.zip` by the new `pack.zip`. The prefix and the suffix
+are not used for these. PackSquash writes the result to a temporary file first, and only
+changes the original after the result is complete. It does not replace a file that is
+not the original, and it does not replace a directory ever: the result of a directory
+pack is always a new file next to it. An archive with several packs is not replaced.
+
+### `bulk_backup`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `true`
+
+With [`bulk_overwrite`](#bulk_overwrite), keeps the original archive with the extra
+extension `.original`, like `pack.7z.original`. If the file for the backup exists
+already, that pack is not replaced. When `false`, the original is deleted after the
+result is complete, and it is lost.
+
+### `bulk_dry_run`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+In the bulk mode, only tells what would happen: which packs it finds, and where the
+results would go. Nothing is extracted, squashed, written or changed.
+
+### `bulk_report_file`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: not set
+
+A text file where the bulk mode writes the same report that it prints: a line for each
+pack, each skipped file with the reason, and the summary. It also works in a dry run.
+
+### `bulk_archive_extensions`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string), the extensions separated by commas
+
+**Default value**: `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'`
+
+The file extensions that the bulk mode opens as archives, to look for packs. The case and
+the dots do not matter. `jar` is not in the list on purpose: the jar files of mods have a
+`pack.mcmeta` file and an `assets` directory too, so they look like packs. A file with one
+of these extensions is read by its contents, so a file that is not an archive is skipped.
+
+### `bulk_scan_depth`
+
+**Type**: [Integer](https://toml.io/en/v1.0.0#integer), from 1 to 256
+
+**Default value**: `32`
+
+How many directory levels below [`bulk_input_directory`](#bulk_input_directory) the bulk
+mode searches. A pack or an archive directly in the input directory is at level 1.
 
 ### `zip_spec_conformance_level`
 

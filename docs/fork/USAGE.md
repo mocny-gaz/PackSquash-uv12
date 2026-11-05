@@ -11,13 +11,14 @@ step, and the common problems. Every option is described in full in
 2. [How options work](#how-options-work)
 3. [What is on by default and what is not](#what-is-on-by-default-and-what-is-not)
 4. [A pack in an archive](#a-pack-in-an-archive)
-5. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
-6. [Language files](#language-files)
-7. [Bedrock Edition packs](#bedrock-edition-packs)
-8. [OptiFine custom skies](#optifine-custom-skies)
-9. [Copy files untouched](#copy-files-untouched)
-10. [Common problems](#common-problems)
-11. [Not built yet](#not-built-yet)
+5. [Bulk: every pack in a folder](#bulk-every-pack-in-a-folder)
+6. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
+7. [Language files](#language-files)
+8. [Bedrock Edition packs](#bedrock-edition-packs)
+9. [OptiFine custom skies](#optifine-custom-skies)
+10. [Copy files untouched](#copy-files-untouched)
+11. [Common problems](#common-problems)
+12. [Not built yet](#not-built-yet)
 
 ## Quick start
 
@@ -69,6 +70,15 @@ The options that this fork adds:
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
 | `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
 | `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
+| `bulk_input_directory` | not set, so **off** | Squashes every pack found in this folder. |
+| `bulk_output_prefix` | `'squashed_'` | Start of every result name in the bulk mode. |
+| `bulk_output_suffix` | `''` | End of every result name, before `.zip`. |
+| `bulk_overwrite` | `false` | Replaces the original archive with the result. |
+| `bulk_backup` | `true` | With `bulk_overwrite`, keeps the original as `NAME.original`. |
+| `bulk_dry_run` | `false` | Only lists what would happen. |
+| `bulk_report_file` | not set | Also writes the report to this file. |
+| `bulk_archive_extensions` | `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'` | Files with these extensions are opened as archives. `jar` is not in the list. |
+| `bulk_scan_depth` | `32` | How many folder levels are searched. |
 
 Things that are always on, with no option:
 
@@ -111,6 +121,46 @@ To look deeper, or to allow more data:
 archive_pack_search_depth = 6
 archive_max_extracted_mib = 32768
 ```
+
+## Bulk: every pack in a folder
+
+Set `bulk_input_directory` and PackSquash squashes every pack that it finds there:
+
+```toml
+bulk_input_directory = 'C:\packs'
+```
+
+- A pack is a folder with `pack.mcmeta` and `assets` or `data`, or an archive that has one
+  (see the section above for the formats). Subfolders are searched. A pack folder is not
+  searched inside.
+- Every result is a ZIP file next to its input: `squashed_NAME.zip` by default. For an archive,
+  NAME has no extension. `bulk_output_prefix` and `bulk_output_suffix` change the name.
+- An archive with several packs gives one result per pack: `squashed_ARCHIVE_FOLDER.zip`.
+- Names that already look like a result are skipped, so a second run does not squash the
+  results of the first one.
+- All the other options, and the tables of file options, are used for every pack.
+  `pack_directory` and `output_file_path` are ignored.
+- If one pack fails, PackSquash goes on with the next. At the end it prints a summary, and the
+  exit code is 1 if any pack failed.
+
+See first what would happen, and keep a report:
+
+```toml
+bulk_input_directory = 'C:\packs'
+bulk_dry_run = true
+bulk_report_file = 'C:\packs\report.txt'
+```
+
+To replace the archives with the squashed packs, and keep each original as `NAME.ext.original`:
+
+```toml
+bulk_input_directory = 'C:\packs'
+bulk_overwrite = true
+```
+
+`bulk_backup = false` deletes the originals instead. This can not be undone, so try the dry run
+first. PackSquash never replaces a folder, a file that is not the original pack, or an archive with
+several packs.
 
 ## mcchanges: leave out what the game already has
 
@@ -252,6 +302,11 @@ packsquash.exe packsquash.toml
 | `No pack was found in the archive` | The archive has no `pack.mcmeta` with `assets` or `data`, or the pack is deeper than 4 levels. Raise `archive_pack_search_depth`. |
 | `The archive ... has 2 packs` | One run squashes one pack. Extract the one you want, or make an archive with only that pack. |
 | `this archive needs a helper program` | RAR files need `bsdtar`, `7z` or `unrar`. Install 7-Zip and add its folder to the `PATH`. |
+| `The option bulk_... is set, but the bulk mode is off` | Set `bulk_input_directory` too. |
+| `the result ... would replace a pack that is an input` | In the bulk mode, an empty prefix and suffix give a result with the name of an input ZIP file. Set a prefix or a suffix, or use `bulk_overwrite`. |
+| `another pack already has the result ...` | Two packs in the same folder have the same name, like `X` and `X.zip`. Rename one. |
+| `already exists and it is not the pack` | `bulk_overwrite` does not replace a file that is not the original. Move that file. |
+| `the backup ... already exists` | A `NAME.ext.original` file is there from an earlier run. Move it, or set `bulk_backup = false`. |
 | `the archive is too big` | The pack is bigger than `archive_max_extracted_mib`. Raise it. |
 
 Report problems with the fork in
@@ -262,6 +317,5 @@ the original one.
 
 These are planned and are in no release. See [TASKS.md](TASKS.md):
 
-- Bulk squash of every pack in a directory.
 - A blank `mcchanges_version` that tries every version and uses the best match.
 - A simple dark GUI that writes the options file.
