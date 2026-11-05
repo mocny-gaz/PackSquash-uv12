@@ -237,7 +237,6 @@ impl ZipArchive {
 	}
 
 	/// Returns whether the archive has a file entry with the given name.
-	#[cfg(test)]
 	pub fn contains(&self, name: &str) -> bool {
 		self.entries.contains_key(name)
 	}

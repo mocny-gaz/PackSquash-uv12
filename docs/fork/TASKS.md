@@ -5,13 +5,12 @@ block under the task. Fixed things move to Done, in one short line.
 
 ## This very moment
 
-- [ ] r1 Apply patch 0017 (PackSquash accepts raw line breaks and tabs inside strings of `pack.mcmeta` and other JSON files, like the game does). Build, then run the pack in `C:\p\pla` again. The error was `control character found while parsing a string at line 5` (owner)
-- [ ] until f3 is made make me an artifact where i can build the toml with all the new features (also make it look like that win11 debloat oled and simple so doesnt look ai). STATE: published as an Artifact, link in the chat. Try it and tell me what to change (owner)
-- [ ] in readme (of fork) make an index or some url to docs where you explain how to use it whats default and not and other stuff like that. STATE: patch 0018 has the README index and `docs/fork/USAGE.md`. It also removes the old `tools/mcchanges-jar` from the repository (the script lives in `mc-changes` and in `packsquash-tools`). Apply it after 0017 (owner)
+- [ ] r1fix this appearing on official release (not prerelease): `McChanges pack error: mcchanges_version is set, but the mcchanges pack does not hold several game versions`. STATE: the jar from the `mc-changes` Release works here with `mcchanges_version = '1.8.9'` (87 versions). So `mcchanges_path` in your options file points to something else, most likely a folder or a game jar. Patch 0019 makes the error name the path and say what it is, and for a folder it lists the jars in it. Build it, run again, and tell me the new message if it still fails (owner)
+- [ ] r2 make it log a troubleshoot if error by default or log or anything helpful. STATE: patch 0019 makes every error print a `How to fix` line for its likely cause, a link to the fork docs (`USAGE.md#common-problems`) and how to get a debug log (`set PACKSQUASH_LOG=debug`). `mcchanges_path` errors name the path. The list of causes is in `docs/fork/USAGE.md` (owner)
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: library module written, compiled, 9 tests pass; CLI part, docs and end to end test missing (AI, next)
+- [ ] F1 Any archive format as input (`.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.zip`, `.rar` through a helper program, others), found by looking at the contents: `pack.mcmeta` with `assets/`, or a Bedrock `manifest.json`, also inside a subfolder. The output stays a zip. STATE: done and tested here (unit tests, 34 end to end runs). Sent as patch 0020 right after 0019 (AI)
 - [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like, also when it is an archive of any kind. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report. STATE: designed, not written (AI)
 - [ ] f4 make auto detect (run against every version of mcchanges) when mcchanges_version = is left blank. STATE: designed, not written (AI)
 - [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (AI)
@@ -29,6 +28,7 @@ block under the task. Fixed things move to Done, in one short line.
 
 ## Done
 
+- [x] r1 patch 0017 (raw line breaks and tabs inside JSON strings), the TOML builder Artifact, and the README index with `docs/fork/USAGE.md` (patch 0018)
 - [x] 0001 to 0008: skip files same as vanilla (mcchanges), versions, Bedrock, language keys, sky images, `copy_as_is`, shader `#include`, audio hashes
 - [x] 0010: hash tokens (`png:`, `json:`, `langkeys:`), in master as "mc-changes ready"
 - [x] 0011 to 0016 applied: release prep, task list, dependency fixes, compact language keys (`langfull:`, `langdelta:`), no `generic_const_exprs`

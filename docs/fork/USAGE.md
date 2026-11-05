@@ -196,9 +196,20 @@ Do not combine it with other options of the same file type for the same files.
 
 ## Common problems
 
+When an error stops PackSquash, it prints a `How to fix` line for the likely causes, a link
+to this page, and how to get more details. For more details, set the log level and run
+again. In cmd:
+
+```
+set PACKSQUASH_LOG=debug
+packsquash.exe packsquash.toml
+```
+
 | What you see | Cause and fix |
 | :--- | :--- |
-| `mcchanges_version` error | The path is a folder or a single-version jar. Remove `mcchanges_version`, or point to a jar from `mc-changes`. |
+| `mcchanges_version is set, but the folder ... has no mcchanges.json file` | `mcchanges_path` points to a folder. Set it to the jar file itself, like `C:\amc\mcchanges-java.jar`. The message lists the jar files that the folder has. |
+| `mcchanges_version is set, but the file ... has no mcchanges.json file inside` | The file is a game jar, not a jar from `mc-changes`. Remove `mcchanges_version`, or use `mcchanges-java.jar`. |
+| `mcchanges_path ... can't be read` | The path does not exist, or PackSquash can not read it. Check the spelling. In cmd, `dir C:\amc\mcchanges-java.jar` must list the file. |
 | The version is not found | The jar does not have that version. Read the `versions` list in `mcchanges.json`, or download the newest jar. |
 | `control character found while parsing a string` | The pack has a raw line break or tab in a JSON string. Use a build that has this fix (after `0.5.0-fork.1`). |
 | Files that you expected to be left out stay in | The version is wrong, or the file really differs from the game file. See which files are skipped: run `set PACKSQUASH_LOG=trace` in cmd, then run the program again. |

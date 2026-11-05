@@ -428,8 +428,43 @@ async fn unusable_mcchanges_are_rejected() {
 	));
 	assert!(matches!(
 		McChanges::open(&OsFilesystem, &dir.path().join("missing"), None).await,
-		Err(McChangesError::IoError(_))
+		Err(McChangesError::Unreadable { .. })
 	));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn folder_without_version_index_lists_its_jars_in_the_error() {
+	let dir = temp_dir();
+	write_file(
+		dir.path(),
+		"mcchanges-java.jar",
+		&versioned_jar(VERSION_INDEX)
+	);
+	write_file(dir.path(), "notes.txt", b"not a jar");
+	write_file(
+		dir.path(),
+		"inner/deep.jar",
+		b"not listed, it is not directly in the folder"
+	);
+
+	let error = McChanges::open(&OsFilesystem, dir.path(), Some("1.0"))
+		.await
+		.err()
+		.expect("a folder with no version index can't have a game version selected")
+		.to_string();
+
+	assert!(
+		error.starts_with("mcchanges_version is set, but the folder "),
+		"{error}"
+	);
+	assert!(
+		error.contains("This folder has these jar files: mcchanges-java.jar. Set mcchanges_path"),
+		"{error}"
+	);
+	assert!(
+		!error.contains("deep.jar") && !error.contains("notes.txt"),
+		"{error}"
+	);
 }
 
 #[test]
@@ -839,7 +874,7 @@ async fn versioned_mcchanges_reject_wrong_version_selections() {
 	));
 	assert!(matches!(
 		open("plain.jar", Some("1.0")).await,
-		Some(McChangesError::NotVersioned)
+		Some(McChangesError::NotVersioned(message)) if message.contains("is not a jar from mc-changes")
 	));
 	assert!(matches!(
 		open("bad_format.jar", Some("1.0")).await,
@@ -1708,7 +1743,7 @@ async fn compact_reduction(
 		(
 			format!("1.2/{COMPACT_PATH}.langkeys"),
 			from_hex(COMPACT_DELTA_2)
-		),
+		)
 	];
 	if !without_base {
 		hashed["1.0"] = json!({ COMPACT_PATH: format!("langfull:{COMPACT_FULL_DIGEST}") });

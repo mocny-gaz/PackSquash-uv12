@@ -10,6 +10,7 @@ use std::{
 };
 
 use env_logger::{Builder, Target, WriteStyle};
+use error_hints::{FORK_TROUBLESHOOTING_URL, UPSTREAM_TROUBLESHOOTING_URL};
 use getopts::{Options, ParsingStyle};
 use log::{Level, LevelFilter, debug, error, info, trace, warn};
 use packsquash::{
@@ -21,6 +22,7 @@ use terminal_title_controller::TerminalTitleController;
 use tokio::{runtime, select, sync::mpsc::channel, time::sleep};
 use tz::UtcDateTime;
 
+mod error_hints;
 mod terminal_style;
 mod terminal_title_controller;
 mod terminal_title_setter;
@@ -203,9 +205,11 @@ fn read_options_file_and_squash(
 	squash(squash_options, title_controller).map_or_else(
 		|err| {
 			error!(
-				"Pack processing error: {}{}\n\
-				These troubleshooting instructions might be useful: \
-				<https://packsquash.aylas.org/links/Troubleshooting-pack-processing-errors>",
+				"Pack processing error: {}{}{}\n\
+				More help for this fork: <{}>\n\
+				Original PackSquash troubleshooting: <{}>\n\
+				For more details, set the PACKSQUASH_LOG environment variable to debug and run \
+				PackSquash again. In cmd: set PACKSQUASH_LOG=debug",
 				err,
 				// We print both informational and error pack file status updates.
 				// If the error was in one of those, hint the user at the status
@@ -215,7 +219,12 @@ fn read_options_file_and_squash(
 					You might need to scroll up to see it."
 				} else {
 					""
-				}
+				},
+				error_hints::hint(&err)
+					.map(|hint| format!("\nHow to fix: {hint}"))
+					.unwrap_or_default(),
+				FORK_TROUBLESHOOTING_URL,
+				UPSTREAM_TROUBLESHOOTING_URL
 			);
 
 			128

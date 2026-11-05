@@ -37,7 +37,9 @@ use sha2::{Digest, Sha256};
 use spng::{ContextFlags, DecodeFlags, Format};
 use thiserror::Error;
 
-use crate::vfs::{VfsPackFileIterEntry, VirtualFileSystem, read_file, read_to_end};
+use crate::vfs::{
+	IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSystem, read_file, read_to_end
+};
 
 pub(crate) use zip_reader::ZipArchive;
 use zip_reader::ZipReadError;
@@ -98,6 +100,16 @@ pub enum McChangesError {
 	/// Thrown when an I/O error occurs while reading the mcchanges pack.
 	#[error("I/O error: {0}")]
 	IoError(#[from] io::Error),
+	/// Thrown when the file or directory that `mcchanges_path` points to can't be read.
+	#[error(
+		"mcchanges_path {path} can't be read: {source}. Check that the path is correct and that it exists"
+	)]
+	Unreadable {
+		/// The path of the mcchanges pack.
+		path: String,
+		/// The error that happened.
+		source: io::Error
+	},
 	/// Thrown when the mcchanges pack is a file, but not a valid ZIP archive.
 	#[error("the mcchanges pack is neither a directory nor a valid ZIP file: {0}")]
 	InvalidArchive(#[from] ZipReadError),
@@ -117,9 +129,10 @@ pub enum McChangesError {
 		/// The comma-separated versions that the mcchanges pack holds.
 		available: String
 	},
-	/// Thrown when a game version was selected, but the mcchanges pack is not versioned.
-	#[error("mcchanges_version is set, but the mcchanges pack does not hold several game versions")]
-	NotVersioned
+	/// Thrown when a game version was selected, but the mcchanges pack is not versioned. The
+	/// message tells what the mcchanges pack is, and what to do about it.
+	#[error("mcchanges_version is set, but {0}")]
+	NotVersioned(String)
 }
 
 enum McChangesSource {
@@ -190,11 +203,18 @@ impl McChanges {
 		path: &Path,
 		version: Option<&str>
 	) -> Result<Self, McChangesError> {
-		let source = if vfs.file_type(path)?.is_dir() {
+		let unreadable = |source: io::Error| McChangesError::Unreadable {
+			path: path.display().to_string(),
+			source
+		};
+
+		let source = if vfs.file_type(path).map_err(unreadable)?.is_dir() {
 			McChangesSource::Directory(path.to_path_buf())
 		} else {
-			let file = vfs.open(path)?;
-			let archive_data = read_to_end(file.file_read, file.file_size_hint).await?;
+			let file = vfs.open(path).map_err(unreadable)?;
+			let archive_data = read_to_end(file.file_read, file.file_size_hint)
+				.await
+				.map_err(unreadable)?;
 
 			McChangesSource::Archive(ZipArchive::parse(archive_data)?)
 		};
@@ -207,10 +227,70 @@ impl McChanges {
 		mcchanges.layers = match (mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await, version) {
 			(Some(index), version) => Some(Self::select_version(&index, version)?),
 			(None, None) => None,
-			(None, Some(_)) => return Err(McChangesError::NotVersioned)
+			(None, Some(_)) => return Err(mcchanges.not_versioned_error(vfs, path))
 		};
 
 		Ok(mcchanges)
+	}
+
+	/// Builds the error for a mcchanges pack that has no version index, but has a game version
+	/// selected. The error says what the mcchanges pack looks like and how to fix the options,
+	/// because this is a likely mistake when the wrong path is set.
+	fn not_versioned_error<V: VirtualFileSystem>(&self, vfs: &V, path: &Path) -> McChangesError {
+		let path = path.display();
+
+		McChangesError::NotVersioned(match &self.source {
+			McChangesSource::Directory(directory) => {
+				let jar_names = Self::jar_names_in(vfs, directory);
+
+				format!(
+					"the folder {path} has no {VERSION_INDEX_FILE} file, so it is not a jar from \
+					mc-changes. Remove mcchanges_version, or set mcchanges_path to a jar from \
+					mc-changes, like mcchanges-java.jar{}",
+					if jar_names.is_empty() {
+						String::new()
+					} else {
+						format!(
+							". This folder has these jar files: {}. Set mcchanges_path to the right one",
+							jar_names.join(", ")
+						)
+					}
+				)
+			}
+			McChangesSource::Archive(archive) if archive.contains(VERSION_INDEX_FILE) => format!(
+				"the file {path} has a {VERSION_INDEX_FILE} file inside, but PackSquash can't read \
+				it. The jar may be damaged. Download it again"
+			),
+			McChangesSource::Archive(_) => format!(
+				"the file {path} has no {VERSION_INDEX_FILE} file inside, so it is not a jar from \
+				mc-changes. It may be a game jar. Remove mcchanges_version to use it as a game jar, \
+				or set mcchanges_path to mcchanges-java.jar or mcchanges-bedrock.jar from \
+				https://github.com/mocny-gaz/mc-changes/releases"
+			)
+		})
+	}
+
+	/// Lists the names of some of the jar files that are directly in a directory.
+	fn jar_names_in<V: VirtualFileSystem>(vfs: &V, directory: &Path) -> Vec<String> {
+		let mut names = vfs
+			.file_iterator(directory, IteratorTraversalOptions::default())
+			// Do not walk a huge tree to make an error message
+			.take(5000)
+			.filter_map(Result::ok)
+			.filter_map(|entry| {
+				let relative_path = entry.file_path.strip_prefix(directory).ok()?;
+
+				(relative_path.components().count() == 1
+					&& relative_path
+						.extension()
+						.is_some_and(|extension| extension.eq_ignore_ascii_case("jar")))
+				.then(|| relative_path.to_string_lossy().into_owned())
+			})
+			.collect::<Vec<_>>();
+
+		names.sort();
+		names.truncate(10);
+		names
 	}
 
 	/// Parses the version index and returns the layers of the selected version.

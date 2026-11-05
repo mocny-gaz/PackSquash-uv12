@@ -13,6 +13,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Fork documentation: a usage guide (`docs/fork/USAGE.md`) and an index in the README. The
   builder script for the mcchanges jars is no longer in this repository. It is in the
   [mc-changes](https://github.com/mocny-gaz/mc-changes) repository, together with the jars.
+- The error for a `mcchanges_path` that does not match `mcchanges_version` now says what the path
+  is (a folder, a game jar, or a damaged jar) and how to fix the options. For a folder, it lists
+  the jar files in it. An unreadable `mcchanges_path` error names the path.
+- A pack processing error now prints a `How to fix` line for the likely causes, a link to the fork
+  documentation, and how to get a more detailed log.
 
 ### Fixed
 
