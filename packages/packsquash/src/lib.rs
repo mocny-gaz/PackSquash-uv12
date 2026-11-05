@@ -385,7 +385,8 @@ impl PackSquasher {
 			for notice in sky_image_optimizer.notices() {
 				runtime
 					.block_on(
-						pack_file_status_sender.send(PackSquasherStatus::Notice(Cow::Owned(notice.clone())))
+						pack_file_status_sender
+							.send(PackSquasherStatus::Notice(Cow::Owned(notice.clone())))
 					)
 					.ok();
 			}

@@ -216,11 +216,12 @@ impl VersionDetection {
 					.take(5)
 					.cloned()
 					.collect::<Vec<_>>()
-					.join(", ") + if self.tied_versions.len() > 5 {
-					", ..."
-				} else {
-					""
-				}
+					.join(", ")
+					+ if self.tied_versions.len() > 5 {
+						", ..."
+					} else {
+						""
+					}
 			));
 		}
 
