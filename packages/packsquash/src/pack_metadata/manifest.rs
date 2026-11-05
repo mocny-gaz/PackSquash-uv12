@@ -903,9 +903,11 @@ impl PackMetadata {
 				let mut stripped = Vec::with_capacity(manifest.len());
 				StripComments::new(manifest).read_to_end(&mut stripped)?;
 
-				Ok(pack_type.deserialize_meta(&mut serde_json::Deserializer::from_slice(
-					&escape_control_characters_in_strings(&stripped)
-				))?)
+				Ok(
+					pack_type.deserialize_meta(&mut serde_json::Deserializer::from_slice(
+						&escape_control_characters_in_strings(&stripped)
+					))?
+				)
 			}
 			result => Ok(result?)
 		}

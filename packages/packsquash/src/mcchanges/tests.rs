@@ -1743,7 +1743,7 @@ async fn compact_reduction(
 		(
 			format!("1.2/{COMPACT_PATH}.langkeys"),
 			from_hex(COMPACT_DELTA_2)
-		)
+		),
 	];
 	if !without_base {
 		hashed["1.0"] = json!({ COMPACT_PATH: format!("langfull:{COMPACT_FULL_DIGEST}") });

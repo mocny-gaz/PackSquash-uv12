@@ -23,7 +23,7 @@ fn java_pack(prefix: &str) -> Vec<(String, Vec<u8>)> {
 		(
 			format!("{prefix}assets/minecraft/textures/a.txt"),
 			b"hello".to_vec()
-		)
+		),
 	]
 }
 
@@ -207,18 +207,18 @@ fn packs_are_found_in_every_layout() {
 	two_packs.extend(java_pack("deep/er/two/"));
 	let mut bedrock = vec![
 		("manifest.json".to_string(), BEDROCK_MANIFEST.to_vec()),
-		("textures/blocks/a.png".to_string(), b"x".to_vec())
+		("textures/blocks/a.png".to_string(), b"x".to_vec()),
 	];
 	bedrock.push(("pack_icon.png".into(), b"x".to_vec()));
 	let not_a_pack = vec![
 		("pack.mcmeta".to_string(), MCMETA.to_vec()), // no assets or data next to it
-		("lib/mod.class".to_string(), b"x".to_vec())
+		("lib/mod.class".to_string(), b"x".to_vec()),
 	];
 	let behavior_pack = vec![("manifest.json".to_string(), BEHAVIOR_MANIFEST.to_vec())];
 	let too_deep = java_pack("a/b/c/d/e/f/");
 	let data_pack = vec![
 		("pack.mcmeta".to_string(), MCMETA.to_vec()),
-		("data/minecraft/recipes/x.json".to_string(), b"{}".to_vec())
+		("data/minecraft/recipes/x.json".to_string(), b"{}".to_vec()),
 	];
 	let mut inside_a_pack = java_pack("");
 	inside_a_pack.extend(java_pack("nested/"));
@@ -235,7 +235,7 @@ fn packs_are_found_in_every_layout() {
 		("too_deep", too_deep, vec![]),
 		("data_pack", data_pack, vec![""]),
 		("inside_a_pack", inside_a_pack, vec![""]),
-		("with_junk", with_junk, vec!["real"])
+		("with_junk", with_junk, vec!["real"]),
 	];
 
 	for (name, pack, expected) in cases {

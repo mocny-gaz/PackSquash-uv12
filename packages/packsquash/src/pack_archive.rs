@@ -470,7 +470,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-f".as_ref(),
 				archive,
 				"-C".as_ref(),
-				destination
+				destination,
 			]
 		),
 		(
@@ -480,7 +480,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-f".as_ref(),
 				archive,
 				"-C".as_ref(),
-				destination
+				destination,
 			]
 		),
 		(
@@ -489,7 +489,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive
+				archive,
 			]
 		),
 		(
@@ -498,7 +498,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive
+				archive,
 			]
 		),
 		(
@@ -507,7 +507,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive
+				archive,
 			]
 		),
 		(
@@ -517,7 +517,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-y".as_ref(),
 				"-idq".as_ref(),
 				archive,
-				unrar_destination.as_os_str()
+				unrar_destination.as_os_str(),
 			]
 		)
 	];
