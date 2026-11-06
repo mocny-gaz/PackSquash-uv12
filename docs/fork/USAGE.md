@@ -221,11 +221,12 @@ choice. The choice takes about as long as squashing without it.
 
 | `mcchanges_path` points to | `mcchanges_version` |
 | :--- | :--- |
+| A folder that has `mcchanges-java.jar` (or `mcchanges-bedrock.jar` for Bedrock) with exactly that name, and no `mcchanges.json` of its own | Like the jar inside it. PackSquash says that it uses the jar |
 | A jar from `mc-changes`, or any ZIP or folder with a `mcchanges.json` file at its root | Set it, or leave it out for the automatic choice |
 | The client `.jar` of one game version, or a folder with its files | **Do not set it.** PackSquash fails if you do |
 
-A folder like `C:\amc\` is not a jar from `mc-changes`. Point to the jar file
-itself.
+A folder like `C:\amc\` works if it has `mcchanges-java.jar` in it, with exactly that
+name. If the jar has another name, point to the jar file itself.
 
 ### How PackSquash compares
 
@@ -329,7 +330,7 @@ packsquash.exe packsquash.toml
 | What you see | Cause and fix |
 | :--- | :--- |
 | `mcchanges_version is set, but ...` and you set `auto` or a version for a plain game jar | `auto` and versions only work for a jar from `mc-changes`. Remove `mcchanges_version`. |
-| `mcchanges_version is set, but the folder ... has no mcchanges.json file` | `mcchanges_path` points to a folder. Set it to the jar file itself, like `C:\amc\mcchanges-java.jar`. The message lists the jar files that the folder has. |
+| `mcchanges_version is set, but the folder ... has no mcchanges.json file` | The folder has no `mcchanges-java.jar` (or `mcchanges-bedrock.jar`) with exactly that name. Rename the jar, or set `mcchanges_path` to the jar file itself, like `C:\amc\mcchanges-java.jar`. The message lists the jar files that the folder has. |
 | `mcchanges_version is set, but the file ... has no mcchanges.json file inside` | The file is a game jar, not a jar from `mc-changes`. Remove `mcchanges_version`, or use `mcchanges-java.jar`. |
 | `mcchanges_path ... can't be read` | The path does not exist, or PackSquash can not read it. Check the spelling. In cmd, `dir C:\amc\mcchanges-java.jar` must list the file. |
 | The version is not found | The jar does not have that version. Read the `versions` list in `mcchanges.json`, or download the newest jar. |

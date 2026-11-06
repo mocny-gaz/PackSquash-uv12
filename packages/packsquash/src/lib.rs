@@ -30,7 +30,7 @@ use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
 use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
-use mcchanges::{LanguageFileReduction, McChanges, McChangesError};
+use mcchanges::{LanguageFileReduction, McChanges, McChangesError, VersionDetection};
 #[cfg(feature = "optifine")]
 use optifine_sky::SkyImageOptimizer;
 use pack_metadata::{PackMetadata, PackMetadataError};
@@ -302,8 +302,18 @@ impl PackSquasher {
 			.global_options
 			.mcchanges_path
 			.as_deref()
-			.map(|mcchanges_path| {
+			.map(|configured_path| {
 				let global_options = &options_holder.options.global_options;
+
+				// A folder that is not a mcchanges pack, but has the mcchanges jar with its exact name, is
+				// accepted. The jar in it is used
+				let (mcchanges_path, folder_notice) = match runtime.block_on(
+					mcchanges::find_mcchanges_jar_in_directory(&*vfs, configured_path, is_bedrock)
+				) {
+					Some((jar_path, message)) => (jar_path, Some(message)),
+					None => (configured_path.to_path_buf(), None)
+				};
+				let mcchanges_path = mcchanges_path.as_path();
 
 				// A game version that is not set, empty or "auto" is chosen automatically, if the mcchanges
 				// pack has several versions
@@ -317,31 +327,36 @@ impl PackSquasher {
 				{
 					Some(version) => runtime
 						.block_on(McChanges::open(&*vfs, mcchanges_path, Some(version)))
-						.map(|mcchanges| (mcchanges, None)),
-					None => runtime.block_on(McChanges::open_auto(
-						&*vfs,
-						mcchanges_path,
-						&options_holder.options.pack_directory,
-						IteratorTraversalOptions {
-							ignore_system_and_hidden_files: global_options
-								.ignore_system_and_hidden_files
-						},
-						configured_version.is_some()
-					))
+						.map(|mcchanges| (mcchanges, None, folder_notice)),
+					None => runtime
+						.block_on(McChanges::open_auto(
+							&*vfs,
+							mcchanges_path,
+							&options_holder.options.pack_directory,
+							IteratorTraversalOptions {
+								ignore_system_and_hidden_files: global_options
+									.ignore_system_and_hidden_files
+							},
+							configured_version.is_some()
+						))
+						.map(|(mcchanges, detection)| (mcchanges, detection, folder_notice))
 				}
 			})
 			.transpose()?;
 
-		let mcchanges = mcchanges.map(|(mcchanges, detection)| {
-			if let (Some(detection), Some(pack_file_status_sender)) =
-				(&detection, &pack_file_status_sender)
-			{
-				runtime
-					.block_on(
-						pack_file_status_sender
-							.send(PackSquasherStatus::Notice(Cow::Owned(detection.describe())))
-					)
-					.ok();
+		let mcchanges = mcchanges.map(|(mcchanges, detection, folder_notice)| {
+			if let Some(pack_file_status_sender) = &pack_file_status_sender {
+				for message in folder_notice
+					.into_iter()
+					.chain(detection.as_ref().map(VersionDetection::describe))
+				{
+					runtime
+						.block_on(
+							pack_file_status_sender
+								.send(PackSquasherStatus::Notice(Cow::Owned(message)))
+						)
+						.ok();
+				}
 			}
 
 			Arc::new(mcchanges)

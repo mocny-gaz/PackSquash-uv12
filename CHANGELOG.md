@@ -25,6 +25,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
   texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
   missing number. Not for packs that are still being made.
+- `mcchanges_path` can be a folder that has the mcchanges jar from the mc-changes downloads, with the exact
+  name `mcchanges-java.jar` (Java Edition) or `mcchanges-bedrock.jar` (Bedrock Edition) and a
+  `mcchanges.json` file inside. PackSquash uses that jar and says so.
 - `mcchanges_version` can be left out (or empty, or `auto`) for a mcchanges jar that holds many game
   versions: PackSquash compares the pack with every version, uses the one with the most identical
   files (the newest if several tie), and prints which version it chose.

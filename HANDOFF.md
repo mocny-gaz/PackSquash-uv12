@@ -260,6 +260,14 @@ The field is still called `found_unresolvable_moj_import`.
   "sky models and others"; the same approach applies, one resolver per file type.
 - Tested: 9 new unit tests and a squash test; an end to end run with the CLI.
 
+### 3.14 A folder as mcchanges_path (r4)
+
+- `find_mcchanges_jar_in_directory(vfs, path, is_bedrock)` in `mcchanges.rs`, called by `lib.rs` before `open` and `open_auto`.
+  It only acts if `path` is a directory with no `mcchanges.json` at its root and it has a file with the exact name
+  `mcchanges-java.jar` (Java pack) or `mcchanges-bedrock.jar` (Bedrock pack) that is a ZIP file with a `mcchanges.json`
+  inside. It returns that jar and a notice. No other name is looked for (the owner asked for no complexity).
+- Tested: 2 unit tests, and a run with the CLI and the real jar in a folder.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

@@ -2207,3 +2207,103 @@ fn a_blank_game_version_is_chosen_when_squashing() {
 		"{notices:?}"
 	);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_folder_with_the_mcchanges_jar_is_resolved_to_the_jar() {
+	let dir = temp_dir();
+	write_file(
+		dir.path(),
+		"mcchanges-java.jar",
+		&versioned_jar(VERSION_INDEX)
+	);
+	write_file(
+		dir.path(),
+		"mcchanges-bedrock.jar",
+		&versioned_jar(VERSION_INDEX)
+	);
+
+	let (path, message) = find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+		.await
+		.expect("the Java jar is in the folder");
+
+	assert_eq!(path, dir.path().join("mcchanges-java.jar"));
+	assert!(
+		message.contains("uses mcchanges-java.jar from it"),
+		"{message}"
+	);
+
+	let (path, message) = find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), true)
+		.await
+		.expect("the Bedrock jar is in the folder");
+
+	assert_eq!(path, dir.path().join("mcchanges-bedrock.jar"));
+	assert!(message.contains("mcchanges-bedrock.jar"), "{message}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn only_the_exact_name_with_a_version_index_is_accepted_in_a_folder() {
+	let jar = versioned_jar(VERSION_INDEX);
+
+	// The wrong edition: only the Bedrock jar is there for a Java pack
+	let dir = temp_dir();
+	write_file(dir.path(), "mcchanges-bedrock.jar", &jar);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+			.await
+			.is_none()
+	);
+
+	// Another name
+	let dir = temp_dir();
+	write_file(dir.path(), "mcchanges-java-old.jar", &jar);
+	write_file(dir.path(), "MCCHANGES-JAVA.JAR.bak", &jar);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+			.await
+			.is_none()
+	);
+
+	// The exact name, but no version index inside, or not a ZIP file at all
+	let dir = temp_dir();
+	write_file(
+		dir.path(),
+		"mcchanges-java.jar",
+		&zip(&[("a.txt", b"a", true)], b"")
+	);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+			.await
+			.is_none()
+	);
+	write_file(dir.path().join("sub").as_path(), "x", b"");
+	fs::write(dir.path().join("mcchanges-java.jar"), b"not a zip").unwrap();
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+			.await
+			.is_none()
+	);
+
+	// A folder that is a mcchanges pack itself is not searched
+	let dir = temp_dir();
+	write_file(dir.path(), "mcchanges.json", VERSION_INDEX.as_bytes());
+	write_file(dir.path(), "mcchanges-java.jar", &jar);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, dir.path(), false)
+			.await
+			.is_none()
+	);
+
+	// A file, and a path that does not exist
+	let dir = temp_dir();
+	write_file(dir.path(), "mcchanges-java.jar", &jar);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, &dir.path().join("mcchanges-java.jar"), false)
+			.await
+			.is_none()
+	);
+	assert!(
+		find_mcchanges_jar_in_directory(&OsFilesystem, &dir.path().join("nope"), false)
+			.await
+			.is_none()
+	);
+}

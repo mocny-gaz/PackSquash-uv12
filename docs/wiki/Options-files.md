@@ -574,8 +574,15 @@ smaller and behaves the same.
 The path can point to a directory with the extracted contents of the mcchanges,
 or to a ZIP file, such as the `.jar` file of a game version client. A mcchanges
 can also hold many game versions, as described in
-[`mcchanges_version`](#mcchanges_version). Pack
-files are compared like this:
+[`mcchanges_version`](#mcchanges_version).
+
+The path can also be a folder that has the mcchanges jar from the downloads of the
+[mc-changes](https://github.com/mocny-gaz/mc-changes) repository. PackSquash looks
+for a file named exactly `mcchanges-java.jar` (for a Java Edition pack) or
+`mcchanges-bedrock.jar` (for a Bedrock Edition pack) in the folder, and uses it if
+it has a `mcchanges.json` file inside. It says so when it does. A folder that has a
+`mcchanges.json` file itself is a mcchanges pack, and is used as it is, and a file
+with another name is not looked for. Pack files are compared like this:
 
 - Textures are compared by their size and pixels, so it does not matter how they
   were encoded. The color of fully transparent pixels is ignored, as it cannot

@@ -174,6 +174,53 @@ enum McChangesEntry {
 	LanguageKeys(LanguageKeySet)
 }
 
+/// The exact name of the mcchanges jar for Java Edition in the downloads of the mc-changes repository.
+const JAVA_JAR_NAME: &str = "mcchanges-java.jar";
+/// The exact name of the mcchanges jar for Bedrock Edition in the downloads of the mc-changes repository.
+const BEDROCK_JAR_NAME: &str = "mcchanges-bedrock.jar";
+
+/// Finds the mcchanges jar in a folder. If `path` is a directory that is not a mcchanges pack itself (it
+/// has no `mcchanges.json` file at its root), and it has a file with the exact name of the mcchanges jar of
+/// the edition of the pack that holds a `mcchanges.json` file, the path of that file and a message that tells
+/// about it are returned. Otherwise, there is nothing to find, and the path must be used as it is.
+pub(crate) async fn find_mcchanges_jar_in_directory<V: VirtualFileSystem>(
+	vfs: &V,
+	path: &Path,
+	is_bedrock: bool
+) -> Option<(PathBuf, String)> {
+	if !vfs.file_type(path).ok()?.is_dir() || vfs.file_type(&path.join(VERSION_INDEX_FILE)).is_ok() {
+		return None;
+	}
+
+	let jar_name = if is_bedrock {
+		BEDROCK_JAR_NAME
+	} else {
+		JAVA_JAR_NAME
+	};
+	let jar_path = path.join(jar_name);
+
+	if !vfs.file_type(&jar_path).ok()?.is_file() {
+		return None;
+	}
+
+	let file = vfs.open(&jar_path).ok()?;
+	let archive = ZipArchive::parse(
+		read_to_end(file.file_read, file.file_size_hint)
+			.await
+			.ok()?
+	)
+	.ok()?;
+
+	archive.contains(VERSION_INDEX_FILE).then(|| {
+		let message = format!(
+			"mcchanges_path is the folder {}, which is not a mcchanges pack, so PackSquash uses {jar_name} from it",
+			path.display()
+		);
+
+		(jar_path, message)
+	})
+}
+
 /// The result of choosing the game version of a versioned mcchanges pack automatically.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct VersionDetection {
@@ -376,7 +423,7 @@ impl McChanges {
 				format!(
 					"the folder {path} has no {VERSION_INDEX_FILE} file, so it is not a jar from \
 					mc-changes. Remove mcchanges_version, or set mcchanges_path to a jar from \
-					mc-changes, like mcchanges-java.jar{}",
+					mc-changes, like mcchanges-java.jar, or to a folder that has it{}",
 					if jar_names.is_empty() {
 						String::new()
 					} else {

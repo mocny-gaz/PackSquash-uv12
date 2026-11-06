@@ -16,9 +16,10 @@ pub fn hint(error: &PackSquasherError) -> Option<&'static str> {
 	match error {
 		PackSquasherError::McChangesError(_) => Some(
 			"Check mcchanges_path and mcchanges_version in your options file. For a jar from \
-			mc-changes, like mcchanges-java.jar, set both: mcchanges_path is the path of the jar \
-			file itself, not of its folder, and mcchanges_version is a game version that the jar \
-			has. For a game jar or a folder of game files, set only mcchanges_path."
+			mc-changes, like mcchanges-java.jar, set mcchanges_path to the jar file, or to a folder \
+			that has the jar with exactly that name, and set mcchanges_version to a game version \
+			that the jar has, or leave it out to let PackSquash choose. For a game jar or a folder \
+			of game files, set only mcchanges_path."
 		),
 		PackSquasherError::BedrockManifestError(_) => Some(
 			"A Bedrock Edition pack needs a valid manifest.json at its root. If this is a Java \
