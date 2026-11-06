@@ -19,7 +19,7 @@ build, test and release, and what is still open.
 - [Usage guide](docs/fork/USAGE.md): quick start, what is on by default, the
   mcchanges feature step by step, common problems.
 - [What this fork adds](#what-this-fork-adds)
-- [Options reference](docs/wiki/Options-files.md): every option, with its default
+- [Options helper](docs/wiki/Options-files.md): every option, with its default
   and allowed values.
 - [mcchanges jars](https://github.com/mocny-gaz/mc-changes): the downloads and the
   file format.
