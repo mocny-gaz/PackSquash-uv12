@@ -23,6 +23,7 @@
   - [`work_around_minecraft_quirks`](#work_around_minecraft_quirks)
   - [`automatic_asset_types_mask_detection`](#automatic_asset_types_mask_detection)
   - [`allow_mods`](#allow_mods)
+  - [`include_unrecognized_asset_files`](#include_unrecognized_asset_files)
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
@@ -458,6 +459,31 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 <sub><sup>This option is only supported if PackSquash was compiled with support
 for mods, which always is the case if you use a PackSquash build downloaded from
 this repository.</sup></sub>
+
+### `include_unrecognized_asset_files`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+PackSquash only adds to the result the files that it recognizes, and skips the rest.
+This keeps the result lean, but mods can read files that PackSquash does not know, so a
+pack for a modded game can lose files that it needs. When this option is `true`, PackSquash
+adds every file that is in a directory of the `assets` directory, like `assets/minecraft`
+or `assets/some_mod`, to the result. The files that it does not recognize are copied as they
+are, without any optimization. This includes the files in unknown directories, the files
+with an extension that PackSquash does not know, and the files that are for another game
+version than the one of the pack. The files that it recognizes are optimized as usual.
+
+Files that are not in a directory of `assets`, like `assets/readme.txt`, a file in the root
+of the pack, or any file of `data`, are skipped as usual. To add them, use the
+`force_include` option of a file. This option has no effect on Bedrock Edition packs.
+
+Example:
+
+```toml
+include_unrecognized_asset_files = true
+```
 
 ### `skip_pack_icon`
 

@@ -553,6 +553,11 @@ impl PackSquasher {
 				let in_flight_tasks_semaphore = Arc::clone(&in_flight_tasks_semaphore);
 				let pack_file_optimization_failed = Arc::clone(&pack_file_optimization_failed);
 				let pack_file_status_sender = pack_file_status_sender.clone();
+				let include_unrecognized_asset_files = !is_bedrock
+					&& options_holder
+						.options
+						.global_options
+						.include_unrecognized_asset_files;
 
 				// Acquire a task permit before spawning it, and send it to the task. This
 				// stops iteration of the VFS if it is going too fast relative to the
@@ -802,6 +807,35 @@ impl PackSquasher {
 								return;
 							}
 						}
+					}
+
+					// The user can ask for the files that PackSquash does not recognize to be kept
+					// if they are in a directory of the assets directory, because mods may read
+					// them. They are copied as they are, like any custom file that is forced to be
+					// included
+					if include_unrecognized_asset_files
+						&& pack_file_data
+							.relative_path
+							.as_str()
+							.strip_prefix("assets/")
+							.is_some_and(|in_namespace| in_namespace.contains('/'))
+						&& match_and_process_pack_file(
+							&options_holder.options,
+							Some(FileOptions::CustomFileOptions(CustomFileOptions {
+								force_include: true,
+								..Default::default()
+							})),
+							&*squash_zip,
+							&*vfs,
+							&PackFileAssetTypeMatches::of_custom_asset_type(),
+							&pack_file_data,
+							file_data_override.as_ref(),
+							&pack_file_optimization_failed,
+							pack_file_status_sender.as_ref()
+						)
+						.await
+					{
+						return;
 					}
 
 					// Finally, if we get here, we did not process this pack file because

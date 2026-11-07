@@ -268,6 +268,16 @@ The field is still called `found_unresolvable_moj_import`.
   inside. It returns that jar and a notice. No other name is looked for (the owner asked for no complexity).
 - Tested: 2 unit tests, and a run with the CLI and the real jar in a folder.
 
+### 3.15 Keep unrecognized asset files (r1 and r9)
+
+- Global option `include_unrecognized_asset_files` (`config/mod.rs`). In `lib.rs`, right before the "skipped" result of a
+  pack file, a file whose path is `assets/<namespace>/...` is processed with a custom asset match and
+  `CustomFileOptions { force_include: true }`, like a file that the user force included (copied as it is). Not for Bedrock.
+- The owner asked for `assets/minecraft` (r1), then for any folder of `assets` (r9). `data` is not covered (he did not ask).
+- Some extensions are already kept by default in other namespaces (a `.bin` file was kept, a `.dat` file in a known directory
+  was skipped), so tests use `.xyz`. A `data/` file in a test pack makes `AmbiguousPackType`.
+- Tested: `copy_as_is_tests::unrecognized_asset_files_are_kept_only_if_asked`.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

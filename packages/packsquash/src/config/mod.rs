@@ -313,6 +313,17 @@ pub struct GlobalOptions {
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
 	pub skip_optifine_sky_entries_with_missing_images: bool,
+	/// PackSquash skips the files that it does not recognize, which keeps its output lean, but may
+	/// leave out files that mods read. When this option is enabled, every file in a directory of the
+	/// `assets` directory, like `assets/minecraft` or `assets/some_mod`, is added to the result ZIP
+	/// file, even if PackSquash does not recognize it, because it is in an unknown directory or has
+	/// an extension that it does not know, or because it is for another Minecraft version than the
+	/// one that the pack targets. The files that PackSquash does not recognize are copied as they are,
+	/// without any optimization. Files outside the `assets` directory are skipped as usual. It has
+	/// no effect on Bedrock Edition packs.
+	///
+	/// **Default value**: `false`
+	pub include_unrecognized_asset_files: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include
 	/// in the result ZIP file.
@@ -373,6 +384,7 @@ impl Default for GlobalOptions {
 
 		Self {
 			skip_pack_icon: false,
+			include_unrecognized_asset_files: false,
 			validate_pack_metadata_file: true,
 			zip_spec_conformance_level: Default::default(),
 			size_increasing_zip_obfuscation: false,

@@ -209,3 +209,73 @@ fn copied_files_keep_their_name_and_are_not_changed_by_other_options() {
 		"{french}"
 	);
 }
+
+#[test]
+fn unrecognized_asset_files_are_kept_only_if_asked() {
+	for keep in [false, true] {
+		let pack_dir = temp_dir();
+		pack(pack_dir.path());
+		write_file(
+			pack_dir.path(),
+			"assets/minecraft/some_dir/data.dat",
+			b"mod data"
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/some_mod/anything/file.xyz",
+			b"mod binary"
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/some_mod/textures/block/x.dat",
+			b"odd extension"
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/loose.txt",
+			b"not in a directory of assets"
+		);
+		write_file(pack_dir.path(), "outside/file.txt", b"outside");
+
+		let Squashed { output, statuses } = squash(pack_dir.path(), |options| {
+			options.global_options.include_unrecognized_asset_files = keep;
+		});
+
+		// Files in a directory of assets, in any namespace, are copied as they are
+		for (path, content) in [
+			("assets/minecraft/some_dir/data.dat", &b"mod data"[..]),
+			("assets/minecraft/custom/readme.txt", README),
+			("assets/some_mod/anything/file.xyz", b"mod binary"),
+			("assets/some_mod/textures/block/x.dat", b"odd extension")
+		] {
+			assert_eq!(
+				output.read(path).as_deref(),
+				keep.then_some(content),
+				"{path}, keep: {keep}"
+			);
+		}
+
+		// The others are skipped as usual
+		for path in ["assets/loose.txt", "outside/file.txt"] {
+			assert!(output.read(path).is_none(), "{path}, keep: {keep}");
+		}
+
+		// The files that PackSquash knows are optimized as usual in both cases
+		assert!(
+			output
+				.read("assets/minecraft/models/block/b.json")
+				.unwrap()
+				.len() < MODEL.len(),
+			"keep: {keep}"
+		);
+		assert_eq!(
+			statuses
+				.iter()
+				.filter(|(path, skipped)| *skipped && path.starts_with("assets/"))
+				.count(),
+			// Only the one that is not in a directory of assets, when the files are kept
+			if keep { 1 } else { 5 },
+			"keep: {keep}: {statuses:?}"
+		);
+	}
+}

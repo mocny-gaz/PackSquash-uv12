@@ -16,9 +16,10 @@ step, and the common problems. Every option is described in full in
 7. [Language files](#language-files)
 8. [Bedrock Edition packs](#bedrock-edition-packs)
 9. [OptiFine custom skies](#optifine-custom-skies)
-10. [Copy files untouched](#copy-files-untouched)
-11. [Common problems](#common-problems)
-12. [Not built yet](#not-built-yet)
+10. [Keep the files of mods](#keep-the-files-of-mods)
+11. [Copy files untouched](#copy-files-untouched)
+12. [Common problems](#common-problems)
+13. [Not built yet](#not-built-yet)
 
 ## Quick start
 
@@ -69,6 +70,7 @@ The options that this fork adds:
 | `skip_optifine_sky_entries_with_missing_images` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
+| `include_unrecognized_asset_files` | `false` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. |
 | `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
 | `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
 | `bulk_input_directory` | not set, so **off** | Squashes every pack found in this folder. |
@@ -303,6 +305,20 @@ entry has to be written again. PackSquash only checks images in
 OptiFine stops loading entries at the first missing number, so an entry with a later
 entry after it is kept, and PackSquash says so. Only custom skies are checked, not
 connected textures or custom items.
+
+## Keep the files of mods
+
+PackSquash skips the files that it does not know. A pack for a modded game can have files
+that only a mod reads, and PackSquash would drop them. To keep them:
+
+```toml
+include_unrecognized_asset_files = true
+```
+
+Every file in a folder of `assets`, like `assets/minecraft` or `assets/some_mod`, is then
+added to the result. Files that PackSquash does not know are copied as they are. Other files
+are still optimized as usual. Files outside of `assets` are still skipped. The result can be
+bigger, so use this only when a mod needs it.
 
 ## Copy files untouched
 

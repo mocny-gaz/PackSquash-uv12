@@ -5,12 +5,15 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## This very moment
 
-- [ ] r1 make it not skip any folders or files if in /minecraft (for mods compatibility) (ai)
+- [ ] r1 make it not skip any folders or files if in /minecraft (for mods compatibility) (ai) STATE: done together with r9 in patch 0025: option `include_unrecognized_asset_files` (off by default). Apply after 0024 (owner)
 - [ ] r2 optifine properties(sky models and others) optimization - if for example sky3.properties is about aurora.png but there isnt such file then skip it (name that module optifine sky debloat/fix and put a warning that on wip packs it can lead to progress loss (if the aurora wasnt YET added or sth) so dont use it on unfinished ones or dev ones and it can fix sky problems when transforming pack to other versions (in old optifine if there wasnt a texture for sky it was just skipped but in new it does the pink/black error texture)). Owner's note: by r2 i mean that any bloat in optifine that isnt connected to something (isnt used in game with pack loaded). Confirm that thats what you done, if not then do it and move this comment to done (ai) STATE: not all of it yet. Patch 0023 does custom skies: entries whose image is missing (`skip_optifine_sky_entries_with_missing_images`, with the warning), on top of the unused and identical sky images of the older sky options. It keeps an entry that a later numbered entry needs, because OptiFine stops loading at the first missing number. Not done: the other OptiFine files (connected textures, custom items and the rest)
 - [ ] r3 update the artifact  to match new addition (ai)
 - [ ] r4 make mcchanges path ALSO accept if its just a folder and in that folder it has to find the mcchanges (dont make this overcomplicated just make it so that it has to match the exact name AND manifest or wtv) (ai) STATE: patch 0024 is written and tested here (unit tests and a run with your real jar in a folder). The folder must have `mcchanges-java.jar` (or `mcchanges-bedrock.jar` for Bedrock) with exactly that name and a `mcchanges.json` inside. Apply after 0023 (owner)
 - [ ] r5 with log = true make it write a debug log writing down everything so that i can send it over in order to fix stuff (like a general one for fixing or debugging or comparing purposes make it contain ALL the data of workflow and stuff very detailed like which hash was applied to which file in which pack and that level of detail stuff) (ai)
 - [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai)
+- [ ] r7 make mc-changes auto download and delete after use (unless no wifi then check if in folder(the one where the packsquash and the one where input or the one where output) and if not in folder type in cmd that no mcchanges jar skipping that step and does the normal one) by default
+- [ ] r8 bulk squash when .7z and any other archive just says that it isnt a directory
+- [ ] r9 make so that NO files in assets/(anyfoldername) get skipped as this can break mods (ai) STATE: done with r1 in patch 0025. It covers every folder of `assets`, not `data`. Apply after 0024 (owner)
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
