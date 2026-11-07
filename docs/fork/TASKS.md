@@ -12,7 +12,7 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 - [ ] r5 with log = true make it write a debug log writing down everything so that i can send it over in order to fix stuff (like a general one for fixing or debugging or comparing purposes make it contain ALL the data of workflow and stuff very detailed like which hash was applied to which file in which pack and that level of detail stuff) (ai)
 - [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai)
 - [ ] r7 make mc-changes auto download and delete after use (unless no wifi then check if in folder(the one where the packsquash and the one where input or the one where output) and if not in folder type in cmd that no mcchanges jar skipping that step and does the normal one) by default
-- [ ] r8 bulk squash when .7z and any other archive just says that it isnt a directory
+- [ ] r8 bulk squash when .7z and any other archive just says that it isnt a directory (ai) STATE: patch 0026: `bulk_input_directory` can now be one archive file of any format (found by contents). A file that is not an archive gives a clear error. Apply after 0025 (owner)
 - [ ] r9 make so that NO files in assets/(anyfoldername) get skipped as this can break mods (ai) STATE: done with r1 in patch 0025. It covers every folder of `assets`, not `data`. Apply after 0024 (owner)
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)

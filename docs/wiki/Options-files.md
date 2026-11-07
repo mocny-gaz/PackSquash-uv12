@@ -913,6 +913,10 @@ is a directory with a `pack.mcmeta` file and an `assets` or `data` directory (or
 Bedrock Edition resource pack), or an archive that has such a pack. See
 `pack_directory` for the archive formats.
 
+The path can also be a single archive file, of any format that `pack_directory`
+accepts. Its name and extension do not matter. PackSquash squashes every pack that is in
+it, and the results go next to the archive. A file that is not an archive is an error.
+
 PackSquash searches the subdirectories too, up to [`bulk_scan_depth`](#bulk_scan_depth)
 levels. It does not search inside a pack, and it does not follow links. Every result
 is a ZIP file next to its input, named `PREFIX` + the name of the pack + `SUFFIX` +

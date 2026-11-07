@@ -136,6 +136,8 @@ bulk_input_directory = 'C:\packs'
 - A pack is a folder with `pack.mcmeta` and `assets` or `data`, or an archive that has one
   (see the section above for the formats). Subfolders are searched. A pack folder is not
   searched inside.
+- `bulk_input_directory` can also be one archive file, like `C:\packs\big.7z`. Every pack in it
+  is squashed, and the results go next to it. The name and extension do not matter.
 - Every result is a ZIP file next to its input: `squashed_NAME.zip` by default. For an archive,
   NAME has no extension. `bulk_output_prefix` and `bulk_output_suffix` change the name.
 - An archive with several packs gives one result per pack: `squashed_ARCHIVE_FOLDER.zip`.

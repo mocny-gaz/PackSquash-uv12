@@ -495,3 +495,45 @@ fn an_empty_directory_is_not_an_error() {
 
 	assert_eq!(run_bulk(&options(root.path())).code, 0);
 }
+
+#[test]
+fn the_input_can_be_an_archive_file() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	// The name and the extension do not matter, the contents do
+	write_tar(&base.join("two.7z"), &["a", "sub/b"]);
+	write_tar(&base.join("single.rar"), &["Inner"]);
+
+	let run = run_bulk(&options(&base.join("two.7z")));
+
+	assert_eq!(run.code, 0);
+	assert!(base.join("squashed_two_a.zip").is_file());
+	assert!(base.join("squashed_two_sub_b.zip").is_file());
+	assert!(
+		base.join("two.7z").is_file(),
+		"the archive is kept without bulk_overwrite"
+	);
+	assert_eq!(run.outputs.len(), 2);
+
+	let mut bulk = options(&base.join("single.rar"));
+	bulk.overwrite = true;
+	bulk.backup = false;
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+	assert_eq!(fs::read(base.join("single.zip")).unwrap(), b"RESULT");
+	assert!(!base.join("single.rar").exists());
+}
+
+#[test]
+fn an_input_file_that_is_not_an_archive_is_an_error() {
+	let root = TempDir::new().unwrap();
+	fs::write(root.path().join("notes.txt"), b"not an archive at all").unwrap();
+
+	assert_eq!(run_bulk(&options(&root.path().join("notes.txt"))).code, 4);
+
+	// An archive without a pack is like an empty directory
+	write_tar_without_pack(&root.path().join("nopack.tar"));
+
+	assert_eq!(run_bulk(&options(&root.path().join("nopack.tar"))).code, 0);
+}

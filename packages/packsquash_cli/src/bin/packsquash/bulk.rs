@@ -193,6 +193,34 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 	found
 }
 
+/// Reads an archive file that is the input of the bulk mode by itself. Its name and extension do not matter, and
+/// its name is not checked for being the result of an earlier run, because the user chose it.
+fn discover_archive_file(path: &Path, archive_search_depth: usize) -> Result<Vec<Found>, String> {
+	match scan_archive(path, archive_search_depth) {
+		Ok(Some(scan))
+			if scan
+				.pack_roots
+				.as_ref()
+				.is_none_or(|roots| !roots.is_empty()) =>
+		{
+			Ok(vec![Found::Archive(path.to_path_buf(), scan)])
+		}
+		Ok(Some(_)) => Ok(vec![Found::Skipped(
+			path.to_path_buf(),
+			"it has no pack".into()
+		)]),
+		Ok(None) => Err(format!(
+			"bulk_input_directory {} is a file, but not an archive that PackSquash can read. It can be a \
+			directory with packs, or a ZIP, 7z, TAR (also .tar.gz, .tar.xz, .tar.zst and .tar.bz2) or RAR archive",
+			path.display()
+		)),
+		Err(error) => Err(format!(
+			"Couldn't read the archive {}: {error}",
+			path.display()
+		))
+	}
+}
+
 /// The size in bytes of the files in a directory.
 fn directory_size(directory: &Path) -> u64 {
 	let mut total = 0_u64;
@@ -367,22 +395,32 @@ pub fn run(
 	table: &Table,
 	squash: &mut SquashFn<'_>
 ) -> i32 {
-	if !options.input_directory.is_dir() {
-		error!(
-			"bulk_input_directory {} is not a directory that exists",
-			options.input_directory.display()
-		);
-
-		return 4;
-	}
-
 	info!(
 		"Bulk mode{}: looking for packs in {}...",
 		if options.dry_run { " (dry run)" } else { "" },
 		options.input_directory.display()
 	);
 
-	let found = discover(options, archive_search_depth);
+	// The input is usually a directory, but it can also be a single archive file, of any format
+	let found = if options.input_directory.is_dir() {
+		discover(options, archive_search_depth)
+	} else if options.input_directory.is_file() {
+		match discover_archive_file(&options.input_directory, archive_search_depth) {
+			Ok(found) => found,
+			Err(message) => {
+				error!("{message}");
+
+				return 4;
+			}
+		}
+	} else {
+		error!(
+			"bulk_input_directory {} does not exist. It can be a directory with packs, or an archive",
+			options.input_directory.display()
+		);
+
+		return 4;
+	};
 	let mut report = String::new();
 	let mut summary = Summary::default();
 

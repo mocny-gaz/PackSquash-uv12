@@ -278,6 +278,13 @@ The field is still called `found_unresolvable_moj_import`.
   was skipped), so tests use `.xyz`. A `data/` file in a test pack makes `AmbiguousPackType`.
 - Tested: `copy_as_is_tests::unrecognized_asset_files_are_kept_only_if_asked`.
 
+### 3.16 An archive file as bulk input (r8)
+
+- `bulk::run` accepts a file as `bulk_input_directory`: `discover_archive_file` scans it (by contents, not by extension) and
+  makes one `Found::Archive`. Not an archive is exit code 4; an archive without a pack is like an empty directory (code 0).
+  A path that does not exist says so and mentions both kinds of input. Its name is not checked for looking like a result.
+- Tested: 2 unit tests, and a CLI run with a real 7z and a ZIP with the pack in a subfolder.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

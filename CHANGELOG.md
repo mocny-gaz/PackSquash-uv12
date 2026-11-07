@@ -25,6 +25,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
   texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
   missing number. Not for packs that are still being made.
+- `bulk_input_directory` can be a single archive file of any format, not only a directory. A file that is
+  not an archive is an error that says so, instead of "is not a directory".
 - `include_unrecognized_asset_files` keeps every file in a directory of `assets` (any namespace, so
   mods keep working), copying the files that PackSquash does not recognize as they are, instead of
   skipping them.
