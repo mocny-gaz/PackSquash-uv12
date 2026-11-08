@@ -341,20 +341,19 @@ impl PackSquasher {
 				};
 				let mcchanges_path = mcchanges_path.as_path();
 
-				// A game version that is not set, empty or "auto" is chosen automatically, if the mcchanges
-				// pack has several versions
+				// A game version that is not set (or empty) makes every pack file be compared with the file
+				// with the same path in every version that changed it. "auto" chooses the one game version
+				// that has the most files identical to the pack. Both need a mcchanges pack with versions
 				let configured_version = global_options
 					.mcchanges_version
 					.as_deref()
 					.filter(|version| !version.trim().is_empty());
 
-				match configured_version
-					.filter(|version| !version.trim().eq_ignore_ascii_case("auto"))
-				{
-					Some(version) => runtime
-						.block_on(McChanges::open(&*vfs, mcchanges_path, Some(version)))
-						.map(|mcchanges| (mcchanges, None, folder_notice)),
+				match configured_version {
 					None => runtime
+						.block_on(McChanges::open_any_version(&*vfs, mcchanges_path))
+						.map(|mcchanges| (mcchanges, None, folder_notice)),
+					Some(version) if version.trim().eq_ignore_ascii_case("auto") => runtime
 						.block_on(McChanges::open_auto(
 							&*vfs,
 							mcchanges_path,
@@ -363,9 +362,12 @@ impl PackSquasher {
 								ignore_system_and_hidden_files: global_options
 									.ignore_system_and_hidden_files
 							},
-							configured_version.is_some()
+							true
 						))
-						.map(|(mcchanges, detection)| (mcchanges, detection, folder_notice))
+						.map(|(mcchanges, detection)| (mcchanges, detection, folder_notice)),
+					Some(version) => runtime
+						.block_on(McChanges::open(&*vfs, mcchanges_path, Some(version)))
+						.map(|mcchanges| (mcchanges, None, folder_notice))
 				}
 			})
 			.transpose()?;
@@ -375,6 +377,9 @@ impl PackSquasher {
 				for message in folder_notice
 					.into_iter()
 					.chain(detection.as_ref().map(VersionDetection::describe))
+					.chain(mcchanges.compares_with_every_version().then(|| {
+						"mcchanges_version is not set, so every pack file is compared with the file with the same path in every game version of the mcchanges pack that changed it, and is left out if it is identical to any of them. To compare with one game version, set mcchanges_version. To use the one version that matches the most files, set it to auto".to_string()
+					}))
 				{
 					runtime
 						.block_on(

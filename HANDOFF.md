@@ -309,6 +309,17 @@ The field is still called `found_unresolvable_moj_import`.
   "204" cap could not be reproduced with 300 packs in a 7z, a ZIP or a folder, so it is probably this depth, or data specific:
   the bulk search is logged ("not searched, because it is deeper than bulk_scan_depth", "Bulk search done: N packs").
 
+### 3.18 Compare with every version (r13)
+
+- `McChanges::open_any_version` (blank or unset `mcchanges_version`) keeps the layers of the newest version and sets
+  `any_version`. `is_redundant`, texture pairs and language reduction then run once per state of the path: `defining_layers`
+  gives the layers that mention a path (a data file, a hash token or a deletion), `comparison_positions` adds the
+  `.mcmeta` of a texture, and `lookup_from(path, start)` gives the file as it was in the version of that layer.
+  Language keys are removed in turn for every state (a key goes if it has the value in any version).
+- `auto` still uses `open_auto` (one best version, f4). Not versioned: blank is used as it is, `auto` is an error.
+- Risk, told in the docs and in a notice: a file identical to an old version only is left out.
+- Tested: 2 new unit tests and the updated squash test.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

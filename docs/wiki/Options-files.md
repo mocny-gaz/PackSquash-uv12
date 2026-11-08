@@ -651,20 +651,32 @@ A mcchanges pack can hold the assets of many game versions in a single file or
 directory. This option selects which version PackSquash compares the pack with.
 It is an error for mcchanges packs that do not hold many versions.
 
-If this option is not set, is empty, or is `auto`, PackSquash chooses the version
-by itself. It compares the pack with every version of the mcchanges pack, and uses
-the one that has the most pack files identical to its files. If several versions
-have as many, it uses the newest of them. PackSquash prints which version it chose,
-how many files are identical to it, and the best version that has fewer. The pack
-files that identify the pack (like `pack.mcmeta`) and the language files are not
-counted, because they do not tell the game version. If no pack file is identical
-to a file of any version, PackSquash uses the newest version, which leaves out no
-file, and says so.
+If this option is not set or is empty, PackSquash does not use one game version.
+It compares each pack file with the file with the same path in every game version
+of the mcchanges pack that changed that file (a version that did not change a file
+has the same file as the version before it, so it is not compared again), and leaves
+the pack file out if it is identical to the file of any of them. Only the files with
+the same path are compared. This catches a file that is the same as it was in an
+older version. A texture is compared together with its animation metadata, and a
+language key is removed if it has the value that it has in any version.
+PackSquash says that it does this.
 
-The chosen version is the best match, which is not always the game version that the
-pack is for. If you know that version, set it. For a mcchanges pack that does not
-hold many versions, an unset, empty option does nothing, as before, and `auto` is an
-error.
+The risk is the following: a file that is identical to an old version, but is
+different in the game version that the pack is for, is left out, and the game then
+loads its own file for that version. If you know the game version, set it, which
+compares only with that version.
+
+If this option is `auto`, PackSquash chooses one game version by itself: it
+compares the pack with every version of the mcchanges pack, and uses the one that
+has the most pack files identical to its files. If several versions have as many,
+it uses the newest of them. PackSquash prints which version it chose, how many files
+are identical to it, and the best version that has fewer. The pack files that
+identify the pack (like `pack.mcmeta`) and the language files are not counted for
+this choice. If no pack file is identical to a file of any version, PackSquash uses the
+newest version, which leaves out no file, and says so.
+
+For a mcchanges pack that does not hold many versions, an unset or empty option does
+nothing, as before, and `auto` is an error.
 
 A mcchanges pack holds several versions if it has a `mcchanges.json` file at its
 root, with this structure:

@@ -39,6 +39,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - `mcchanges_path` can be a folder that has the mcchanges jar from the mc-changes downloads, with the exact
   name `mcchanges-java.jar` (Java Edition) or `mcchanges-bedrock.jar` (Bedrock Edition) and a
   `mcchanges.json` file inside. PackSquash uses that jar and says so.
+- With `mcchanges_version` not set (or empty), each pack file is compared with the file with the same path in every
+  game version of the mcchanges jar that changed it (textures with their metadata, language keys too), and is left out
+  if it is identical to any of them. `mcchanges_version = 'auto'` keeps the choice of one best matching version.
 - `mcchanges_version` can be left out (or empty, or `auto`) for a mcchanges jar that holds many game
   versions: PackSquash compares the pack with every version, uses the one with the most identical
   files (the newest if several tie), and prints which version it chose.

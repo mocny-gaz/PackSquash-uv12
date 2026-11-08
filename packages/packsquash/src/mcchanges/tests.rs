@@ -2183,14 +2183,22 @@ fn squash_with_version(version: Option<&str>) -> (Vec<String>, Vec<String>) {
 }
 
 #[test]
-fn a_blank_game_version_is_chosen_when_squashing() {
+fn a_blank_game_version_compares_with_every_version_and_auto_chooses_one() {
 	// 1.1 has both textures as they are in the pack, and 1.0 only has dirt
-	for version in [None, Some(""), Some("  "), Some("auto"), Some(" AUTO ")] {
+	for (version, expected_notice) in [
+		(None, "that changed it"),
+		(Some(""), "that changed it"),
+		(Some("  "), "that changed it"),
+		(Some("auto"), "chose 1.1"),
+		(Some(" AUTO "), "chose 1.1")
+	] {
 		let (notices, kept) = squash_with_version(version);
 
 		assert_eq!(kept, ["pack.mcmeta"], "{version:?}");
 		assert!(
-			notices.iter().any(|notice| notice.contains("chose 1.1")),
+			notices
+				.iter()
+				.any(|notice| notice.contains(expected_notice)),
 			"{version:?}: {notices:?}"
 		);
 	}
@@ -2305,5 +2313,139 @@ async fn only_the_exact_name_with_a_version_index_is_accepted_in_a_folder() {
 		find_mcchanges_jar_in_directory(&OsFilesystem, &dir.path().join("nope"), false)
 			.await
 			.is_none()
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn without_a_version_a_file_is_compared_with_every_version_that_changed_it() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	write_file(jar_dir.path(), "vanilla.jar", &versioned_jar(VERSION_INDEX));
+
+	let mcchanges = McChanges::open_any_version(&OsFilesystem, &jar_dir.path().join("vanilla.jar"))
+		.await
+		.unwrap();
+
+	assert!(mcchanges.compares_with_every_version());
+
+	// 1.0: a = "a from 1.0", b = "b from 1.0". 1.1: a = "a from 1.1". 1.2: c = "c from 1.2", b deleted
+	for (name, content, expected) in [
+		("a", "a from 1.0", true),
+		("a", "a from 1.1", true),
+		("a", "a from nowhere", false),
+		("b", "b from 1.0", true),
+		("c", "c from 1.2", true),
+		("c", "c from 1.0", false),
+		("not_in_the_game", "a from 1.0", false)
+	] {
+		let path = format!("assets/minecraft/texts/{name}.txt");
+		write_file(pack_dir.path(), &path, content.as_bytes());
+
+		assert_eq!(
+			mcchanges
+				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), &path))
+				.await,
+			expected,
+			"{name}: {content}"
+		);
+	}
+
+	// With the newest version, the file that 1.2 deletes, and the old state of a, are different
+	let newest = McChanges::open(
+		&OsFilesystem,
+		&jar_dir.path().join("vanilla.jar"),
+		Some("1.2")
+	)
+	.await
+	.unwrap();
+
+	assert!(!newest.compares_with_every_version());
+
+	for (name, content) in [("b", "b from 1.0"), ("a", "a from 1.0")] {
+		let path = format!("assets/minecraft/texts/{name}.txt");
+		write_file(pack_dir.path(), &path, content.as_bytes());
+
+		assert!(
+			!newest
+				.is_redundant(&OsFilesystem, &pack_file(pack_dir.path(), &path))
+				.await,
+			"{name}: {content}"
+		);
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn without_a_version_a_language_key_is_removed_if_any_version_has_its_value() {
+	let (jar_dir, pack_dir) = (temp_dir(), temp_dir());
+	let lang = |a: &str| format!(r#"{{"a": "{a}", "b": "same"}}"#);
+	write_file(
+		jar_dir.path(),
+		"vanilla.jar",
+		&zip(
+			&[
+				(
+					"mcchanges.json",
+					br#"{"format": 1, "versions": ["1.0", "1.1"]}"#,
+					true
+				),
+				(
+					"1.0/assets/minecraft/lang/en_us.json",
+					lang("one").as_bytes(),
+					true
+				),
+				(
+					"1.1/assets/minecraft/lang/en_us.json",
+					lang("two").as_bytes(),
+					true
+				)
+			],
+			b""
+		)
+	);
+	let path = "assets/minecraft/lang/en_us.json";
+	write_file(
+		pack_dir.path(),
+		path,
+		br#"{"a": "one", "b": "same", "c": "mine", "d": "two"}"#
+	);
+	let jar = jar_dir.path().join("vanilla.jar");
+	let keys = |reduction: LanguageFileReduction| -> Vec<String> {
+		let LanguageFileReduction::Reduced { data } = reduction else {
+			panic!("the file should be reduced")
+		};
+		let mut keys = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
+			.unwrap()
+			.keys()
+			.cloned()
+			.collect::<Vec<_>>();
+		keys.sort();
+		keys
+	};
+
+	// a is "one" in 1.0, b is the same in both, and d is not in the game: c and d stay, as 1.1 has a = "two"
+	let any_version = McChanges::open_any_version(&OsFilesystem, &jar)
+		.await
+		.unwrap();
+
+	assert_eq!(
+		keys(
+			any_version
+				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), path))
+				.await
+		),
+		["c", "d"]
+	);
+
+	// With 1.1 only, a is different, so it stays, and b goes
+	let newest = McChanges::open(&OsFilesystem, &jar, Some("1.1"))
+		.await
+		.unwrap();
+
+	assert_eq!(
+		keys(
+			newest
+				.reduce_language_file(&OsFilesystem, &pack_file(pack_dir.path(), path))
+				.await
+		),
+		["a", "c", "d"]
 	);
 }

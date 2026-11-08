@@ -64,7 +64,7 @@ The options that this fork adds:
 | Option | Default | What it does |
 | :--- | :--- | :--- |
 | `mcchanges_path` | not set, so **off** | Leaves out the pack files that are identical to the game files in this jar, ZIP file, or folder. |
-| `mcchanges_version` | not set, so **automatic** | The game version to compare with. If it is not set, empty or `auto`, PackSquash tries every version of a jar that holds many versions, and uses the best match. An error for any other path. |
+| `mcchanges_version` | not set, so **every version** | The game version to compare with. If it is not set or empty, each file is compared with the same file in every version that changed it. `auto` chooses the one best matching version. An error for any other path. |
 | `skip_language_keys_identical_to_mcchanges` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
 | `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
 | `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
@@ -207,8 +207,14 @@ mcchanges_version = '1.21.4'
 versions that a jar has, open `mcchanges.json` in the jar with any ZIP program
 and read the `versions` list.
 
-If you leave `mcchanges_version` out, PackSquash compares your pack with every
-version of the jar and uses the version that has the most files identical to
+If you leave `mcchanges_version` out, PackSquash compares each file of your pack with the
+file with the same path in every version of the jar that changed it, and leaves the file
+out if it is identical to any of them. It says so. A file that is the same as it was in an
+older version is left out, even if the game version of your pack has a different file.
+Set the version yourself if you want a single version.
+
+If you write `mcchanges_version = 'auto'`, PackSquash compares your pack with every
+version of the jar and uses the one version that has the most files identical to
 your pack. When two versions are equal, it uses the newer one. It prints what it
 chose:
 
@@ -219,8 +225,8 @@ files. The next best version is 1.21.3 with 409. To use another version, set
 mcchanges_version
 ```
 
-This is the best match, not always your target version. Set the version yourself
-when you know it. If no file of your pack is identical to a file of any version,
+The `auto` choice is the best match, not always your target version. Set the version
+yourself when you know it. If no file of your pack is identical to a file of any version,
 PackSquash says so and leaves out no file. Language files do not count for the
 choice. The choice takes about as long as squashing without it.
 

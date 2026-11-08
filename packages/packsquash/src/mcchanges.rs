@@ -305,7 +305,10 @@ pub(crate) struct McChanges {
 	source: McChangesSource,
 	/// For versioned mcchanges packs, the layers of the selected version and all the
 	/// previous ones, from the newest to the oldest.
-	layers: Option<Vec<VersionLayer>>
+	layers: Option<Vec<VersionLayer>>,
+	/// Whether every pack file is compared with the state of its path in every version that changed
+	/// it, instead of with its state in one game version. This is for a game version that is not set.
+	any_version: bool
 }
 
 /// The result of removing the language keys that a mcchanges pack already provides from
@@ -401,6 +404,93 @@ impl McChanges {
 		Ok((mcchanges, Some(detection)))
 	}
 
+	/// Loads the mcchanges pack like [`Self::open`], but without a game version. If it holds many game
+	/// versions, every pack file is compared with the file with the same path in every version that
+	/// changed it, and is redundant if it is identical to any of them. A mcchanges pack that is not
+	/// versioned is used as it is.
+	pub(crate) async fn open_any_version<V: VirtualFileSystem>(
+		vfs: &V,
+		path: &Path
+	) -> Result<Self, McChangesError> {
+		let mut mcchanges = Self::open_source(vfs, path).await?;
+
+		if let Some(index) = mcchanges.read_raw(vfs, VERSION_INDEX_FILE).await {
+			let index = Self::parse_version_index(&index)?;
+
+			if index.versions.is_empty() {
+				return Err(McChangesError::InvalidVersionIndex(
+					"the list of versions is empty".to_string()
+				));
+			}
+
+			let newest = index.versions.len() - 1;
+
+			detail!(
+				"mcchanges pack: no game version is set, so every file is compared with every version that changed it ({} versions, from {} to {})",
+				index.versions.len(),
+				index.versions[0],
+				index.versions[newest]
+			);
+
+			mcchanges.layers = Some(Self::version_layers(index, newest));
+			mcchanges.any_version = true;
+		}
+
+		Ok(mcchanges)
+	}
+
+	/// Tells whether pack files are compared with every game version, because none was set.
+	pub(crate) fn compares_with_every_version(&self) -> bool {
+		self.any_version
+	}
+
+	/// The indexes of the layers that say something about a path: they have a data file, a hash token
+	/// or a deletion for it. They are the points where the file changes between game versions.
+	async fn defining_layers<V: VirtualFileSystem>(&self, vfs: &V, path: &str) -> Vec<usize> {
+		let Some(layers) = &self.layers else {
+			return Vec::new();
+		};
+		let mut defining = Vec::new();
+
+		for (index, layer) in layers.iter().enumerate() {
+			let name = format!("{}/{path}", layer.version);
+			let has_data = match &self.source {
+				McChangesSource::Archive(archive) => archive.contains(&name),
+				McChangesSource::Directory(_) => self.read_raw(vfs, &name).await.is_some()
+			};
+
+			if has_data || layer.hashed_files.contains_key(path) || layer.removed_files.contains(path)
+			{
+				defining.push(index);
+			}
+		}
+
+		defining
+	}
+
+	/// The layers where a pack file has to be compared when no game version is set: the ones where
+	/// its path changes, which are every different state that the file has. A texture is compared with
+	/// its animation metadata, so the layers of both count.
+	async fn comparison_positions<V: VirtualFileSystem>(&self, vfs: &V, path: &str) -> Vec<usize> {
+		let texture_path = path.strip_suffix(".mcmeta").filter(|p| p.ends_with(".png"));
+		let mut positions = if let Some(texture_path) = texture_path {
+			self.defining_layers(vfs, texture_path).await
+		} else {
+			self.defining_layers(vfs, path).await
+		};
+
+		if let Some(texture_path) = texture_path.or_else(|| path.ends_with(".png").then_some(path)) {
+			positions.extend(
+				self.defining_layers(vfs, &format!("{texture_path}.mcmeta"))
+					.await
+			);
+		}
+
+		positions.sort_unstable();
+		positions.dedup();
+		positions
+	}
+
 	/// Loads the files of the mcchanges pack, without choosing a game version.
 	async fn open_source<V: VirtualFileSystem>(vfs: &V, path: &Path) -> Result<Self, McChangesError> {
 		let unreadable = |source: io::Error| McChangesError::Unreadable {
@@ -430,7 +520,8 @@ impl McChanges {
 
 		Ok(Self {
 			source,
-			layers: None
+			layers: None,
+			any_version: false
 		})
 	}
 
@@ -718,6 +809,17 @@ impl McChanges {
 		vfs: &V,
 		relative_path: &str
 	) -> Option<McChangesEntry> {
+		self.lookup_from(vfs, relative_path, 0).await
+	}
+
+	/// Like [`Self::lookup`], but it finds the file as it is in the game version of the layer with the
+	/// given index, where 0 is the selected (newest) version.
+	async fn lookup_from<V: VirtualFileSystem>(
+		&self,
+		vfs: &V,
+		relative_path: &str,
+		start: usize
+	) -> Option<McChangesEntry> {
 		let Some(layers) = &self.layers else {
 			let entry = self
 				.read_raw(vfs, relative_path)
@@ -736,7 +838,7 @@ impl McChanges {
 			return entry;
 		};
 
-		for (index, layer) in layers.iter().enumerate() {
+		for (index, layer) in layers.iter().enumerate().skip(start) {
 			if let Some(data) = self
 				.read_raw(vfs, &format!("{}/{relative_path}", layer.version))
 				.await
@@ -876,6 +978,42 @@ impl McChanges {
 		vfs: &V,
 		pack_file: &VfsPackFileIterEntry
 	) -> bool {
+		if !self.any_version {
+			return self.is_redundant_at(vfs, pack_file, 0).await;
+		}
+
+		let relative_path = pack_file.relative_path.as_str();
+
+		// Without a game version, a file is redundant if it is the same as it was in any version
+		for start in self.comparison_positions(vfs, relative_path).await {
+			detail!(
+				"mcchanges: {relative_path}: comparing with its state in the game version {}",
+				self.layers
+					.as_ref()
+					.and_then(|layers| layers.get(start))
+					.map_or("?", |layer| layer.version.as_str())
+			);
+
+			if self.is_redundant_at(vfs, pack_file, start).await {
+				return true;
+			}
+		}
+
+		detail!(
+			"mcchanges: {relative_path}: kept, because it is not identical to its state in any game version that changed it"
+		);
+
+		false
+	}
+
+	/// Like [`Self::is_redundant`], but comparing with the file as it is in the game version of the layer with
+	/// the given index.
+	async fn is_redundant_at<V: VirtualFileSystem>(
+		&self,
+		vfs: &V,
+		pack_file: &VfsPackFileIterEntry,
+		start: usize
+	) -> bool {
 		let relative_path = pack_file.relative_path.as_str();
 
 		// The pack metadata, manifest and icons identify the pack itself, and must always be kept
@@ -901,7 +1039,8 @@ impl McChanges {
 					self.is_texture_redundant(
 						vfs,
 						texture_relative_path,
-						Path::new(texture_file_path)
+						Path::new(texture_file_path),
+						start
 					)
 					.await
 				}
@@ -911,13 +1050,13 @@ impl McChanges {
 
 		if relative_path.ends_with(".png") {
 			return self
-				.is_texture_redundant(vfs, relative_path, &pack_file.file_path)
+				.is_texture_redundant(vfs, relative_path, &pack_file.file_path, start)
 				.await;
 		}
 
 		let (Some(pack_data), Some(mcchanges_entry)) = (
 			read_file(vfs, &pack_file.file_path).await,
-			self.lookup(vfs, relative_path).await
+			self.lookup_from(vfs, relative_path, start).await
 		) else {
 			detail!(
 				"mcchanges: {relative_path}: kept, because it is not in the mcchanges pack or one of them can't be read"
@@ -961,11 +1100,12 @@ impl McChanges {
 		&self,
 		vfs: &V,
 		texture_relative_path: &str,
-		texture_file_path: &Path
+		texture_file_path: &Path,
+		start: usize
 	) -> bool {
 		let (Some(pack_texture), Some(mcchanges_texture)) = (
 			read_file(vfs, texture_file_path).await,
-			self.lookup(vfs, texture_relative_path).await
+			self.lookup_from(vfs, texture_relative_path, start).await
 		) else {
 			return false;
 		};
@@ -1000,7 +1140,7 @@ impl McChanges {
 
 		let redundant = match (
 			read_file(vfs, Path::new(&metadata_file_path)).await,
-			self.lookup(vfs, &format!("{texture_relative_path}.mcmeta"))
+			self.lookup_from(vfs, &format!("{texture_relative_path}.mcmeta"), start)
 				.await
 		) {
 			(None, None) => true,
@@ -1054,20 +1194,59 @@ impl McChanges {
 			return LanguageFileReduction::Unchanged;
 		};
 
-		let (Some(pack_data), Some(mcchanges_entry)) = (
-			read_file(vfs, &pack_file.file_path).await,
-			self.lookup(vfs, relative_path).await
-		) else {
+		let Some(pack_data) = read_file(vfs, &pack_file.file_path).await else {
 			return LanguageFileReduction::Unchanged;
 		};
 
+		if !self.any_version {
+			return match self.lookup(vfs, relative_path).await {
+				Some(mcchanges_entry) => {
+					Self::reduce_with_entry(&pack_data, mcchanges_entry, is_json)
+				}
+				None => LanguageFileReduction::Unchanged
+			};
+		}
+
+		// Without a game version, a key is removed if it has the value that it has in any version. The
+		// keys that each version removes are removed in turn, from what the previous version left
+		let mut data = pack_data;
+		let mut changed = false;
+
+		for start in self.defining_layers(vfs, relative_path).await {
+			let Some(mcchanges_entry) = self.lookup_from(vfs, relative_path, start).await else {
+				continue;
+			};
+
+			match Self::reduce_with_entry(&data, mcchanges_entry, is_json) {
+				LanguageFileReduction::Unchanged => {}
+				LanguageFileReduction::Redundant => return LanguageFileReduction::Redundant,
+				LanguageFileReduction::Reduced { data: reduced } => {
+					data = reduced;
+					changed = true;
+				}
+			}
+		}
+
+		if changed {
+			LanguageFileReduction::Reduced { data }
+		} else {
+			LanguageFileReduction::Unchanged
+		}
+	}
+
+	/// Removes the language keys that have the same value in a mcchanges entry from some language file data.
+	fn reduce_with_entry(
+		pack_data: &[u8],
+		mcchanges_entry: McChangesEntry,
+		is_json: bool
+	) -> LanguageFileReduction {
 		match (mcchanges_entry, is_json) {
 			(McChangesEntry::Data(mcchanges_data), true) => {
 				let Some(mcchanges_entries) = parse_json_language_file(&mcchanges_data) else {
 					return LanguageFileReduction::Unchanged;
 				};
 
-				reduce_json_language_file(&pack_data, |key, value| {
+				reduce_json_language_file(pack_data, |key, value| {
 					mcchanges_entries.get(key) == Some(value)
 				})
 			}
@@ -1077,17 +1256,17 @@ impl McChanges {
 				};
 				let mcchanges_values = legacy_language_entries(mcchanges_data);
 
-				reduce_legacy_language_file(&pack_data, |key, value| {
+				reduce_legacy_language_file(pack_data, |key, value| {
 					mcchanges_values.get(key) == Some(&value)
 				})
 			}
 			(McChangesEntry::LanguageKeys(keys), true) => {
-				reduce_json_language_file(&pack_data, |key, value| {
+				reduce_json_language_file(pack_data, |key, value| {
 					keys.contains(key, canonical_json(value).as_bytes())
 				})
 			}
 			(McChangesEntry::LanguageKeys(keys), false) => {
-				reduce_legacy_language_file(&pack_data, |key, value| {
+				reduce_legacy_language_file(pack_data, |key, value| {
 					keys.contains(key, value.as_bytes())
 				})
 			}
