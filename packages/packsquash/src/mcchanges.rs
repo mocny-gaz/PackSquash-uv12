@@ -948,7 +948,7 @@ impl McChanges {
 				McChangesEntry::Data(data) =>
 					describe_data_comparison(relative_path, &pack_data, data),
 				McChangesEntry::LanguageKeys(_) =>
-					"language file, handled by the removal of language keys".to_string()
+					"language file, handled by the removal of language keys".to_string(),
 			}
 		);
 

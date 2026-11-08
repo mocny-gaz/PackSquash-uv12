@@ -50,21 +50,21 @@ use crate::pack_file::asset_type::{
 };
 use crate::squash_zip::PreviousZipParseError;
 pub use crate::squash_zip::relative_path::RelativePath;
-pub use debug_log::TARGET as DEBUG_LOG_TARGET;
-pub use debug_log::error_chain as describe_error_chain;
 use crate::vfs::{
 	IteratorTraversalOptions, VfsPackFileIterEntry, VfsPackFileMetadata, VirtualFileSystem
 };
+pub use debug_log::TARGET as DEBUG_LOG_TARGET;
+pub use debug_log::error_chain as describe_error_chain;
 
 pub mod config;
 pub mod pack_archive;
 pub mod vfs;
 
 mod bedrock_pack;
-mod debug_log;
 mod buffered_async_spooled_temp_file;
 #[cfg(test)]
 mod copy_as_is_tests;
+mod debug_log;
 mod mcchanges;
 #[cfg(feature = "optifine")]
 mod optifine_sky;

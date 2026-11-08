@@ -265,7 +265,8 @@ fn unrecognized_asset_files_are_kept_only_if_asked() {
 			output
 				.read("assets/minecraft/models/block/b.json")
 				.unwrap()
-				.len() < MODEL.len(),
+				.len()
+				< MODEL.len(),
 			"keep: {keep}"
 		);
 		assert_eq!(
