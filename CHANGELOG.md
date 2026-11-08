@@ -25,6 +25,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
   texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
   missing number. Not for packs that are still being made.
+- `log = true` writes a detailed debug log (`packsquash-debug.log` next to the options file, or `log_file`) with
+  the machine, the options file, every pack file and why it was processed or skipped, the mcchanges hashes that
+  were compared, archive details, helper program output, and every error with its causes. The library sends the
+  details to the `log` crate with the target `debuglog`, which the console does not show.
+- In the bulk mode, packs are searched inside archives as deep as `bulk_scan_depth` (at least
+  `archive_pack_search_depth`), not only 4 levels. The search is logged.
 - `bulk_input_directory` can be a single archive file of any format, not only a directory. A file that is
   not an archive is an error that says so, instead of "is not a directory".
 - `include_unrecognized_asset_files` keeps every file in a directory of `assets` (any namespace, so

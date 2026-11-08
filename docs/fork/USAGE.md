@@ -18,8 +18,9 @@ step, and the common problems. Every option is described in full in
 9. [OptiFine custom skies](#optifine-custom-skies)
 10. [Keep the files of mods](#keep-the-files-of-mods)
 11. [Copy files untouched](#copy-files-untouched)
-12. [Common problems](#common-problems)
-13. [Not built yet](#not-built-yet)
+12. [Debug log](#debug-log)
+13. [Common problems](#common-problems)
+14. [Not built yet](#not-built-yet)
 
 ## Quick start
 
@@ -81,7 +82,9 @@ The options that this fork adds:
 | `bulk_dry_run` | `false` | Only lists what would happen. |
 | `bulk_report_file` | not set | Also writes the report to this file. |
 | `bulk_archive_extensions` | `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'` | Files with these extensions are opened as archives. `jar` is not in the list. |
-| `bulk_scan_depth` | `32` | How many folder levels are searched. |
+| `bulk_scan_depth` | `32` | How many folder levels are searched, also inside archives. |
+| `log` | `false` | Writes a very detailed debug log file, to send when something goes wrong. |
+| `log_file` | `'packsquash-debug.log'` next to the options file | Where the debug log is written. |
 
 Things that are always on, with no option:
 
@@ -334,11 +337,28 @@ copy_as_is = true
 
 Do not combine it with other options of the same file type for the same files.
 
+## Debug log
+
+If something does not work as it should, turn on the debug log and send the file:
+
+```toml
+log = true
+```
+
+PackSquash writes `packsquash-debug.log` next to your options file, and prints where. The log
+has the machine and the command line, your options file, every pack file with what was decided
+and why, which hash of the mcchanges pack was compared with which file, and every error with
+its causes (why an archive could not be opened, why a Vorbis file could not be read, and so
+on). It is replaced in every run, so run again with `log = true` when the problem happens.
+`log_file` sets another path. The log has the paths of your files, so read it before you share
+it. The console output does not change.
+
 ## Common problems
 
 When an error stops PackSquash, it prints a `How to fix` line for the likely causes, a link
-to this page, and how to get more details. For more details, set the log level and run
-again. In cmd:
+to this page, and how to get more details. For the most details, turn on the
+[debug log](#debug-log) with `log = true`. For more details on the console, set the log level
+and run again. In cmd:
 
 ```
 set PACKSQUASH_LOG=debug

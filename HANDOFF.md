@@ -285,6 +285,30 @@ The field is still called `found_unresolvable_moj_import`.
   A path that does not exist says so and mentions both kinds of input. Its name is not checked for looking like a result.
 - Tested: 2 unit tests, and a CLI run with a real 7z and a ZIP with the pack in a subfolder.
 
+### 3.17 The debug log (r5 and r10)
+
+- Library: `debug_log.rs` has the log target `debuglog` (`DEBUG_LOG_TARGET`), the `detail!` and `detail_error!` macros (they
+  only evaluate their arguments if a logger wants the target) and `error_chain` (`describe_error_chain`: every error with its
+  causes and its Debug text). The library depends on `log` now. Messages are sent from `lib.rs` (pack edition, quirks, asset
+  type mask, layers, every pack file, asset type matches, file options tried, skip reasons, error chains where errors become
+  status messages, copied from the previous run), `mcchanges.rs` (kind of pack, selected version, every lookup with the layer
+  and the token, `describe_hash_comparison` and `describe_data_comparison` with the pack file's own token, texture and
+  language decisions, the counts of the automatic choice), `optifine_sky.rs` and `pack_archive.rs` (first bytes, entries,
+  unsafe names, links, helper program command, exit status and output).
+- CLI: `debug_log.rs` has `TeeLogger`, which sits in front of the `env_logger` console logger. The console shows what it showed
+  (the console filter is the `packsquash` target at every level; `debuglog` is not shown). The file gets every message of the
+  `packsquash*` targets, the `debuglog` target, and warnings of other crates. Lines logged before the options are read are kept
+  (at most 500, what the console shows) and written first. `start` is called from `start_debug_log` in `main.rs` after the options
+  are parsed (`log` and `log_file` are CLI options, in `fork_options.rs`). The header, the options file text, status results,
+  the error chain, the panic hook (`log_panics`) and the exit code are written there.
+- The file is `packsquash-debug.log` next to the options file by default, replaced each run. Warnings and errors are flushed at
+  once, the rest when the buffer is full and at the end.
+- Tested: 3 library tests, 6 CLI tests (time format, line format, options), end to end runs with broken Ogg, PNG and ZIP files
+  (the Vorbis error shows its library, function and kind).
+- r12 and r8: the bulk mode now uses `max(bulk_scan_depth, archive_pack_search_depth)` as the depth inside archives. The owner's
+  "204" cap could not be reproduced with 300 packs in a 7z, a ZIP or a folder, so it is probably this depth, or data specific:
+  the bulk search is logged ("not searched, because it is deeper than bulk_scan_depth", "Bulk search done: N packs").
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

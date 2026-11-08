@@ -581,6 +581,7 @@ impl PackFileAssetTypeMatcher {
 
 /// A set of asset type matches for a pack file, given its [`RelativePath`]. This struct is
 /// constructed by the [`PackFileAssetTypeMatcher::matches_for`] method.
+#[derive(Debug)]
 pub struct PackFileAssetTypeMatches {
 	matches: Cow<'static, [PackFileAssetType]>
 }

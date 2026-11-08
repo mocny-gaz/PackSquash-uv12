@@ -30,6 +30,7 @@ use tokio::{fs::File, io::AsyncRead, runtime::Builder};
 
 use bedrock_pack::{BedrockFileKind, BedrockManifestError};
 use config::ProcessedSquashOptions;
+use debug_log::{detail, detail_error, error_chain};
 use mcchanges::{LanguageFileReduction, McChanges, McChangesError, VersionDetection};
 #[cfg(feature = "optifine")]
 use optifine_sky::SkyImageOptimizer;
@@ -49,6 +50,8 @@ use crate::pack_file::asset_type::{
 };
 use crate::squash_zip::PreviousZipParseError;
 pub use crate::squash_zip::relative_path::RelativePath;
+pub use debug_log::TARGET as DEBUG_LOG_TARGET;
+pub use debug_log::error_chain as describe_error_chain;
 use crate::vfs::{
 	IteratorTraversalOptions, VfsPackFileIterEntry, VfsPackFileMetadata, VirtualFileSystem
 };
@@ -58,6 +61,7 @@ pub mod pack_archive;
 pub mod vfs;
 
 mod bedrock_pack;
+mod debug_log;
 mod buffered_async_spooled_temp_file;
 #[cfg(test)]
 mod copy_as_is_tests;
@@ -169,6 +173,13 @@ impl PackSquasher {
 			options_holder.options.global_options.pack_edition
 		);
 
+		detail!(
+			"Pack edition: {} (pack_edition option: {:?}). Pack directory: {}",
+			if is_bedrock { "Bedrock" } else { "Java" },
+			options_holder.options.global_options.pack_edition,
+			options_holder.options.pack_directory.display()
+		);
+
 		if is_bedrock {
 			// Bedrock Edition's ZIP file reader has not been checked against the ZIP file
 			// structures that the less conformant levels use, so only the one that follows the
@@ -226,6 +237,11 @@ impl PackSquasher {
 					if automatic_quirk_detection {
 						let quirks = pack_meta.applicable_minecraft_quirks();
 
+						detail!(
+							"Minecraft quirks to work around, detected from the pack metadata: [{}]",
+							quirks.iter().map(|quirk| quirk.as_str()).join(", ")
+						);
+
 						options_holder
 							.options
 							.global_options
@@ -248,6 +264,10 @@ impl PackSquasher {
 
 					if automatic_asset_type_mask_detection {
 						asset_types_mask = pack_meta.applicable_asset_type_mask();
+
+						detail!(
+							"Asset types that apply to the game versions of the pack metadata: {asset_types_mask:?}"
+						);
 					}
 
 					Ok::<_, PackSquasherError>(pack_meta.layers)
@@ -258,6 +278,12 @@ impl PackSquasher {
 				// Default to no overlays (a single base layer) for matching asset types below
 				HashMap::from_iter([(arcstr::literal!(""), HashSet::default())])
 			});
+
+		detail!(
+			"Pack metadata was {}read. Pack layers (the root and the overlay directories): {:?}",
+			if read_pack_meta { "" } else { "not " },
+			pack_layers.keys().collect::<Vec<_>>()
+		);
 
 		if is_bedrock {
 			let mut notices = vec!["Processing a Bedrock Edition pack".to_owned()];
@@ -568,6 +594,8 @@ impl PackSquasher {
 					let pack_file_data = match pack_file_data {
 						Ok(data) => data,
 						Err(err) => {
+							detail_error!("Could not read the pack directory: {}", error_chain(&err));
+
 							if let Some(tx) = pack_file_status_sender {
 								tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 									path: RelativePath::from_inner(Cow::Borrowed("-")),
@@ -584,6 +612,16 @@ impl PackSquasher {
 							return;
 						}
 					};
+
+					detail!(
+						"Pack file {} found at {} ({})",
+						pack_file_data.relative_path.as_str(),
+						pack_file_data.file_path.display(),
+						std::fs::metadata(&pack_file_data.file_path).map_or_else(
+							|error| format!("the size could not be read: {error}"),
+							|metadata| format!("{} bytes", metadata.len())
+						)
+					);
 
 					// Files that do not change anything relative to the mcchanges pack are left out
 					// of the result ZIP file. Do this before any file is processed to not waste
@@ -636,6 +674,11 @@ impl PackSquasher {
 						match mcchanges.reduce_language_file(&*vfs, &pack_file_data).await {
 							LanguageFileReduction::Unchanged => {}
 							LanguageFileReduction::Redundant => {
+								detail!(
+									"{}: every language key has the same value as in the mcchanges pack, so the file is left out",
+									pack_file_data.relative_path.as_str()
+								);
+
 								if let Some(tx) = pack_file_status_sender {
 									tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 										path: pack_file_data.relative_path,
@@ -653,6 +696,12 @@ impl PackSquasher {
 								return;
 							}
 							LanguageFileReduction::Reduced { data } => {
+								detail!(
+									"{}: language keys with the same value as in the mcchanges pack were removed, the file now has {} bytes",
+									pack_file_data.relative_path.as_str(),
+									data.len()
+								);
+
 								file_data_override = Some(data.into());
 							}
 						}
@@ -663,6 +712,8 @@ impl PackSquasher {
 						let relative_path = pack_file_data.relative_path.as_str();
 
 						if let Some(skip_reason) = sky_image_optimizer.skip_reason(relative_path) {
+							detail!("{relative_path}: left out by the OptiFine sky options: {skip_reason}");
+
 							if let Some(tx) = pack_file_status_sender {
 								tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 									path: pack_file_data.relative_path,
@@ -684,6 +735,10 @@ impl PackSquasher {
 							&& let Some(rewritten_entry) =
 								sky_image_optimizer.rewritten_entry(relative_path)
 						{
+							detail!(
+								"{relative_path}: the OptiFine sky entry is rewritten to use the images that were kept after merging identical ones"
+							);
+
 							file_data_override = Some(rewritten_entry);
 						}
 					}
@@ -735,6 +790,17 @@ impl PackSquasher {
 						}
 					};
 
+					detail!(
+						"{}: asset types that match its path: {:?}{}",
+						pack_file_data.relative_path.as_str(),
+						asset_type_matches,
+						if have_default_options {
+							"; default options can be used"
+						} else {
+							"; no default options, the options file has to set them"
+						}
+					);
+
 					/// Ergonomic wrapper for `match_and_process_pack_file`.
 					macro_rules! try_process_with_file_options {
 						($file_options:expr) => {
@@ -766,9 +832,29 @@ impl PackSquasher {
 					{
 						let file_options = options_holder.options.file_options[i];
 
+						detail!(
+							"{}: trying the file options of the glob {:?}",
+							pack_file_data.relative_path.as_str(),
+							options_holder
+								.options
+								.file_options
+								.get_index(i)
+								.map(|(glob, _)| glob.as_str())
+						);
+
 						if try_process_with_file_options!(Some(file_options)) {
 							return;
 						}
+
+						detail!(
+							"{}: the file options of the glob {:?} do not fit this kind of file",
+							pack_file_data.relative_path.as_str(),
+							options_holder
+								.options
+								.file_options
+								.get_index(i)
+								.map(|(glob, _)| glob.as_str())
+						);
 					}
 
 					// If we get here, this pack file either did not match any file settings,
@@ -835,8 +921,18 @@ impl PackSquasher {
 						)
 						.await
 					{
+						detail!(
+							"{}: kept as it is, because include_unrecognized_asset_files is on",
+							pack_file_data.relative_path.as_str()
+						);
+
 						return;
 					}
+
+					detail!(
+						"{}: no file options or defaults fit it, so it is skipped",
+						pack_file_data.relative_path.as_str()
+					);
 
 					// Finally, if we get here, we did not process this pack file because
 					// it really is not a pack file, or we want to skip it. Tell caller we
@@ -1138,6 +1234,12 @@ async fn match_and_process_pack_file(
 	}
 
 	if let Some(err) = &pack_file_open_error {
+		detail_error!(
+			"{}: error opening the pack file: {}",
+			pack_file_data.relative_path.as_str(),
+			error_chain(err)
+		);
+
 		if let Some(tx) = pack_file_status_sender {
 			tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
 				path: pack_file_data.relative_path.as_owned(),
@@ -1204,6 +1306,11 @@ async fn process_pack_file(
 			.err()
 			.map(|err| err.to_string());
 
+		detail!(
+			"{}: copied from the previous run, because the ZIP file of that run has it processed after the pack file was last edited",
+			pack_file_path.as_str()
+		);
+
 		optimization_strategy = Cow::Borrowed("Copied from previous run");
 	} else {
 		let mut processed_pack_file_chunks = pack_file_process_data
@@ -1232,6 +1339,11 @@ async fn process_pack_file(
 		let processed_pack_file_chunks = processed_pack_file_chunks
 			.take_while(|chunk| {
 				future::ready(if let Err(err) = chunk {
+					detail_error!(
+						"{}: error while processing the pack file: {}",
+						pack_file_path.as_str(),
+						error_chain(err)
+					);
 					optimization_error = Some(err.to_string());
 
 					false
@@ -1252,6 +1364,13 @@ async fn process_pack_file(
 			.await
 			.err()
 			.map(|err| err.to_string());
+
+		if let Some(squash_zip_error) = &squash_zip_error {
+			detail_error!(
+				"{}: error adding the file to the ZIP file: {squash_zip_error}",
+				pack_file_path.as_str()
+			);
+		}
 
 		optimization_error = optimization_error.or(squash_zip_error);
 	}

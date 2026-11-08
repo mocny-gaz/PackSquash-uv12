@@ -12,6 +12,7 @@
 //! skipped, and the number of files and the total size are limited, so that a damaged or hostile archive
 //! can not fill the disk.
 
+use crate::debug_log::detail;
 use std::{
 	collections::{BTreeMap, BTreeSet},
 	ffi::OsString,
@@ -178,6 +179,16 @@ pub fn detect_format(path: &Path) -> io::Result<Option<ArchiveFormat>> {
 	let mut head = [0; 512];
 	let read = read_up_to(&mut File::open(path)?, &mut head)?;
 	let head = &head[..read];
+
+	detail!(
+		"Archive {}: the first bytes of the file are {}",
+		path.display(),
+		head.iter()
+			.take(16)
+			.map(|byte| format!("{byte:02x}"))
+			.collect::<Vec<_>>()
+			.join(" ")
+	);
 
 	let compression = if head.starts_with(&[0x1F, 0x8B]) {
 		Some(TarCompression::Gzip)
@@ -406,6 +417,10 @@ pub fn extract_archive(
 		}
 
 		let Some(name) = safe_relative_name(&entry.name) else {
+			detail!(
+				"Archive entry {:?} was not extracted, because its name is not safe (it goes up, is absolute, has a drive letter or backslash tricks, or is empty)",
+				entry.name
+			);
 			summary.skipped_unsafe += 1;
 			return Ok(Visit::Continue);
 		};
@@ -440,11 +455,26 @@ pub fn extract_archive(
 				summary.bytes += copied;
 				summary.files += 1;
 			}
-			EntryKind::Other => summary.skipped_special += 1
+			EntryKind::Other => {
+				detail!(
+					"Archive entry {name} was not extracted, because it is a link or another entry that is not a file or a directory"
+				);
+				summary.skipped_special += 1;
+			}
 		}
 
 		Ok(Visit::Continue)
 	})?;
+
+	detail!(
+		"Extracted {} files with {} bytes from the archive {} to {}. Skipped {} entries with an unsafe name and {} links or special entries",
+		summary.files,
+		summary.bytes,
+		archive.display(),
+		destination.display(),
+		summary.skipped_unsafe,
+		summary.skipped_special
+	);
 
 	Ok(summary)
 }
@@ -523,14 +553,59 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 	];
 
 	for (program, arguments) in attempts {
-		let status = Command::new(program)
-			.args(arguments)
-			.stdin(Stdio::null())
-			.stdout(Stdio::null())
-			.stderr(Stdio::null())
-			.status();
+		let mut command = Command::new(program);
+		command.args(&arguments).stdin(Stdio::null());
 
-		if status.is_ok_and(|status| status.success()) {
+		let succeeded = if crate::debug_log::enabled() {
+			// Keep what the program says, to know why it failed
+			let command_line = format!(
+				"{program} {}",
+				arguments
+					.iter()
+					.map(|argument| argument.to_string_lossy())
+					.collect::<Vec<_>>()
+					.join(" ")
+			);
+
+			match command.output() {
+				Ok(output) => {
+					let shorten = |bytes: &[u8]| {
+						let text = String::from_utf8_lossy(bytes);
+
+						text.chars()
+							.take(4096)
+							.collect::<String>()
+							.trim()
+							.to_string()
+					};
+
+					detail!(
+						"Helper program run: {command_line}. Exit status: {}. Output: {:?}. Error output: {:?}",
+						output.status,
+						shorten(&output.stdout),
+						shorten(&output.stderr)
+					);
+
+					output.status.success()
+				}
+				Err(error) => {
+					detail!(
+						"Helper program {program} could not be run ({command_line}): {error} [{:?}]",
+						error.kind()
+					);
+
+					false
+				}
+			}
+		} else {
+			command
+				.stdout(Stdio::null())
+				.stderr(Stdio::null())
+				.status()
+				.is_ok_and(|status| status.success())
+		};
+
+		if succeeded {
 			return Ok(());
 		}
 	}
@@ -573,6 +648,10 @@ fn clean_helper_output(directory: &Path, limits: ExtractLimits) -> Result<(), Ar
 			} else {
 				// A link, a device or anything else. A link to a directory needs another call on some systems
 				let path = entry.path();
+				detail!(
+					"Removed {}, which a helper program extracted and is a link or another entry that is not a file or a directory",
+					path.display()
+				);
 				fs::remove_file(&path).or_else(|_| fs::remove_dir(&path))?;
 			}
 		}
@@ -677,6 +756,11 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 	};
 
 	if format == ArchiveFormat::Helper {
+		detail!(
+			"The archive {} needs a helper program to be read, so its packs are only known after it is extracted",
+			path.display()
+		);
+
 		return Ok(Some(ArchiveScan {
 			format,
 			pack_roots: None
@@ -769,6 +853,13 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 		.cloned()
 		.collect();
 
+	detail!(
+		"Scanned the archive {} ({format:?}): {entries} entries, {} files, pack directories found: {:?}",
+		path.display(),
+		files.len(),
+		pack_roots
+	);
+
 	Ok(Some(ArchiveScan {
 		format,
 		pack_roots: Some(pack_roots)
@@ -823,6 +914,13 @@ pub fn extract_packs(
 		})
 		.filter(|(_, path)| is_pack_directory(path))
 		.collect();
+
+	detail!(
+		"Packs in the extracted archive {}, in {}: {:?}",
+		archive.display(),
+		directory.path().display(),
+		packs
+	);
 
 	if packs.is_empty() {
 		return Err(ArchiveError::NoPack);

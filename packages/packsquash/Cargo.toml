@@ -45,6 +45,7 @@ itertools = "0.15.0"
 java-properties = { version = "2.0.0", optional = true }
 json_comments = "0.2.2"
 jsonpath_lib = "0.3.0"
+log = "0.4.34"
 lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz"] }
 memchr = "2.8.3"
 obfstr = "0.4.6"

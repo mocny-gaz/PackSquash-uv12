@@ -29,6 +29,14 @@ const BULK_REPORT_FILE: &str = "bulk_report_file";
 const BULK_ARCHIVE_EXTENSIONS: &str = "bulk_archive_extensions";
 const BULK_SCAN_DEPTH: &str = "bulk_scan_depth";
 
+/// The name of the option that asks for a debug log.
+const LOG: &str = "log";
+/// The name of the option that sets where the debug log is written.
+const LOG_FILE: &str = "log_file";
+
+/// The name of the debug log file, if the options file does not give another one.
+pub const DEFAULT_LOG_FILE_NAME: &str = "packsquash-debug.log";
+
 /// All the options of the bulk mode.
 const BULK_OPTIONS: [&str; 9] = [
 	BULK_INPUT_DIRECTORY,
@@ -72,6 +80,13 @@ pub struct BulkOptions {
 	pub scan_depth: usize
 }
 
+/// The options of the debug log, which is a file with every detail of what the program did and decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogOptions {
+	/// Where the log is written, if the options file says it. By default, it is next to the options file.
+	pub file: Option<PathBuf>
+}
+
 /// The options that only the command-line program reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForkOptions {
@@ -80,7 +95,9 @@ pub struct ForkOptions {
 	/// The most bytes that are extracted from an archive.
 	pub archive_max_extracted_bytes: u64,
 	/// The options of the bulk mode, if it is enabled.
-	pub bulk: Option<BulkOptions>
+	pub bulk: Option<BulkOptions>,
+	/// The options of the debug log, if it is enabled.
+	pub log: Option<LogOptions>
 }
 
 impl Default for ForkOptions {
@@ -88,7 +105,8 @@ impl Default for ForkOptions {
 		Self {
 			archive_pack_search_depth: DEFAULT_MAX_PACK_DEPTH,
 			archive_max_extracted_bytes: DEFAULT_MAX_EXTRACTED_BYTES,
-			bulk: None
+			bulk: None,
+			log: None
 		}
 	}
 }
@@ -98,6 +116,8 @@ pub fn has_fork_options(table: &Table) -> bool {
 	table.contains_key(ARCHIVE_PACK_SEARCH_DEPTH)
 		|| table.contains_key(ARCHIVE_MAX_EXTRACTED_MIB)
 		|| BULK_OPTIONS.iter().any(|name| table.contains_key(*name))
+		|| table.contains_key(LOG)
+		|| table.contains_key(LOG_FILE)
 }
 
 /// Reads one whole number option with a range, and removes it from the table.
@@ -182,6 +202,26 @@ fn parse_archive_extensions(value: &str) -> Result<Vec<String>, String> {
 	}
 }
 
+/// Removes the options of the debug log from the table, and returns them if the log is enabled.
+fn take_log_options(table: &mut Table) -> Result<Option<LogOptions>, String> {
+	let enabled = take_bool(table, LOG)?;
+	let file = take_string(table, LOG_FILE)?;
+
+	if file.as_deref().is_some_and(|path| path.trim().is_empty()) {
+		return Err(format!("The option {LOG_FILE} is empty"));
+	}
+
+	match (enabled, file) {
+		(Some(true), file) => Ok(Some(LogOptions {
+			file: file.map(PathBuf::from)
+		})),
+		(_, Some(_)) => Err(format!(
+			"The option {LOG_FILE} is set, but the log is off. Set {LOG} = true to turn it on"
+		)),
+		_ => Ok(None)
+	}
+}
+
 /// Removes the options of the bulk mode from the table, and returns them if the mode is enabled.
 fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 	let input_directory = take_string(table, BULK_INPUT_DIRECTORY)?;
@@ -261,6 +301,7 @@ pub fn split_fork_options(table: &mut Table) -> Result<ForkOptions, String> {
 	}
 
 	options.bulk = take_bulk_options(table)?;
+	options.log = take_log_options(table)?;
 
 	Ok(options)
 }
@@ -294,7 +335,8 @@ mod tests {
 			Ok(ForkOptions {
 				archive_pack_search_depth: 2,
 				archive_max_extracted_bytes: 512 * 1024 * 1024,
-				bulk: None
+				bulk: None,
+				log: None
 			})
 		);
 		assert!(!has_fork_options(&options));
@@ -406,6 +448,52 @@ mod tests {
 	}
 
 	#[test]
+	fn the_debug_log_is_off_unless_asked() {
+		let mut options = table("pack_directory = 'pack'\n");
+
+		assert_eq!(split_fork_options(&mut options).unwrap().log, None);
+
+		let mut options = table("log = false\n");
+
+		assert!(has_fork_options(&options));
+		assert_eq!(split_fork_options(&mut options).unwrap().log, None);
+		assert!(options.is_empty());
+	}
+
+	#[test]
+	fn the_debug_log_can_have_a_file() {
+		let mut options = table("log = true\n");
+
+		assert_eq!(
+			split_fork_options(&mut options).unwrap().log,
+			Some(LogOptions { file: None })
+		);
+
+		let mut options = table("log = true\nlog_file = 'C:\\logs\\debug.txt'\n");
+
+		assert_eq!(
+			split_fork_options(&mut options).unwrap().log,
+			Some(LogOptions {
+				file: Some(PathBuf::from("C:\\logs\\debug.txt"))
+			})
+		);
+		assert!(options.is_empty());
+	}
+
+	#[test]
+	fn bad_debug_log_options_are_rejected() {
+		for text in [
+			"log = 'yes'",
+			"log = true\nlog_file = 3",
+			"log = true\nlog_file = ' '",
+			"log_file = 'x.log'",
+			"log = false\nlog_file = 'x.log'"
+		] {
+			assert!(split_fork_options(&mut table(text)).is_err(), "{text}");
+		}
+	}
+
+	#[test]
 	fn largest_values_do_not_overflow() {
 		let mut options =
 			table("archive_max_extracted_mib = 1048576\narchive_pack_search_depth = 16");
@@ -415,7 +503,8 @@ mod tests {
 			Ok(ForkOptions {
 				archive_pack_search_depth: 16,
 				archive_max_extracted_bytes: 1024 * 1024 * 1024 * 1024,
-				bulk: None
+				bulk: None,
+				log: None
 			})
 		);
 	}

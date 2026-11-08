@@ -27,6 +27,7 @@ use toml::{Table, Value};
 use tz::UtcDateTime;
 
 mod bulk;
+mod debug_log;
 mod error_hints;
 mod fork_options;
 mod terminal_style;
@@ -127,13 +128,31 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 
 				print_version_information(false);
 				println!();
-				read_options_file_and_squash(
+
+				let started_at = std::time::Instant::now();
+				let exit_code = read_options_file_and_squash(
 					option_matches.free.first().filter(|path| {
 						// Let "-" behave as if no path was provided
 						path != &"-"
 					}),
 					title_controller
-				)
+				);
+
+				if let Some(path) = debug_log::path() {
+					log::debug!(
+						target: debug_log::DEBUG_LOG_TARGET,
+						"Finished with the exit code {exit_code} after {:.3} seconds",
+						started_at.elapsed().as_secs_f64()
+					);
+					debug_log::flush();
+
+					info!(
+						"The debug log was written to {}",
+						absolute_path(&path).display()
+					);
+				}
+
+				exit_code
 			}
 		}
 		Err(parse_err) => {
@@ -203,6 +222,15 @@ fn read_options_file_and_squash(
 		}
 	};
 
+	if let Some(log_options) = &fork_options.log {
+		start_debug_log(
+			log_options,
+			options_file_path,
+			&options_string,
+			&fork_options
+		);
+	}
+
 	if let Some(bulk_options) = &fork_options.bulk {
 		if options_table.contains_key("pack_directory")
 			|| options_table.contains_key("output_file_path")
@@ -220,9 +248,12 @@ fn read_options_file_and_squash(
 		// A title that goes through phases for a single pack makes no sense for many packs
 		drop(title_controller);
 
+		// In the bulk mode, the packs are searched as deep inside the archives as in the directories
 		return bulk::run(
 			bulk_options,
-			fork_options.archive_pack_search_depth,
+			bulk_options
+				.scan_depth
+				.max(fork_options.archive_pack_search_depth),
 			extract_limits,
 			&options_table,
 			&mut |pack_options| {
@@ -251,6 +282,12 @@ fn read_options_file_and_squash(
 
 	squash(squash_options, title_controller).map_or_else(
 		|err| {
+			log::debug!(
+				target: debug_log::DEBUG_LOG_TARGET,
+				"The pack processing operation failed. Error, with the errors that caused it: {}",
+				debug_log::error_chain(&err)
+			);
+
 			error!("{}", describe_error(&err, true));
 
 			128
@@ -283,6 +320,93 @@ fn read_options_file_and_squash(
 			0
 		}
 	)
+}
+
+/// Makes a path absolute, without needing it to exist and without the `\\?\` prefix of canonical Windows paths.
+fn absolute_path(path: &std::path::Path) -> std::path::PathBuf {
+	std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Starts the debug log, and writes what is known at the start of the run: the program, the machine, the
+/// command line, the environment and the options.
+fn start_debug_log(
+	log_options: &fork_options::LogOptions,
+	options_file_path: Option<&String>,
+	options_string: &str,
+	fork_options: &ForkOptions
+) {
+	let path = log_options.file.clone().unwrap_or_else(|| {
+		options_file_path
+			.and_then(|options_file_path| {
+				std::path::Path::new(options_file_path)
+					.parent()
+					.map(|directory| directory.join(fork_options::DEFAULT_LOG_FILE_NAME))
+			})
+			.unwrap_or_else(|| fork_options::DEFAULT_LOG_FILE_NAME.into())
+	});
+
+	if let Err(error) = debug_log::start(&path) {
+		warn!(
+			"The debug log could not be started at {}: {error}. The program goes on without it",
+			absolute_path(&path).display()
+		);
+
+		return;
+	}
+
+	debug_log::log_panics();
+
+	info!("Writing a debug log to {}", absolute_path(&path).display());
+
+	let target = debug_log::DEBUG_LOG_TARGET;
+	let environment = |name: &str| match env::var_os(name) {
+		Some(value) => format!("{}", value.to_string_lossy()),
+		None => "(not set)".to_string()
+	};
+
+	log::debug!(
+		target: target,
+		"PackSquash debug log. Send this file when something does not work as it should.\n\
+		Program: PackSquash {} ({}, {}) for {}\n\
+		Started at: {}\n\
+		Operating system: {} ({}), architecture {}\n\
+		Hardware threads: {}\n\
+		Command line: {:?}\n\
+		Working directory: {}\n\
+		Options file: {}\n\
+		Temporary directory: {}\n\
+		PACKSQUASH_LOG: {}. RUST_LOG: {}\n\
+		PATH: {}",
+		env!("PACKSQUASH_BUILD_VERSION"),
+		env!("CARGO_PROFILE"),
+		UtcDateTime::from_timespec(env!("PACKSQUASH_BUILD_TIMESTAMP").parse().unwrap(), 0)
+			.map_or_else(|_| "unknown build date".to_string(), |date| {
+				format!("built {:04}-{:02}-{:02}", date.year(), date.month(), date.month_day())
+			}),
+		env!("CARGO_TARGET_TRIPLE"),
+		debug_log::format_time(std::time::SystemTime::now()),
+		env::consts::OS,
+		env::consts::FAMILY,
+		env::consts::ARCH,
+		std::thread::available_parallelism().map_or(0, std::num::NonZeroUsize::get),
+		env::args().collect::<Vec<_>>(),
+		env::current_dir().map_or_else(|error| format!("unknown ({error})"), |path| path.display().to_string()),
+		options_file_path.map_or_else(
+			|| "read from the standard input".to_string(),
+			|path| format!("{} ({})", path, absolute_path(std::path::Path::new(path)).display())
+		),
+		env::temp_dir().display(),
+		environment("PACKSQUASH_LOG"),
+		environment("RUST_LOG"),
+		environment("PATH")
+	);
+
+	debug_log::write_block("options file", options_string);
+
+	log::debug!(
+		target: target,
+		"Options that only the command-line program reads: {fork_options:#?}"
+	);
 }
 
 /// Describes a pack processing error for the user, with a hint for the likely fix. The links to the
@@ -394,7 +518,15 @@ fn prepare_archive_input(
 				Set pack_directory to a directory, or to a ZIP, 7z, TAR (also .tar.gz, .tar.xz, .tar.zst and .tar.bz2) or RAR archive"
 			));
 		}
-		Err(error) => return Err(format!("Couldn't read the archive {display}: {error}"))
+		Err(error) => {
+			log::debug!(
+				target: debug_log::DEBUG_LOG_TARGET,
+				"The archive {display} could not be read. Error, with the errors that caused it: {}",
+				debug_log::error_chain(&error)
+			);
+
+			return Err(format!("Couldn't read the archive {display}: {error}"));
+		}
 	};
 
 	let several_packs_error = |roots: &[String]| {
@@ -435,7 +567,15 @@ fn prepare_archive_input(
 			..ExtractLimits::default()
 		}
 	)
-	.map_err(|error| format!("Couldn't extract the pack from the archive {display}: {error}"))?;
+	.map_err(|error| {
+		log::debug!(
+			target: debug_log::DEBUG_LOG_TARGET,
+			"The pack could not be extracted from the archive {display}. Error, with the errors that caused it: {}",
+			debug_log::error_chain(&error)
+		);
+
+		format!("Couldn't extract the pack from the archive {display}: {error}")
+	})?;
 
 	if extracted_packs.packs.len() != 1 {
 		return Err(several_packs_error(
@@ -489,6 +629,16 @@ fn squash(
 				status_update_message = receiver.recv() => match status_update_message {
 					Some(status_update) => match status_update {
 						PackSquasherStatus::PackFileProcessed(pack_file_status) => {
+							log::debug!(
+								target: debug_log::DEBUG_LOG_TARGET,
+								"Result for the pack file {}: strategy {:?}, skipped {}, intentionally skipped {}, error {:?}",
+								pack_file_status.path().as_str(),
+								pack_file_status.optimization_strategy(),
+								pack_file_status.skipped(),
+								pack_file_status.intentionally_skipped(),
+								pack_file_status.optimization_error()
+							);
+
 							total_file_count += 1;
 							processed_file_count += 1 - u64::from(pack_file_status.skipped());
 
@@ -528,6 +678,10 @@ fn squash(
 						}
 						PackSquasherStatus::ZipFinish => {
 							info!("Finishing up ZIP file...");
+							log::debug!(
+								target: debug_log::DEBUG_LOG_TARGET,
+								"All pack files were processed. Finishing the ZIP file: writing its central directory and the other structures"
+							);
 
 							// Move on to the "finishing" title phase
 							if let Some(title_controller) = &mut title_controller {
@@ -706,5 +860,12 @@ fn init_logger(enable_emoji: bool, enable_colors: bool) {
 		logger_builder.parse_filters(&log_filters);
 	}
 
-	logger_builder.init();
+	// The console logger is put behind the logger that also writes the debug log file, if the options ask for it.
+	// The maximum level is the highest one, because the detailed messages of the library and the debug log
+	// need them, and every logger decides what it wants
+	log::set_max_level(log::LevelFilter::Trace);
+
+	if log::set_boxed_logger(Box::new(debug_log::TeeLogger::new(logger_builder.build()))).is_err() {
+		eprintln!("The logger could not be started");
+	}
 }

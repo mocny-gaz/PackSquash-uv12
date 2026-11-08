@@ -45,6 +45,8 @@
   - [`bulk_report_file`](#bulk_report_file)
   - [`bulk_archive_extensions`](#bulk_archive_extensions)
   - [`bulk_scan_depth`](#bulk_scan_depth)
+  - [`log`](#log)
+  - [`log_file`](#log_file)
   - [`zip_spec_conformance_level`](#zip_spec_conformance_level)
   - [`size_increasing_zip_obfuscation`](#size_increasing_zip_obfuscation)
   - [`percentage_of_zip_structures_tuned_for_obfuscation_discretion`](#percentage_of_zip_structures_tuned_for_obfuscation_discretion)
@@ -1016,7 +1018,76 @@ of these extensions is read by its contents, so a file that is not an archive is
 **Default value**: `32`
 
 How many directory levels below [`bulk_input_directory`](#bulk_input_directory) the bulk
-mode searches. A pack or an archive directly in the input directory is at level 1.
+mode searches. A pack or an archive directly in the input directory is at level 1. It is
+also how many levels deep the bulk mode looks for packs inside an archive, so a pack that
+is 10 folders deep in a `.7z` file is found with a value of 10 or more. For archives, the
+value of [`archive_pack_search_depth`](#archive_pack_search_depth) is used if it is higher.
+
+### `log`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+When `true`, PackSquash writes a debug log: a text file with every detail of what it did
+and decided, so that a problem can be understood and fixed without having the pack. Send
+this file when something does not work as it should. See [`log_file`](#log_file) for where it
+is written. The log is replaced in every run. PackSquash prints where it wrote it.
+
+The log has, with the time of each line:
+
+- The version and build of PackSquash, the operating system, the command line, the working
+  directory, the temporary directory, the `PACKSQUASH_LOG` and `RUST_LOG` environment variables
+  and the `PATH`, which says which helper programs can be found.
+- The whole options file, as it is, and the options that only the command-line program reads.
+- The pack: the edition (Java or Bedrock), the Minecraft quirks that it works around, the asset
+  types that apply to the game versions of the pack metadata, and the overlay directories.
+- Every pack file: where it is and its size, the asset types that match its path, which file
+  options it tries and which one fits, and how it ended (optimized, copied as it is, skipped,
+  or an error), with the reason.
+- The mcchanges pack: where it is, what it is, the game version, and the layer that each pack
+  file was found in. For each file, which entry it was compared with, the hash token of the
+  mcchanges pack, the hash token that the pack file has for the same algorithm, and whether they
+  are identical. Also the language keys that were removed, and how many pack files are identical
+  to each game version when the version is chosen automatically.
+- The OptiFine sky entries: the image that each one uses, how its path was resolved, and whether
+  the image is in the pack.
+- Archives: the first bytes of the file, which format they are, how many entries and files they
+  have, which packs were found, which entries were not extracted because their name is not safe
+  or because they are links, and the helper programs that were run, with what they printed.
+- The bulk mode: what was searched and not searched, and what happened to each pack.
+- Every error, with all the errors that caused it, and the technical details of each. For
+  example, the kind of an input and output error and its code in the operating system, why a
+  Vorbis audio file could not be read, why a PNG image could not be decoded, or why an archive
+  could not be opened.
+- The panics, with their backtrace, and the exit code at the end.
+
+The log has the paths of your files and the text of your options file. Read it before you
+publish it.
+
+Example:
+
+```toml
+log = true
+```
+
+### `log_file`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: `'packsquash-debug.log'` in the directory of the options file
+
+The path of the debug log file, if [`log`](#log) is `true`. If PackSquash reads the options
+from the standard input, the default file is in the working directory. It is an error to set
+this option when `log` is not `true`. If the file can not be written, PackSquash says so and
+goes on without a log.
+
+Example:
+
+```toml
+log = true
+log_file = 'C:\\path\\to\\debug.log'
+```
 
 ### `zip_spec_conformance_level`
 

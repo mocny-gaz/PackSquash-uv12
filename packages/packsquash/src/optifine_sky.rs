@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
+use crate::debug_log::detail;
 use crate::vfs::{IteratorTraversalOptions, VirtualFileSystem, read_file};
 
 #[cfg(test)]
@@ -256,9 +257,25 @@ impl SkyImageOptimizer {
 			// An entry is only considered when the image is a file that only this pack can provide.
 			// The game has no OptiFine files, but it does have the other textures
 			let missing_image_of = |entry_path: &str, text: &str| {
-				source_image_path(entry_path, &source_property(text)).filter(|image_path| {
+				let source = source_property(text);
+				let image_path = source_image_path(entry_path, &source);
+				let missing = image_path.clone().filter(|image_path| {
 					image_path.starts_with(OPTIFINE_DIRECTORY) && !all_paths.contains(image_path)
-				})
+				});
+
+				detail!(
+					"OptiFine sky entry {entry_path}: source property {source:?}, image resolved to {}, {}",
+					image_path
+						.as_deref()
+						.unwrap_or("nothing, because the path can't be told for sure"),
+					if missing.is_some() {
+						"the image is not in the pack"
+					} else {
+						"the image is in the pack, or it could be provided by the game or another pack"
+					}
+				);
+
+				missing
 			};
 
 			// OptiFine loads the numbered entries of a directory in order, and stops at the first number

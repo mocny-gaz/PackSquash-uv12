@@ -537,3 +537,48 @@ fn an_input_file_that_is_not_an_archive_is_an_error() {
 
 	assert_eq!(run_bulk(&options(&root.path().join("nopack.tar"))).code, 0);
 }
+
+#[test]
+fn packs_deep_inside_an_archive_are_found_with_a_deeper_search() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	// 7 directories deep: the default depth inside archives is 4
+	write_tar(&base.join("deep.tar"), &["a/b/c/d/e/f/g"]);
+
+	let outputs = RefCell::new(Vec::new());
+	let table: Table = "".parse().unwrap();
+	let mut squash = |squash_options: SquashOptions| -> Result<(), String> {
+		outputs
+			.borrow_mut()
+			.push(squash_options.global_options.output_file_path.clone());
+		fs::write(squash_options.global_options.output_file_path, b"RESULT")
+			.map_err(|error| error.to_string())
+	};
+
+	// The default depth does not find it
+	assert_eq!(
+		run(
+			&options(base),
+			4,
+			ExtractLimits::default(),
+			&table,
+			&mut squash
+		),
+		0
+	);
+	assert!(outputs.borrow().is_empty());
+
+	// The depth of the bulk mode does
+	assert_eq!(
+		run(
+			&options(base),
+			10,
+			ExtractLimits::default(),
+			&table,
+			&mut squash
+		),
+		0
+	);
+	assert_eq!(outputs.borrow().len(), 1);
+}

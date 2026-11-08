@@ -120,6 +120,12 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 		}
 
 		if is_pack_directory(&directory) {
+			debug!(
+				target: crate::debug_log::DEBUG_LOG_TARGET,
+				"Bulk search: {} is a pack directory (level {level}), so it is not searched inside",
+				directory.display()
+			);
+
 			found.push(Found::Directory(directory));
 			continue;
 		}
@@ -147,6 +153,13 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 			if kind.is_dir() {
 				if level < options.scan_depth {
 					subdirectories.push((path, level + 1));
+				} else {
+					debug!(
+						target: crate::debug_log::DEBUG_LOG_TARGET,
+						"Bulk search: {} is not searched, because it is deeper than bulk_scan_depth ({})",
+						path.display(),
+						options.scan_depth
+					);
 				}
 			} else if kind.is_file() {
 				let file_name = file_name_of(&path);
@@ -157,6 +170,15 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 
 				// A file in the input directory is at level 1, like a directory in it
 				if !is_archive || level + 1 > options.scan_depth {
+					if is_archive {
+						debug!(
+							target: crate::debug_log::DEBUG_LOG_TARGET,
+							"Bulk search: the archive {} is not opened, because it is deeper than bulk_scan_depth ({})",
+							path.display(),
+							options.scan_depth
+						);
+					}
+
 					continue;
 				}
 
@@ -180,6 +202,13 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 					Ok(Some(_)) => found.push(Found::Skipped(path, "it has no pack".into())),
 					Ok(None) => found.push(Found::Skipped(path, "it is not an archive".into())),
 					Err(error) => {
+						debug!(
+							target: crate::debug_log::DEBUG_LOG_TARGET,
+							"The archive {} could not be read. Error, with the errors that caused it: {}",
+							path.display(),
+							crate::debug_log::error_chain(&error)
+						);
+
 						found.push(Found::Skipped(path, format!("it can not be read: {error}")))
 					}
 				}
@@ -214,10 +243,19 @@ fn discover_archive_file(path: &Path, archive_search_depth: usize) -> Result<Vec
 			directory with packs, or a ZIP, 7z, TAR (also .tar.gz, .tar.xz, .tar.zst and .tar.bz2) or RAR archive",
 			path.display()
 		)),
-		Err(error) => Err(format!(
-			"Couldn't read the archive {}: {error}",
-			path.display()
-		))
+		Err(error) => {
+			debug!(
+				target: crate::debug_log::DEBUG_LOG_TARGET,
+				"The archive {} could not be read. Error, with the errors that caused it: {}",
+				path.display(),
+				crate::debug_log::error_chain(&error)
+			);
+
+			Err(format!(
+				"Couldn't read the archive {}: {error}",
+				path.display()
+			))
+		}
 	}
 }
 
@@ -421,6 +459,14 @@ pub fn run(
 
 		return 4;
 	};
+	debug!(
+		target: crate::debug_log::DEBUG_LOG_TARGET,
+		"Bulk search done: {} packs or archives with packs, {} skipped. Directory levels searched: {} (bulk_scan_depth), levels searched inside archives: {archive_search_depth}",
+		found.iter().filter(|item| !matches!(item, Found::Skipped(..))).count(),
+		found.iter().filter(|item| matches!(item, Found::Skipped(..))).count(),
+		options.scan_depth
+	);
+
 	let mut report = String::new();
 	let mut summary = Summary::default();
 
@@ -736,6 +782,12 @@ fn process_archive(
 	let extracted = match extract_packs(archive, scan, archive_search_depth, extract_limits) {
 		Ok(extracted) => extracted,
 		Err(error) => {
+			debug!(
+				target: crate::debug_log::DEBUG_LOG_TARGET,
+				"The packs could not be extracted from the archive {}. Error, with the errors that caused it: {}",
+				archive.display(),
+				crate::debug_log::error_chain(&error)
+			);
 			*index += 1;
 
 			return vec![failure(summary, *index, format!("{error}"))];

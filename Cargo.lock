@@ -1842,6 +1842,7 @@ dependencies = [
  "java-properties",
  "json_comments",
  "jsonpath_lib",
+ "log",
  "lzma-rust2",
  "mach2",
  "memchr",

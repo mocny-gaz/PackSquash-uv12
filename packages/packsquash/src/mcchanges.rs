@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use spng::{ContextFlags, DecodeFlags, Format};
 use thiserror::Error;
 
+use crate::debug_log::detail;
 use crate::vfs::{
 	IteratorTraversalOptions, VfsPackFileIterEntry, VirtualFileSystem, read_file, read_to_end
 };
@@ -336,6 +337,20 @@ impl McChanges {
 			(None, Some(_)) => return Err(mcchanges.not_versioned_error(vfs, path))
 		};
 
+		detail!(
+			"mcchanges pack: {}",
+			mcchanges.layers.as_ref().map_or_else(
+				|| "it has no version index, so it is used as one set of files".to_string(),
+				|layers| format!(
+					"game version {} selected, which has {} layers from {} down to {}",
+					layers.first().map_or("?", |layer| layer.version.as_str()),
+					layers.len(),
+					layers.first().map_or("?", |layer| layer.version.as_str()),
+					layers.last().map_or("?", |layer| layer.version.as_str())
+				)
+			)
+		);
+
 		Ok(mcchanges)
 	}
 
@@ -403,6 +418,15 @@ impl McChanges {
 
 			McChangesSource::Archive(ZipArchive::parse(archive_data)?)
 		};
+
+		detail!(
+			"mcchanges pack at {}: {}",
+			path.display(),
+			match &source {
+				McChangesSource::Directory(_) => "a directory",
+				McChangesSource::Archive(_) => "a ZIP archive"
+			}
+		);
 
 		Ok(Self {
 			source,
@@ -639,6 +663,17 @@ impl McChanges {
 			identical_files.push(running_total as usize);
 		}
 
+		detail!(
+			"Automatic game version choice, pack files identical to each version of the mcchanges pack: {}",
+			index
+				.versions
+				.iter()
+				.zip(&identical_files)
+				.map(|(version, count)| format!("{version}={count}"))
+				.collect::<Vec<_>>()
+				.join(", ")
+		);
+
 		let best_count = identical_files.iter().copied().max().unwrap_or(0);
 		let best_position = identical_files
 			.iter()
@@ -684,10 +719,21 @@ impl McChanges {
 		relative_path: &str
 	) -> Option<McChangesEntry> {
 		let Some(layers) = &self.layers else {
-			return self
+			let entry = self
 				.read_raw(vfs, relative_path)
 				.await
 				.map(McChangesEntry::Data);
+
+			detail!(
+				"mcchanges: {relative_path}: {}",
+				match &entry {
+					Some(McChangesEntry::Data(data)) =>
+						format!("found as a data file of {} bytes", data.len()),
+					_ => "not in the mcchanges pack".to_string()
+				}
+			);
+
+			return entry;
 		};
 
 		for (index, layer) in layers.iter().enumerate() {
@@ -695,10 +741,21 @@ impl McChanges {
 				.read_raw(vfs, &format!("{}/{relative_path}", layer.version))
 				.await
 			{
+				detail!(
+					"mcchanges: {relative_path}: found as a data file of {} bytes in the layer of the game version {}",
+					data.len(),
+					layer.version
+				);
+
 				return Some(McChangesEntry::Data(data));
 			}
 
 			if let Some(hash) = layer.hashed_files.get(relative_path) {
+				detail!(
+					"mcchanges: {relative_path}: found as the hash token {hash} in the layer of the game version {}",
+					layer.version
+				);
+
 				if is_language_token(hash) {
 					// A language file whose keys can't be loaded is left as an unmatchable hash
 					return Some(
@@ -715,9 +772,20 @@ impl McChanges {
 			}
 
 			if layer.removed_files.contains(relative_path) {
+				detail!(
+					"mcchanges: {relative_path}: deleted by the layer of the game version {}, so it does not exist in the selected version",
+					layer.version
+				);
+
 				return None;
 			}
 		}
+
+		detail!(
+			"mcchanges: {relative_path}: not in any layer from the game version {} to {}",
+			layers.first().map_or("?", |layer| layer.version.as_str()),
+			layers.last().map_or("?", |layer| layer.version.as_str())
+		);
 
 		None
 	}
@@ -812,6 +880,8 @@ impl McChanges {
 
 		// The pack metadata, manifest and icons identify the pack itself, and must always be kept
 		if is_pack_identity_file(relative_path) {
+			detail!("mcchanges: {relative_path}: identifies the pack, so it is always kept");
+
 			return false;
 		}
 
@@ -849,18 +919,40 @@ impl McChanges {
 			read_file(vfs, &pack_file.file_path).await,
 			self.lookup(vfs, relative_path).await
 		) else {
+			detail!(
+				"mcchanges: {relative_path}: kept, because it is not in the mcchanges pack or one of them can't be read"
+			);
+
 			return false;
 		};
 
-		match mcchanges_entry {
-			McChangesEntry::Hash(hash) => hash_matches(&pack_data, &hash),
+		let redundant = match &mcchanges_entry {
+			McChangesEntry::Hash(hash) => hash_matches(&pack_data, hash),
 			McChangesEntry::Data(mcchanges_data) if relative_path.ends_with(".json") => {
-				json_is_identical(&pack_data, &mcchanges_data)
+				json_is_identical(&pack_data, mcchanges_data)
 			}
-			McChangesEntry::Data(mcchanges_data) => pack_data == mcchanges_data,
+			McChangesEntry::Data(mcchanges_data) => &pack_data == mcchanges_data,
 			// Identical language files are left out by the language key removal instead
 			McChangesEntry::LanguageKeys(_) => false
-		}
+		};
+
+		detail!(
+			"mcchanges: {relative_path}: {}. {}",
+			if redundant {
+				"left out, it is the same as in the mcchanges pack"
+			} else {
+				"kept, it is different"
+			},
+			match &mcchanges_entry {
+				McChangesEntry::Hash(hash) => describe_hash_comparison(&pack_data, hash),
+				McChangesEntry::Data(data) =>
+					describe_data_comparison(relative_path, &pack_data, data),
+				McChangesEntry::LanguageKeys(_) =>
+					"language file, handled by the removal of language keys".to_string()
+			}
+		);
+
+		redundant
 	}
 
 	/// Checks whether a texture, along with its animation metadata, is the same as the
@@ -878,11 +970,26 @@ impl McChanges {
 			return false;
 		};
 
-		let texture_is_identical = match mcchanges_texture {
-			McChangesEntry::Data(data) => png_is_identical(&pack_texture, &data),
-			McChangesEntry::Hash(hash) => hash_matches(&pack_texture, &hash),
+		let texture_is_identical = match &mcchanges_texture {
+			McChangesEntry::Data(data) => png_is_identical(&pack_texture, data),
+			McChangesEntry::Hash(hash) => hash_matches(&pack_texture, hash),
 			McChangesEntry::LanguageKeys(_) => false
 		};
+
+		detail!(
+			"mcchanges: {texture_relative_path}: the texture is {}. {}",
+			if texture_is_identical {
+				"the same pixels"
+			} else {
+				"different, so the texture and its metadata are kept"
+			},
+			match &mcchanges_texture {
+				McChangesEntry::Hash(hash) => describe_hash_comparison(&pack_texture, hash),
+				McChangesEntry::Data(data) =>
+					describe_data_comparison(texture_relative_path, &pack_texture, data),
+				McChangesEntry::LanguageKeys(_) => "it is a language file token".to_string()
+			}
+		);
 
 		if !texture_is_identical {
 			return false;
@@ -891,7 +998,7 @@ impl McChanges {
 		let mut metadata_file_path = OsString::from(texture_file_path);
 		metadata_file_path.push(".mcmeta");
 
-		match (
+		let redundant = match (
 			read_file(vfs, Path::new(&metadata_file_path)).await,
 			self.lookup(vfs, &format!("{texture_relative_path}.mcmeta"))
 				.await
@@ -904,7 +1011,18 @@ impl McChanges {
 				hash_matches(&pack_metadata, &hash)
 			}
 			_ => false
-		}
+		};
+
+		detail!(
+			"mcchanges: {texture_relative_path}: with its animation metadata, the texture is {}",
+			if redundant {
+				"left out, because the metadata is the same, or neither has any"
+			} else {
+				"kept, because only one of the pack and the mcchanges pack has animation metadata, or it is different"
+			}
+		);
+
+		redundant
 	}
 
 	/// Removes the keys of a language file that have the same value in the language file
@@ -985,6 +1103,66 @@ fn hexadecimal(digest: impl AsRef<[u8]>) -> String {
 		.iter()
 		.map(|byte| format!("{byte:02x}"))
 		.collect()
+}
+
+/// Describes how the data of a pack file compares with a hash token of the mcchanges pack, for the debug
+/// log: the token of the mcchanges pack, the token that the pack file has for the same algorithm, and the
+/// result. The algorithm and the digest are what the build script of the mcchanges pack wrote.
+fn describe_hash_comparison(data: &[u8], token: &str) -> String {
+	let algorithm = token.split_once(':').map_or("", |(algorithm, _)| algorithm);
+	let pack_token = match algorithm {
+		"sha1" => format!("sha1:{}", hexadecimal(Sha1::digest(data))),
+		"sha256" => format!("sha256:{}", hexadecimal(Sha256::digest(data))),
+		"json" => parse_json(data).map_or_else(
+			|| "the pack file is not JSON that can be read".to_string(),
+			|value| {
+				format!(
+					"json:{}",
+					hexadecimal(Sha256::digest(canonical_json(&value)))
+				)
+			}
+		),
+		"png" => match (png_size(data), decode_png(data)) {
+			(Some((width, height)), Some(pixels)) => {
+				format!(
+					"png:{width}x{height}:{}",
+					hexadecimal(Sha256::digest(&pixels))
+				)
+			}
+			_ => "the pack file is not a PNG image that can be decoded".to_string()
+		},
+		_ => "the algorithm of the token is not known".to_string()
+	};
+
+	format!(
+		"mcchanges token {token}, pack file token {pack_token} => {}",
+		if hash_matches(data, token) {
+			"identical"
+		} else {
+			"different"
+		}
+	)
+}
+
+/// Describes how the data of a pack file compares with the data file of the mcchanges pack, for the debug log.
+fn describe_data_comparison(relative_path: &str, pack_data: &[u8], mcchanges_data: &[u8]) -> String {
+	let (method, identical) = if relative_path.ends_with(".png") {
+		("PNG pixels", png_is_identical(pack_data, mcchanges_data))
+	} else if relative_path.ends_with(".json") {
+		(
+			"canonical JSON",
+			json_is_identical(pack_data, mcchanges_data)
+		)
+	} else {
+		("bytes", pack_data == mcchanges_data)
+	};
+
+	format!(
+		"mcchanges data file of {} bytes, pack file of {} bytes, compared as {method} => {}",
+		mcchanges_data.len(),
+		pack_data.len(),
+		if identical { "identical" } else { "different" }
+	)
 }
 
 /// Checks whether some data matches a token, in the format `algorithm:digest`. The algorithms are:
