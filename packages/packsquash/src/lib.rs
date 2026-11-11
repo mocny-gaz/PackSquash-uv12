@@ -1222,16 +1222,33 @@ async fn match_and_process_pack_file(
 	if let Some(process_data) = process_data {
 		let (vfs_file_meta, pack_file_size_hint) = vfs_file_meta.unwrap();
 
-		pack_file_process_failed = !process_pack_file(
+		pack_file_process_failed = match process_pack_file(
 			process_data,
 			pack_file_data.relative_path.as_owned(),
 			vfs_file_meta.modification_time,
 			pack_file_size_hint,
 			squash_zip,
 			pack_file_status_sender,
-			squash_options.global_options.recompress_compressed_files
+			squash_options.global_options.recompress_compressed_files,
+			squash_options.global_options.copy_failed_files,
+			None
 		)
-		.await;
+		.await
+		{
+			ProcessOutcome::Done(processed_ok) => !processed_ok,
+			ProcessOutcome::FailedBeforeWriting(error_text) => {
+				!copy_after_failure(
+					squash_options,
+					squash_zip,
+					vfs,
+					pack_file_data,
+					file_data_override,
+					&error_text,
+					pack_file_status_sender
+				)
+				.await
+			}
+		};
 		have_process_data = true;
 	} else {
 		pack_file_process_failed = false;
@@ -1265,12 +1282,104 @@ async fn match_and_process_pack_file(
 	have_process_data || pack_file_open_error.is_some() || pack_file_process_failed
 }
 
+/// Copies a pack file as it is, because optimizing it failed. Returns `false` if that failed too.
+async fn copy_after_failure(
+	squash_options: &SquashOptions,
+	squash_zip: &SquashZip<impl AsyncRead + AsyncSeek + Unpin>,
+	vfs: &impl VirtualFileSystem,
+	pack_file_data: &VfsPackFileIterEntry,
+	file_data_override: Option<&Arc<[u8]>>,
+	error_text: &str,
+	pack_file_status_sender: Option<&Sender<PackSquasherStatus>>
+) -> bool {
+	let mut vfs_file_meta = None;
+
+	let process_data = PackFileAssetTypeMatches::of_custom_asset_type().process_data(
+		Some(FileOptions::CustomFileOptions(CustomFileOptions {
+			force_include: true,
+			..Default::default()
+		})),
+		|| {
+			if let Some(data) = file_data_override {
+				vfs_file_meta = Some((
+					VfsPackFileMetadata {
+						modification_time: None
+					},
+					data.len() as u64
+				));
+
+				return Some((
+					PackFileRead::Memory(io::Cursor::new(Arc::clone(data))),
+					data.len() as u64
+				));
+			}
+
+			match vfs.open(&pack_file_data.file_path) {
+				Ok(vfs_file) => {
+					vfs_file_meta = Some((vfs_file.metadata, vfs_file.file_size_hint));
+					Some((
+						PackFileRead::Vfs(vfs_file.file_read),
+						vfs_file.file_size_hint
+					))
+				}
+				Err(_) => None
+			}
+		}
+	);
+
+	let Some(process_data) = process_data else {
+		return false;
+	};
+
+	detail!(
+		"{}: optimizing failed ({error_text}), so the file is copied as it is",
+		pack_file_data.relative_path.as_str()
+	);
+
+	if let Some(tx) = pack_file_status_sender {
+		tx.send(PackSquasherStatus::Notice(Cow::Owned(format!(
+			"{} could not be optimized ({error_text}), so it was copied as it is",
+			pack_file_data.relative_path.as_str()
+		))))
+		.await
+		.ok();
+	}
+
+	let (vfs_file_meta, pack_file_size_hint) = vfs_file_meta.unwrap();
+
+	matches!(
+		process_pack_file(
+			process_data,
+			pack_file_data.relative_path.as_owned(),
+			vfs_file_meta.modification_time,
+			pack_file_size_hint,
+			squash_zip,
+			pack_file_status_sender,
+			squash_options.global_options.recompress_compressed_files,
+			false,
+			Some(error_text)
+		)
+		.await,
+		ProcessOutcome::Done(true)
+	)
+}
+
+/// What happened when a pack file was processed.
+enum ProcessOutcome {
+	/// The file was processed. The value is `false` if an error happened, which was reported.
+	Done(bool),
+	/// The file could not be processed, and nothing was added to the ZIP file or reported yet. The value
+	/// is the error. The file can be copied as it is instead.
+	FailedBeforeWriting(String)
+}
+
 /// Processes the provided pack file, adding it to the output ZIP file as appropriate and
 /// notifying client code via a channel about the result of the operation. If some error
 /// occurs, the state of the output ZIP file may become invalid, and no further pack files
 /// should be processed and added to it.
 ///
 /// The return value is `true` if no error occurred, and `false` if some error happened.
+#[allow(clippy::too_many_arguments)]
 async fn process_pack_file(
 	pack_file_process_data: PackFileProcessData,
 	relative_path: RelativePath<'static>,
@@ -1278,8 +1387,10 @@ async fn process_pack_file(
 	file_size_hint: u64,
 	squash_zip: &SquashZip<impl AsyncRead + AsyncSeek + Unpin>,
 	pack_file_status_sender: Option<&Sender<PackSquasherStatus>>,
-	compress_already_compressed: bool
-) -> bool {
+	compress_already_compressed: bool,
+	retry_allowed: bool,
+	fallback_reason: Option<&str>
+) -> ProcessOutcome {
 	// We may have to change the file extension to a canonical one that's accepted by Minecraft.
 	// Do that early, because we store the file with the canonical extension in the ZIP
 	let pack_file_path = match pack_file_process_data.canonical_extension {
@@ -1299,7 +1410,7 @@ async fn process_pack_file(
 	);
 
 	let mut optimization_error = None;
-	let optimization_strategy;
+	let mut optimization_strategy;
 
 	if copy_previous_file {
 		optimization_error = squash_zip
@@ -1322,6 +1433,20 @@ async fn process_pack_file(
 			.optimized_byte_chunks_stream
 			.peekable();
 
+		// If the file can't be processed at all, nothing was added to the ZIP file yet, so the caller can
+		// try again to copy the file as it is
+		if retry_allowed
+			&& let Some(Err(err)) = Pin::new(&mut processed_pack_file_chunks).peek().await
+		{
+			detail_error!(
+				"{}: the pack file could not be processed: {}",
+				pack_file_path.as_str(),
+				error_chain(err)
+			);
+
+			return ProcessOutcome::FailedBeforeWriting(err.to_string());
+		}
+
 		// Peek the strategy string contained in the first processed chunk, and use that
 		// as the optimization strategy string for all the file
 		optimization_strategy = {
@@ -1337,6 +1462,12 @@ async fn process_pack_file(
 			)
 		}
 		.clone();
+
+		if let Some(reason) = fallback_reason {
+			optimization_strategy = Cow::Owned(format!(
+				"Copied as it is, because optimizing it failed: {reason}"
+			));
+		}
 
 		// Stop taking chunks of processed data if some error happens, and store
 		// the error that happened. After that, unwrap the successful chunks
@@ -1394,7 +1525,7 @@ async fn process_pack_file(
 		.ok();
 	}
 
-	all_ok
+	ProcessOutcome::Done(all_ok)
 }
 
 /// The byte source of a pack file: either a file of the virtual filesystem, or data that

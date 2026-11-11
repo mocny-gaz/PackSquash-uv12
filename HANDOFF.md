@@ -320,6 +320,17 @@ The field is still called `found_unresolvable_moj_import`.
 - Risk, told in the docs and in a notice: a file identical to an old version only is left out.
 - Tested: 2 new unit tests and the updated squash test.
 
+### 3.19 Copy failed files, keep unknown files by default (b2, b3)
+
+- `process_pack_file` (lib.rs) returns `ProcessOutcome`: `Done(ok)` or `FailedBeforeWriting(error)`. With `retry_allowed` and an error in
+  the first chunk of the stream (peeked before anything is added to the ZIP file), it returns the error. `match_and_process_pack_file`
+  then calls `copy_after_failure`, which processes the file again as a force included custom file (a pass through copy), sends a notice,
+  and sets the strategy to "Copied as it is, because optimizing it failed: ...". Errors after the first chunk still fail the pack.
+- New global option `copy_failed_files` (default true). `include_unrecognized_asset_files` default changed to true.
+- Tests: `copy_as_is_tests::files_that_fail_to_optimize_are_copied_as_they_are_unless_asked_not_to`; two older tests set the options to
+  false (bedrock `lenient_json_...`, optifine_sky `squashing_leaves_out_...`). The full library run: 203 pass. `ditherbomb_*` tests use a
+  lot of memory and get killed in the 4 GB sandbox, and the DMI test needs /sys/class/dmi; skip them with `-- --skip ditherbomb --skip get_aggregated_dmi`.
+
 ## 4. File map
 
 The user guide is `docs/fork/USAGE.md`. The plain text guides for the owner are in

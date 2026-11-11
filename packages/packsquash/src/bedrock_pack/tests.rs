@@ -426,7 +426,9 @@ fn lenient_json_can_be_copied_as_is_on_request() {
 	let lenient_json = b"{\"a\": [1, 2,],}";
 	write_file(pack_dir.path(), "entity/lenient.json", lenient_json);
 
-	let SquashResult { result, .. } = squash(pack_dir.path(), |_| {});
+	let SquashResult { result, .. } = squash(pack_dir.path(), |options| {
+		options.global_options.copy_failed_files = false;
+	});
 	assert!(result.is_err(), "invalid JSON should be reported");
 
 	let SquashResult { output, result, .. } = squash(pack_dir.path(), |options| {

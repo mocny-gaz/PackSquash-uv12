@@ -7,7 +7,7 @@ use crate::config::{CustomFileOptions, FileOptions, GlobalOptions, SquashOptions
 use crate::mcchanges::ZipArchive;
 use crate::mcchanges::tests::{png, temp_dir, write_file};
 use crate::vfs::os_fs::OsFilesystem;
-use crate::{PackSquasher, PackSquasherStatus};
+use crate::{PackSquasher, PackSquasherError, PackSquasherStatus};
 
 fn parse(options: &str) -> FileOptions {
 	serde_json::from_str(options).expect("The file options should be valid")
@@ -95,6 +95,14 @@ struct Squashed {
 
 /// Not async because `PackSquasher::run` starts its own runtime.
 fn squash(pack_dir: &Path, edit: impl FnOnce(&mut SquashOptions)) -> Squashed {
+	try_squash(pack_dir, edit).expect("Squashing a valid pack should succeed")
+}
+
+/// Like [`squash`], but returns the error if the operation fails.
+fn try_squash(
+	pack_dir: &Path,
+	edit: impl FnOnce(&mut SquashOptions)
+) -> Result<Squashed, PackSquasherError> {
 	let output_dir = temp_dir();
 	let output_path = output_dir.path().join("pack.zip");
 
@@ -110,9 +118,7 @@ fn squash(pack_dir: &Path, edit: impl FnOnce(&mut SquashOptions)) -> Squashed {
 	edit(&mut options);
 
 	let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
-	PackSquasher::new()
-		.run(OsFilesystem, options, Some(sender))
-		.expect("Squashing a valid pack should succeed");
+	PackSquasher::new().run(OsFilesystem, options, Some(sender))?;
 
 	let mut statuses = Vec::new();
 	while let Ok(status) = receiver.try_recv() {
@@ -121,10 +127,10 @@ fn squash(pack_dir: &Path, edit: impl FnOnce(&mut SquashOptions)) -> Squashed {
 		}
 	}
 
-	Squashed {
+	Ok(Squashed {
 		output: ZipArchive::parse(fs::read(output_path).unwrap()).unwrap(),
 		statuses
-	}
+	})
 }
 
 fn copy_as_is() -> FileOptions {
@@ -277,6 +283,80 @@ fn unrecognized_asset_files_are_kept_only_if_asked() {
 			// Only the one that is not in a directory of assets, when the files are kept
 			if keep { 1 } else { 5 },
 			"keep: {keep}: {statuses:?}"
+		);
+	}
+}
+
+#[test]
+fn files_that_fail_to_optimize_are_copied_as_they_are_unless_asked_not_to() {
+	let broken_ogg = [b"OggS".as_slice(), &[0; 60]].concat();
+	let broken_png = [b"\x89PNG\r\n\x1a\n".as_slice(), b"not really a PNG"].concat();
+	let not_a_png = b"JFIF this is not a PNG at all".to_vec();
+	let broken_json = b"{ this is not json".to_vec();
+
+	for copy_failed_files in [true, false] {
+		let pack_dir = temp_dir();
+		pack(pack_dir.path());
+		write_file(
+			pack_dir.path(),
+			"assets/minecraft/sounds/mob/bad.ogg",
+			&broken_ogg
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/minecraft/textures/blocks/bad.png",
+			&broken_png
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/minecraft/textures/blocks/jpeg.png",
+			&not_a_png
+		);
+		write_file(
+			pack_dir.path(),
+			"assets/some_mod/models/bad.json",
+			&broken_json
+		);
+
+		let result = try_squash(pack_dir.path(), |options| {
+			options.global_options.copy_failed_files = copy_failed_files;
+		});
+
+		if !copy_failed_files {
+			assert!(
+				result.is_err(),
+				"a file that can't be optimized fails the operation"
+			);
+			continue;
+		}
+
+		let Squashed { output, statuses } = result.expect("the files are copied as they are");
+
+		for (path, content) in [
+			("assets/minecraft/sounds/mob/bad.ogg", &broken_ogg),
+			("assets/minecraft/textures/blocks/bad.png", &broken_png),
+			("assets/minecraft/textures/blocks/jpeg.png", &not_a_png),
+			("assets/some_mod/models/bad.json", &broken_json)
+		] {
+			assert_eq!(
+				output.read(path).as_deref(),
+				Some(content.as_slice()),
+				"{path}"
+			);
+			assert!(
+				statuses
+					.iter()
+					.any(|(status_path, skipped)| status_path == path && !skipped),
+				"{path}: {statuses:?}"
+			);
+		}
+
+		// The files that can be optimized still are
+		assert!(
+			output
+				.read("assets/minecraft/models/block/b.json")
+				.unwrap()
+				.len() < MODEL.len()
 		);
 	}
 }

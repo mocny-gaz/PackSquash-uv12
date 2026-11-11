@@ -313,6 +313,16 @@ pub struct GlobalOptions {
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
 	pub skip_optifine_sky_entries_with_missing_images: bool,
+	/// If PackSquash can not optimize a file, because the file is not what its extension says (like an `.ogg`
+	/// file that does not have Vorbis audio), is damaged, or is not supported, it copies the file to the
+	/// result as it is, tells so, and goes on, instead of making the pack processing fail. This also
+	/// keeps the files that mods read in their own format. The file is not optimized, so it is as good or
+	/// as bad as it was. Only a file that fails to be read at all, or that fails after it was
+	/// partly written, still fails the operation. Set to `false` to make every file that can not be
+	/// optimized fail the operation.
+	///
+	/// **Default value**: `true`
+	pub copy_failed_files: bool,
 	/// PackSquash skips the files that it does not recognize, which keeps its output lean, but may
 	/// leave out files that mods read. When this option is enabled, every file in a directory of the
 	/// `assets` directory, like `assets/minecraft` or `assets/some_mod`, is added to the result ZIP
@@ -322,7 +332,7 @@ pub struct GlobalOptions {
 	/// without any optimization. Files outside the `assets` directory are skipped as usual. It has
 	/// no effect on Bedrock Edition packs.
 	///
-	/// **Default value**: `false`
+	/// **Default value**: `true`
 	pub include_unrecognized_asset_files: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include
@@ -384,7 +394,8 @@ impl Default for GlobalOptions {
 
 		Self {
 			skip_pack_icon: false,
-			include_unrecognized_asset_files: false,
+			include_unrecognized_asset_files: true,
+			copy_failed_files: true,
 			validate_pack_metadata_file: true,
 			zip_spec_conformance_level: Default::default(),
 			size_increasing_zip_obfuscation: false,

@@ -211,6 +211,7 @@ fn squash_sky(
 		skip_unused_optifine_sky_images: skip_unused_images,
 		merge_identical_optifine_sky_images: merge_identical_images,
 		skip_optifine_sky_entries_with_missing_images: skip_missing_image_entries,
+		include_unrecognized_asset_files: false,
 		output_file_path: output_path.clone(),
 		..GlobalOptions::default()
 	};

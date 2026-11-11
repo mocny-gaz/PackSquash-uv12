@@ -24,6 +24,7 @@
   - [`automatic_asset_types_mask_detection`](#automatic_asset_types_mask_detection)
   - [`allow_mods`](#allow_mods)
   - [`include_unrecognized_asset_files`](#include_unrecognized_asset_files)
+  - [`copy_failed_files`](#copy_failed_files)
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
@@ -466,9 +467,11 @@ this repository.</sup></sub>
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
-**Default value**: `false`
+**Default value**: `true`
 
-PackSquash only adds to the result the files that it recognizes, and skips the rest.
+The original PackSquash only adds to the result the files that it recognizes, and skips the rest. This fork keeps
+the files of the `assets` directory by default. To skip the unknown files, set this option to `false`.
+When it is `false`, PackSquash skips the files that it does not recognize.
 This keeps the result lean, but mods can read files that PackSquash does not know, so a
 pack for a modded game can lose files that it needs. When this option is `true`, PackSquash
 adds every file that is in a directory of the `assets` directory, like `assets/minecraft`
@@ -485,6 +488,28 @@ Example:
 
 ```toml
 include_unrecognized_asset_files = true
+```
+
+### `copy_failed_files`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `true`
+
+If PackSquash can not optimize a file, it copies the file to the result as it is, says so
+in a notice, and goes on, instead of making the whole pack fail. This happens, for example, with
+an `.ogg` file that does not have Vorbis audio (it can be MP4 audio, or a format that a mod reads), a
+`pack.png` that is not a PNG image, a PNG image that is bigger than the maximum size, or a `.json` or
+`.lang` file that is not valid. The file is not optimized, so it is as good or as bad as it was.
+
+This only works if the file fails before anything of it was written to the result, which is the
+case for the errors above. A file that fails later still fails the pack. Set the option to
+`false` to make every file that can not be optimized fail the pack, like the original PackSquash.
+
+Example:
+
+```toml
+copy_failed_files = false
 ```
 
 ### `skip_pack_icon`

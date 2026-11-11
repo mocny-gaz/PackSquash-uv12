@@ -71,7 +71,8 @@ The options that this fork adds:
 | `skip_optifine_sky_entries_with_missing_images` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
-| `include_unrecognized_asset_files` | `false` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. |
+| `include_unrecognized_asset_files` | `true` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. Set to `false` to skip them. |
+| `copy_failed_files` | `true` | A file that can not be optimized is copied as it is, with a notice, instead of failing the pack. |
 | `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
 | `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
 | `bulk_input_directory` | not set, so **off** | Squashes every pack found in this folder. |
@@ -319,11 +320,15 @@ connected textures or custom items.
 
 ## Keep the files of mods
 
-PackSquash skips the files that it does not know. A pack for a modded game can have files
-that only a mod reads, and PackSquash would drop them. To keep them:
+The original PackSquash skips the files that it does not know. A pack for a modded game can have
+files that only a mod reads, and it would drop them. The fork keeps them. A file that PackSquash
+can not optimize (an `.ogg` that is not Vorbis, a `pack.png` that is not a PNG, an invalid `.json`)
+is copied as it is, with a notice, and does not fail the pack (`copy_failed_files`).
+
+This is on by default in this fork. To turn it off:
 
 ```toml
-include_unrecognized_asset_files = true
+include_unrecognized_asset_files = false
 ```
 
 Every file in a folder of `assets`, like `assets/minecraft` or `assets/some_mod`, is then
