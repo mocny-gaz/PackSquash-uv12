@@ -2,12 +2,15 @@ use std::{cell::RefCell, fs, path::Path};
 
 use tempfile::TempDir;
 
+use packsquash::pack_archive::{ArchiveFormat, NestedArchive};
+
 use super::*;
 
 fn options(root: &Path) -> BulkOptions {
 	BulkOptions {
 		input_directory: root.to_path_buf(),
-		output_prefix: "squashed_".to_string(),
+		output_directory: None,
+		output_prefix: Some("squashed_".to_string()),
 		output_suffix: String::new(),
 		overwrite: false,
 		backup: true,
@@ -68,6 +71,56 @@ fn write_tar_without_pack(path: &Path) {
 	builder.finish().unwrap();
 }
 
+/// Writes a TAR file with the given files, which can be archives made with `tar_bytes`.
+fn write_tar_files(path: &Path, files: &[(&str, Vec<u8>)]) {
+	fs::write(path, tar_files_bytes(files)).unwrap();
+}
+
+fn tar_files_bytes(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+	let mut builder = tar::Builder::new(Vec::new());
+
+	for (name, data) in files {
+		let mut header = tar::Header::new_gnu();
+		header.set_size(data.len() as u64);
+		header.set_mode(0o644);
+		header.set_cksum();
+		builder.append_data(&mut header, name, &data[..]).unwrap();
+	}
+
+	builder.into_inner().unwrap()
+}
+
+/// The bytes of a TAR archive that has the given packs, each in the given directory.
+fn tar_bytes(packs: &[&str]) -> Vec<u8> {
+	let mut files = Vec::new();
+
+	for pack in packs {
+		let prefix = if pack.is_empty() {
+			String::new()
+		} else {
+			format!("{pack}/")
+		};
+
+		files.push((
+			format!("{prefix}pack.mcmeta"),
+			format!("{{\"pack\":{{\"pack_format\":34,\"description\":\"{pack}\"}}}}").into_bytes()
+		));
+		files.push((format!("{prefix}assets/minecraft/a.txt"), b"hello".to_vec()));
+	}
+
+	let files: Vec<(&str, Vec<u8>)> = files
+		.iter()
+		.map(|(name, data)| (name.as_str(), data.clone()))
+		.collect();
+
+	tar_files_bytes(&files)
+}
+
+/// Searches for packs with the layout of the options.
+fn find(options: &BulkOptions, depth: usize) -> Vec<Found> {
+	discover(options, &Layout::new(options), depth)
+}
+
 struct Run {
 	code: i32,
 	/// The result files that the squash function was asked to write.
@@ -126,43 +179,113 @@ fn archive_stems_lose_the_archive_extensions() {
 #[test]
 fn result_names_use_the_prefix_and_the_suffix() {
 	let mut bulk = options(Path::new("in"));
-	let input = Path::new("in").join("dir").join("Pack.7z");
+	let layout = Layout::new(&bulk);
 
+	assert_eq!(layout.result_name("Pack"), "squashed_Pack");
 	assert_eq!(
-		output_path(&bulk, &input, "Pack", None),
-		Path::new("in/dir/squashed_Pack.zip")
-	);
-	assert_eq!(
-		output_path(&bulk, &input, "Pack", Some("sub/inner")),
-		Path::new("in/dir/squashed_Pack_sub_inner.zip")
+		layout.result_directory(Path::new("in/dir")),
+		Path::new("in/dir"),
+		"the results are next to the input"
 	);
 
-	bulk.output_prefix = String::new();
+	bulk.output_prefix = Some(String::new());
 	bulk.output_suffix = "_small".to_string();
 
+	assert_eq!(Layout::new(&bulk).result_name("Pack"), "Pack_small");
+}
+
+#[test]
+fn an_output_directory_removes_the_default_prefix_and_keeps_the_folders() {
+	let mut bulk = options(Path::new("in"));
+	bulk.output_directory = Some(PathBuf::from("out"));
+	bulk.output_prefix = None;
+
+	let layout = Layout::new(&bulk);
+
+	assert_eq!(layout.result_name("Pack"), "Pack", "no prefix by default");
 	assert_eq!(
-		output_path(&bulk, &input, "Pack", None),
-		Path::new("in/dir/Pack_small.zip")
+		layout.result_directory(Path::new("in/a/b")),
+		Path::new("out/a/b")
 	);
+	assert_eq!(layout.result_directory(Path::new("in")), Path::new("out"));
+
+	bulk.output_prefix = Some("x_".to_string());
+
+	assert_eq!(Layout::new(&bulk).result_name("Pack"), "x_Pack");
+
+	// The input directory as the output directory is the same as no output directory
+	bulk.output_directory = Some(PathBuf::from("in"));
+	bulk.output_prefix = None;
+
+	let layout = Layout::new(&bulk);
+
+	assert!(layout.output_root.is_none());
+	assert_eq!(layout.result_name("Pack"), "squashed_Pack");
+}
+
+#[test]
+fn results_of_archives_are_a_file_or_a_folder_that_mirrors_the_inside() {
+	let dest = Dest {
+		directory: PathBuf::from("out/dir"),
+		name: "big".to_string()
+	};
+
+	assert_eq!(dest.file(), Path::new("out/dir/big.zip"));
+	assert_eq!(dest.pack_file(""), Path::new("out/dir/big/big.zip"));
+	assert_eq!(dest.pack_file("Pack"), Path::new("out/dir/big/Pack.zip"));
+	assert_eq!(
+		dest.pack_file("a/b/Pack"),
+		Path::new("out/dir/big/a/b/Pack.zip")
+	);
+
+	let nested = dest.nested("a/inner.tar.gz");
+
+	assert_eq!(nested.directory, Path::new("out/dir/big/a"));
+	assert_eq!(nested.name, "inner");
+	assert_eq!(dest.nested("root.zip").directory, Path::new("out/dir/big"));
+}
+
+#[test]
+fn nested_archives_are_extracted_in_groups_for_zip_only() {
+	let nested: Vec<NestedArchive> = (0..5)
+		.map(|number| NestedArchive {
+			name: format!("{number}.zip"),
+			size: 1024 * 1024 * 1024
+		})
+		.collect();
+
+	let groups = nested_batches(&nested, ArchiveFormat::Zip);
+
+	assert_eq!(
+		groups.iter().map(Vec::len).collect::<Vec<_>>(),
+		[2, 2, 1],
+		"at most 2 GiB together"
+	);
+	assert_eq!(
+		nested_batches(&nested, ArchiveFormat::SevenZip).len(),
+		1,
+		"a 7z archive is read from the start for every extraction, so everything is extracted at once"
+	);
+	assert!(nested_batches(&[], ArchiveFormat::Zip).is_empty());
 }
 
 #[test]
 fn earlier_results_are_recognized() {
 	let mut bulk = options(Path::new("in"));
 
-	assert!(looks_like_output(&bulk, "squashed_a"));
-	assert!(!looks_like_output(&bulk, "a"));
+	assert!(Layout::new(&bulk).looks_like_output("squashed_a"));
+	assert!(!Layout::new(&bulk).looks_like_output("a"));
 
-	bulk.output_prefix = String::new();
+	bulk.output_prefix = Some(String::new());
 	bulk.output_suffix = "_small".to_string();
 
-	assert!(looks_like_output(&bulk, "a_small"));
-	assert!(!looks_like_output(&bulk, "a"));
+	assert!(Layout::new(&bulk).looks_like_output("a_small"));
+	assert!(!Layout::new(&bulk).looks_like_output("a"));
 
 	bulk.output_suffix = String::new();
 
 	assert!(
-		!looks_like_output(&bulk, "anything"),
+		!Layout::new(&bulk).looks_like_output("anything"),
 		"without prefix and suffix, nothing is a result"
 	);
 }
@@ -182,7 +305,7 @@ fn packs_are_found_in_directories_and_archives() {
 	fs::write(base.join("notes.txt"), b"hi").unwrap();
 	write_tar(&base.join("squashed_old.tar"), &["Old"]);
 
-	let found = discover(&options(base), 4);
+	let found = find(&options(base), 4);
 	let mut kinds: Vec<String> = found
 		.iter()
 		.map(|item| match item {
@@ -217,17 +340,17 @@ fn the_scan_depth_limits_the_search() {
 	let mut bulk = options(root.path());
 	bulk.scan_depth = 3;
 
-	assert!(discover(&bulk, 4).is_empty());
+	assert!(find(&bulk, 4).is_empty());
 
 	bulk.scan_depth = 4;
 
-	assert_eq!(discover(&bulk, 4).len(), 2);
+	assert_eq!(find(&bulk, 4).len(), 2);
 
 	// Directly in the input directory, a pack or an archive is at level 1
 	write_tar(&root.path().join("top.tar"), &["Inner"]);
 	bulk.scan_depth = 1;
 
-	assert_eq!(discover(&bulk, 4).len(), 1);
+	assert_eq!(find(&bulk, 4).len(), 1);
 }
 
 #[test]
@@ -378,8 +501,8 @@ fn an_archive_with_several_packs_gives_one_result_per_pack_and_is_kept() {
 	let run = run_bulk(&bulk);
 
 	assert_eq!(run.code, 0);
-	assert!(base.join("squashed_two_a.zip").is_file());
-	assert!(base.join("squashed_two_sub_b.zip").is_file());
+	assert!(base.join("squashed_two/a.zip").is_file());
+	assert!(base.join("squashed_two/sub/b.zip").is_file());
 	assert!(
 		base.join("two.tar").is_file(),
 		"it has several packs, so it is not replaced"
@@ -434,7 +557,7 @@ fn nothing_that_is_not_a_result_is_destroyed() {
 	write_tar(&base.join("p.zip"), &["Inner"]);
 	let original = fs::read(base.join("p.zip")).unwrap();
 	let mut bulk = options(base);
-	bulk.output_prefix = String::new();
+	bulk.output_prefix = Some(String::new());
 
 	assert_eq!(run_bulk(&bulk).code, 1);
 	assert_eq!(fs::read(base.join("p.zip")).unwrap(), original);
@@ -508,8 +631,8 @@ fn the_input_can_be_an_archive_file() {
 	let run = run_bulk(&options(&base.join("two.7z")));
 
 	assert_eq!(run.code, 0);
-	assert!(base.join("squashed_two_a.zip").is_file());
-	assert!(base.join("squashed_two_sub_b.zip").is_file());
+	assert!(base.join("squashed_two/a.zip").is_file());
+	assert!(base.join("squashed_two/sub/b.zip").is_file());
 	assert!(
 		base.join("two.7z").is_file(),
 		"the archive is kept without bulk_overwrite"
@@ -581,4 +704,328 @@ fn packs_deep_inside_an_archive_are_found_with_a_deeper_search() {
 		0
 	);
 	assert_eq!(outputs.borrow().len(), 1);
+}
+
+const MCMETA: &[u8] = br#"{"pack":{"pack_format":34,"description":"x"}}"#;
+
+/// The files of a pack, to put in a TAR file, in the given directory of it.
+fn pack_files(directory: &str) -> Vec<(String, Vec<u8>)> {
+	let prefix = if directory.is_empty() {
+		String::new()
+	} else {
+		format!("{directory}/")
+	};
+
+	vec![
+		(format!("{prefix}pack.mcmeta"), MCMETA.to_vec()),
+		(format!("{prefix}assets/minecraft/a.txt"), b"hello".to_vec())
+	]
+}
+
+fn write_tar_entries(path: &Path, entries: Vec<(String, Vec<u8>)>) {
+	let files: Vec<(&str, Vec<u8>)> = entries
+		.iter()
+		.map(|(name, data)| (name.as_str(), data.clone()))
+		.collect();
+
+	write_tar_files(path, &files);
+}
+
+/// A TAR file with a pack in a directory, a pack in an archive inside it, two packs in another archive inside
+/// it, and an archive that has no pack.
+fn write_big_tar(path: &Path) {
+	let mut entries = pack_files("Loose");
+
+	entries.push(("sub/inner.tar".to_string(), tar_bytes(&[""])));
+	entries.push(("other/two.tar".to_string(), tar_bytes(&["a", "b"])));
+	entries.push((
+		"notes.tar".to_string(),
+		tar_files_bytes(&[("readme.txt", b"hi".to_vec())])
+	));
+
+	write_tar_entries(path, entries);
+}
+
+#[test]
+fn archives_inside_archives_are_opened_and_the_results_mirror_the_inside() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	write_big_tar(&base.join("big.tar"));
+
+	let mut bulk = options(base);
+	bulk.report_file = Some(base.join("report.txt"));
+
+	let run = run_bulk(&bulk);
+
+	assert_eq!(run.code, 0, "{:?}", run.outputs);
+
+	for result in [
+		"squashed_big/Loose.zip",
+		"squashed_big/sub/inner.zip",
+		"squashed_big/other/two/a.zip",
+		"squashed_big/other/two/b.zip"
+	] {
+		assert!(base.join(result).is_file(), "{result}");
+	}
+
+	assert_eq!(run.outputs.len(), 4);
+	assert!(base.join("big.tar").is_file(), "the input is kept");
+	assert!(
+		!base.join("squashed_big/notes.zip").exists() && !base.join("squashed_notes.zip").exists(),
+		"an archive without a pack gives nothing"
+	);
+
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+
+	assert!(report.contains("skipped"), "{report}");
+	assert!(report.contains("notes.tar: it has no pack"), "{report}");
+	assert!(
+		report.contains("4 squashed, 0 failed, 1 skipped"),
+		"{report}"
+	);
+}
+
+#[test]
+fn labels_show_the_name_and_where_the_pack_is() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	write_tar(&base.join("two.tar"), &["a", "sub/b"]);
+	write_big_tar(&base.join("big.tar"));
+
+	let mut bulk = options(base);
+	bulk.report_file = Some(base.join("report.txt"));
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+	let two = base.join("two.tar").display().to_string();
+
+	// The archive with nested archives makes the total unknown, so the numbers have no total
+	assert!(report.contains(&format!("] a ({two} > a)")), "{report}");
+	assert!(report.contains(&format!("] b ({two} > sub/b)")), "{report}");
+	assert!(
+		report.contains("> sub/inner.tar > ") || report.contains("inner ("),
+		"{report}"
+	);
+
+	// Without archives inside archives, the total is known
+	let other = TempDir::new().unwrap();
+
+	write_tar(&other.path().join("two.tar"), &["a", "sub/b"]);
+
+	let mut bulk = options(other.path());
+	bulk.report_file = Some(other.path().join("report.txt"));
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+
+	let report = fs::read_to_string(other.path().join("report.txt")).unwrap();
+
+	assert!(report.contains("[1/2] a ("), "{report}");
+	assert!(report.contains("[2/2] b ("), "{report}");
+}
+
+#[test]
+fn the_size_of_a_pack_is_the_size_of_the_pack_and_not_of_the_archive() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+	let mib = vec![7_u8; 1024 * 1024];
+	let mut entries = Vec::new();
+
+	for name in ["a", "b"] {
+		entries.extend(pack_files(name));
+		entries.push((format!("{name}/assets/minecraft/big.bin"), mib.clone()));
+	}
+
+	write_tar_entries(&base.join("two.tar"), entries);
+
+	let mut bulk = options(base);
+	bulk.report_file = Some(base.join("report.txt"));
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+
+	assert_eq!(
+		report.matches("(1.00 MiB -> 0.00 MiB)").count(),
+		2,
+		"{report}"
+	);
+	assert!(report.contains("Size: 2.00 MiB -> 0.00 MiB."), "{report}");
+}
+
+#[test]
+fn an_output_directory_receives_the_results_without_a_prefix() {
+	let input = TempDir::new().unwrap();
+	let output = TempDir::new().unwrap();
+
+	write_pack(&input.path().join("PackA"), "a");
+	write_pack(&input.path().join("group/PackC"), "c");
+	write_tar(&input.path().join("group/x.tar"), &["Inner"]);
+	write_tar(&input.path().join("two.tar"), &["a", "sub/b"]);
+
+	let mut bulk = options(input.path());
+	bulk.output_directory = Some(output.path().to_path_buf());
+	bulk.output_prefix = None;
+	bulk.overwrite = true;
+
+	let run = run_bulk(&bulk);
+
+	assert_eq!(run.code, 0);
+
+	for result in [
+		"PackA.zip",
+		"group/PackC.zip",
+		"group/x.zip",
+		"two/a.zip",
+		"two/sub/b.zip"
+	] {
+		assert!(output.path().join(result).is_file(), "{result}");
+	}
+
+	assert!(
+		input.path().join("group/x.tar").is_file() && input.path().join("two.tar").is_file(),
+		"nothing is replaced when the results go to another directory"
+	);
+	assert!(
+		fs::read_dir(input.path())
+			.unwrap()
+			.flatten()
+			.all(|entry| !file_name_of(&entry.path()).ends_with(".zip")),
+		"nothing is written next to the input"
+	);
+
+	// The prefix is used when the owner sets it
+	let prefixed = TempDir::new().unwrap();
+	let mut bulk = options(input.path());
+	bulk.output_directory = Some(prefixed.path().to_path_buf());
+	bulk.output_prefix = Some("small_".to_string());
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+	assert!(prefixed.path().join("small_PackA.zip").is_file());
+	assert!(prefixed.path().join("group/small_PackC.zip").is_file());
+	assert!(prefixed.path().join("small_two/a.zip").is_file());
+}
+
+#[test]
+fn an_output_directory_inside_the_input_is_not_searched() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	write_pack(&base.join("PackA"), "a");
+
+	let mut bulk = options(base);
+	bulk.output_directory = Some(base.join("out"));
+	bulk.output_prefix = None;
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+	assert!(base.join("out/PackA.zip").is_file());
+
+	// The results are not squashed again, and the directory is not an input
+	fs::create_dir_all(base.join("out/Fake")).unwrap();
+	write_pack(&base.join("out/Fake"), "fake");
+
+	let run = run_bulk(&bulk);
+
+	assert_eq!(run.code, 0);
+	assert_eq!(run.outputs.len(), 1, "{:?}", run.outputs);
+}
+
+#[test]
+fn a_dry_run_does_not_open_the_archives_inside_archives() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	write_big_tar(&base.join("big.tar"));
+
+	let mut bulk = options(base);
+	bulk.dry_run = true;
+	bulk.report_file = Some(base.join("report.txt"));
+
+	let run = run_bulk(&bulk);
+
+	assert_eq!(run.code, 0);
+	assert!(run.outputs.is_empty());
+	assert!(!base.join("squashed_big").exists());
+
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+
+	assert!(
+		report.contains("sub/inner.tar: an archive inside the archive"),
+		"{report}"
+	);
+	assert!(
+		report.contains("other/two.tar: an archive inside the archive"),
+		"{report}"
+	);
+}
+
+#[test]
+fn archives_can_only_be_inside_a_few_other_archives() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	// top > a > b > c > d, and the pack is in d
+	let d = tar_bytes(&["Pack"]);
+	let c = tar_files_bytes(&[("d.tar", d)]);
+	let b = tar_files_bytes(&[("c.tar", c.clone())]);
+	let a = tar_files_bytes(&[("b.tar", b)]);
+
+	write_tar_files(&base.join("top.tar"), &[("a.tar", a)]);
+
+	let mut bulk = options(base);
+	bulk.report_file = Some(base.join("report.txt"));
+
+	let run = run_bulk(&bulk);
+
+	assert_eq!(run.code, 0);
+	assert!(run.outputs.is_empty(), "{:?}", run.outputs);
+	assert!(
+		fs::read_to_string(base.join("report.txt"))
+			.unwrap()
+			.contains("inside more than 3 archives")
+	);
+
+	// top > a > b > c, and the pack is in c
+	let c = tar_bytes(&["Pack"]);
+	let b = tar_files_bytes(&[("c.tar", c)]);
+	let a = tar_files_bytes(&[("b.tar", b)]);
+	let other = TempDir::new().unwrap();
+
+	write_tar_files(&other.path().join("top.tar"), &[("a.tar", a)]);
+
+	let run = run_bulk(&options(other.path()));
+
+	assert_eq!(run.code, 0);
+	assert!(
+		other.path().join("squashed_top/a/b/c.zip").is_file(),
+		"{:?}",
+		run.outputs
+	);
+}
+
+#[test]
+fn a_failed_pack_inside_an_archive_inside_an_archive_does_not_stop_the_others() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	let bad = tar_files_bytes(&[
+		(
+			"pack.mcmeta",
+			br#"{"pack":{"pack_format":34,"description":"bad"}}"#.to_vec()
+		),
+		("assets/minecraft/a.txt", b"hello".to_vec())
+	]);
+
+	write_tar_files(
+		&base.join("big.tar"),
+		&[("a_bad.tar", bad), ("b_good.tar", tar_bytes(&[""]))]
+	);
+
+	let run = run_bulk(&options(base));
+
+	assert_eq!(run.code, 1);
+	assert!(base.join("squashed_big/b_good.zip").is_file());
+	assert!(!base.join("squashed_big/a_bad.zip").exists());
 }

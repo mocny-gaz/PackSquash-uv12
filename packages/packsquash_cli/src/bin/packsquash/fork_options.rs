@@ -20,6 +20,7 @@ const MAX_EXTRACTED_MIB: i64 = 1_048_576;
 
 /// The name of the option that enables the bulk mode.
 const BULK_INPUT_DIRECTORY: &str = "bulk_input_directory";
+const BULK_OUTPUT_DIRECTORY: &str = "bulk_output_directory";
 const BULK_OUTPUT_PREFIX: &str = "bulk_output_prefix";
 const BULK_OUTPUT_SUFFIX: &str = "bulk_output_suffix";
 const BULK_OVERWRITE: &str = "bulk_overwrite";
@@ -38,8 +39,9 @@ const LOG_FILE: &str = "log_file";
 pub const DEFAULT_LOG_FILE_NAME: &str = "packsquash-debug.log";
 
 /// All the options of the bulk mode.
-const BULK_OPTIONS: [&str; 9] = [
+const BULK_OPTIONS: [&str; 10] = [
 	BULK_INPUT_DIRECTORY,
+	BULK_OUTPUT_DIRECTORY,
 	BULK_OUTPUT_PREFIX,
 	BULK_OUTPUT_SUFFIX,
 	BULK_OVERWRITE,
@@ -62,8 +64,12 @@ const MAX_BULK_SCAN_DEPTH: i64 = 256;
 pub struct BulkOptions {
 	/// The directory that is searched for packs.
 	pub input_directory: PathBuf,
-	/// The text that every output file name starts with.
-	pub output_prefix: String,
+	/// The directory where the results go, if the options file sets one. The results keep the folders that the
+	/// input has.
+	pub output_directory: Option<PathBuf>,
+	/// The text that every output file name starts with, if the options file sets one. Without it, the results
+	/// next to the input start with `squashed_`, and the results in `output_directory` start with nothing.
+	pub output_prefix: Option<String>,
 	/// The text that every output file name ends with, before `.zip`.
 	pub output_suffix: String,
 	/// Whether the squashed pack replaces the original pack.
@@ -225,6 +231,7 @@ fn take_log_options(table: &mut Table) -> Result<Option<LogOptions>, String> {
 /// Removes the options of the bulk mode from the table, and returns them if the mode is enabled.
 fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 	let input_directory = take_string(table, BULK_INPUT_DIRECTORY)?;
+	let output_directory = take_string(table, BULK_OUTPUT_DIRECTORY)?;
 	let prefix = take_string(table, BULK_OUTPUT_PREFIX)?;
 	let suffix = take_string(table, BULK_OUTPUT_SUFFIX)?;
 	let overwrite = take_bool(table, BULK_OVERWRITE)?;
@@ -236,6 +243,7 @@ fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 
 	let Some(input_directory) = input_directory else {
 		let others_set = [
+			("bulk_output_directory", output_directory.is_some()),
 			("bulk_output_prefix", prefix.is_some()),
 			("bulk_output_suffix", suffix.is_some()),
 			("bulk_overwrite", overwrite.is_some()),
@@ -258,10 +266,20 @@ fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 		return Err(format!("The option {BULK_INPUT_DIRECTORY} is empty"));
 	}
 
-	let prefix = prefix.unwrap_or_else(|| "squashed_".to_string());
 	let suffix = suffix.unwrap_or_default();
-	check_file_name_part(BULK_OUTPUT_PREFIX, &prefix)?;
+
+	if let Some(prefix) = &prefix {
+		check_file_name_part(BULK_OUTPUT_PREFIX, prefix)?;
+	}
+
 	check_file_name_part(BULK_OUTPUT_SUFFIX, &suffix)?;
+
+	if output_directory
+		.as_deref()
+		.is_some_and(|path| path.trim().is_empty())
+	{
+		return Err(format!("The option {BULK_OUTPUT_DIRECTORY} is empty"));
+	}
 
 	if report_file
 		.as_deref()
@@ -272,6 +290,7 @@ fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 
 	Ok(Some(BulkOptions {
 		input_directory: PathBuf::from(input_directory),
+		output_directory: output_directory.map(PathBuf::from),
 		output_prefix: prefix,
 		output_suffix: suffix,
 		overwrite: overwrite.unwrap_or(false),
@@ -381,6 +400,24 @@ mod tests {
 	}
 
 	#[test]
+	fn the_output_directory_is_read() {
+		let mut options = table("bulk_input_directory = 'in'\nbulk_output_directory = 'C:\\out'\n");
+		let bulk = split_fork_options(&mut options).unwrap().bulk.unwrap();
+
+		assert_eq!(bulk.output_directory, Some(PathBuf::from("C:\\out")));
+		assert_eq!(bulk.output_prefix, None);
+
+		let error = split_fork_options(&mut table(
+			"bulk_input_directory = 'in'\nbulk_output_directory = ' '\n"
+		))
+		.unwrap_err();
+		assert!(error.contains("bulk_output_directory"), "{error}");
+
+		let error = split_fork_options(&mut table("bulk_output_directory = 'out'\n")).unwrap_err();
+		assert!(error.contains("bulk mode is off"), "{error}");
+	}
+
+	#[test]
 	fn bulk_mode_has_defaults() {
 		let mut options = table("bulk_input_directory = 'C:\\packs'\n");
 
@@ -389,7 +426,8 @@ mod tests {
 		let bulk = split_fork_options(&mut options).unwrap().bulk.unwrap();
 
 		assert_eq!(bulk.input_directory, PathBuf::from("C:\\packs"));
-		assert_eq!(bulk.output_prefix, "squashed_");
+		assert_eq!(bulk.output_prefix, None);
+		assert_eq!(bulk.output_directory, None);
 		assert_eq!(bulk.output_suffix, "");
 		assert!(!bulk.overwrite && bulk.backup && !bulk.dry_run);
 		assert_eq!(bulk.report_file, None);
@@ -411,7 +449,7 @@ mod tests {
 		);
 		let bulk = split_fork_options(&mut options).unwrap().bulk.unwrap();
 
-		assert_eq!(bulk.output_prefix, "");
+		assert_eq!(bulk.output_prefix, Some(String::new()));
 		assert_eq!(bulk.output_suffix, "_small");
 		assert!(bulk.overwrite && !bulk.backup && bulk.dry_run);
 		assert_eq!(bulk.report_file, Some(PathBuf::from("r.txt")));

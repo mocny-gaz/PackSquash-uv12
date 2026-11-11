@@ -76,9 +76,10 @@ The options that this fork adds:
 | `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
 | `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
 | `bulk_input_directory` | not set, so **off** | Squashes every pack found in this folder. |
-| `bulk_output_prefix` | `'squashed_'` | Start of every result name in the bulk mode. |
+| `bulk_output_directory` | not set | Where the results go, with the same folders as the input and no prefix. |
+| `bulk_output_prefix` | `'squashed_'` (`''` with `bulk_output_directory`) | Start of every result name in the bulk mode. |
 | `bulk_output_suffix` | `''` | End of every result name, before `.zip`. |
-| `bulk_overwrite` | `false` | Replaces the original archive with the result. |
+| `bulk_overwrite` | `false` | Replaces the original archive with the result. Does nothing with `bulk_output_directory`. |
 | `bulk_backup` | `true` | With `bulk_overwrite`, keeps the original as `NAME.original`. |
 | `bulk_dry_run` | `false` | Only lists what would happen. |
 | `bulk_report_file` | not set | Also writes the report to this file. |
@@ -144,7 +145,16 @@ bulk_input_directory = 'C:\packs'
   is squashed, and the results go next to it. The name and extension do not matter.
 - Every result is a ZIP file next to its input: `squashed_NAME.zip` by default. For an archive,
   NAME has no extension. `bulk_output_prefix` and `bulk_output_suffix` change the name.
-- An archive with several packs gives one result per pack: `squashed_ARCHIVE_FOLDER.zip`.
+- An archive with one pack gives one file. An archive with several packs, or with archives inside it,
+  gives a folder: `squashed_ARCHIVE/`, with the same folders that the archive has. The pack
+  `a/b/Pack` of the archive is `squashed_ARCHIVE/a/b/Pack.zip`.
+- Archives inside archives are opened too (up to 3 levels), unless they are part of a pack. A
+  `.zip` with 200 packs that are zips gives 200 results in a folder, not 200 files next to the
+  big zip. They are extracted a few at a time and deleted when done.
+- To put the results somewhere else, set `bulk_output_directory`. The results keep the folders of the
+  input, have no prefix (unless you set one) and nothing is written next to the inputs.
+- Each line has the number, the name of the pack and where it is, then the size of its files and of the
+  result: `[3/204] Pack (C:\packs\big.zip > inner.zip > Pack) -> ... (12.50 MiB -> 3.10 MiB)`.
 - Names that already look like a result are skipped, so a second run does not squash the
   results of the first one.
 - All the other options, and the tables of file options, are used for every pack.
@@ -390,6 +400,7 @@ packsquash.exe packsquash.toml
 | `No pack was found in the archive` | The archive has no `pack.mcmeta` with `assets` or `data`, or the pack is deeper than 4 levels. Raise `archive_pack_search_depth`. |
 | `The archive ... has 2 packs` | One run squashes one pack. Extract the one you want, or make an archive with only that pack. |
 | `this archive needs a helper program` | RAR files need `bsdtar`, `7z` or `unrar`. Install 7-Zip and add its folder to the `PATH`. |
+| `PackSquash can not read this ZIP archive (Multi-disk ZIP files are not supported)` | The ZIP is made in a way that the built-in reader does not support. 7-Zip reads it: install it and add its folder to the `PATH`. |
 | `The option bulk_... is set, but the bulk mode is off` | Set `bulk_input_directory` too. |
 | `the result ... would replace a pack that is an input` | In the bulk mode, an empty prefix and suffix give a result with the name of an input ZIP file. Set a prefix or a suffix, or use `bulk_overwrite`. |
 | `another pack already has the result ...` | Two packs in the same folder have the same name, like `X` and `X.zip`. Rename one. |

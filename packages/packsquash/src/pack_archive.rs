@@ -94,6 +94,13 @@ pub enum ArchiveError {
 	)]
 	/// No helper program was found.
 	NoHelper,
+	#[error("the archive is damaged, protected with a password, or not supported: {0}")]
+	/// The structure of a ZIP archive is something that the ZIP library does not support, like an archive that
+	/// is split in several disks. A helper program may read it.
+	ZipStructure(String),
+	#[error("{0}")]
+	/// Helper programs were used or needed, and they could not extract the archive.
+	HelperFailed(String),
 	#[error("no pack was found in the archive")]
 	/// The archive has no pack.
 	NoPack
@@ -135,6 +142,19 @@ fn format_error(error: impl std::fmt::Display) -> ArchiveError {
 }
 
 /// Reads as many bytes as possible into the buffer, and returns how many were read.
+/// Tells apart a ZIP archive that the ZIP library can not read because of how it is built (a helper program may
+/// read it) from one that is damaged.
+fn zip_open_error(error: zip::result::ZipError) -> ArchiveError {
+	let message = error.to_string();
+
+	if message.contains("Multi-disk") || matches!(error, zip::result::ZipError::UnsupportedArchive(_))
+	{
+		ArchiveError::ZipStructure(message)
+	} else {
+		ArchiveError::Format(message)
+	}
+}
+
 fn read_up_to(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
 	let mut filled = 0;
 
@@ -236,7 +256,7 @@ fn walk_archive(
 	match format {
 		ArchiveFormat::Zip => {
 			let mut archive =
-				zip::ZipArchive::new(BufReader::new(File::open(path)?)).map_err(format_error)?;
+				zip::ZipArchive::new(BufReader::new(File::open(path)?)).map_err(zip_open_error)?;
 
 			for index in 0..archive.len() {
 				let mut file = archive.by_index(index).map_err(format_error)?;
@@ -500,7 +520,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-f".as_ref(),
 				archive,
 				"-C".as_ref(),
-				destination,
+				destination
 			]
 		),
 		(
@@ -510,7 +530,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-f".as_ref(),
 				archive,
 				"-C".as_ref(),
-				destination,
+				destination
 			]
 		),
 		(
@@ -519,7 +539,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive,
+				archive
 			]
 		),
 		(
@@ -528,7 +548,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive,
+				archive
 			]
 		),
 		(
@@ -537,7 +557,7 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"x".as_ref(),
 				"-y".as_ref(),
 				output_option.as_os_str(),
-				archive,
+				archive
 			]
 		),
 		(
@@ -547,10 +567,12 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				"-y".as_ref(),
 				"-idq".as_ref(),
 				archive,
-				unrar_destination.as_os_str(),
+				unrar_destination.as_os_str()
 			]
 		)
 	];
+
+	let mut ran_and_failed = false;
 
 	for (program, arguments) in attempts {
 		let mut command = Command::new(program);
@@ -586,6 +608,8 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 						shorten(&output.stderr)
 					);
 
+					ran_and_failed |= !output.status.success();
+
 					output.status.success()
 				}
 				Err(error) => {
@@ -598,11 +622,14 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 				}
 			}
 		} else {
-			command
-				.stdout(Stdio::null())
-				.stderr(Stdio::null())
-				.status()
-				.is_ok_and(|status| status.success())
+			match command.stdout(Stdio::null()).stderr(Stdio::null()).status() {
+				Ok(status) => {
+					ran_and_failed |= !status.success();
+
+					status.success()
+				}
+				Err(_) => false
+			}
 		};
 
 		if succeeded {
@@ -610,7 +637,27 @@ pub fn extract_with_helper(archive: &Path, destination: &Path) -> Result<(), Arc
 		}
 	}
 
-	Err(ArchiveError::NoHelper)
+	if ran_and_failed {
+		Err(ArchiveError::HelperFailed(
+			"a helper program was found, but it could not extract the archive. The archive may be damaged or protected with a password".into()
+		))
+	} else {
+		Err(ArchiveError::NoHelper)
+	}
+}
+
+/// Adds the reason why a helper program was needed to the error of a helper program, when the archive was a ZIP
+/// archive that the ZIP library can not read.
+fn explain_helper_error(error: ArchiveError, reason: Option<&str>) -> ArchiveError {
+	match (error, reason) {
+		(ArchiveError::NoHelper, Some(reason)) => ArchiveError::HelperFailed(format!(
+			"PackSquash can not read this ZIP archive ({reason}), so a helper program is needed, but none was found (tried bsdtar, tar, 7z, 7zz, 7za and unrar). Install 7-Zip, or join the parts of the archive"
+		)),
+		(ArchiveError::HelperFailed(message), Some(reason)) => ArchiveError::HelperFailed(format!(
+			"PackSquash can not read this ZIP archive ({reason}), and the helper programs could not extract it either: {message}"
+		)),
+		(error, _) => error
+	}
 }
 
 /// Deletes links and other entries that are not files or directories from what a helper program extracted, and
@@ -745,12 +792,37 @@ pub struct ArchiveScan {
 	pub format: ArchiveFormat,
 	/// The directories of the archive that are the root of a pack (`""` is the root of the archive). `None`
 	/// for archives that need a helper program: the packs are only known after extracting them.
-	pub pack_roots: Option<Vec<String>>
+	pub pack_roots: Option<Vec<String>>,
+	/// The archives inside this archive that are not part of a pack, if the scan looked for them. Empty for
+	/// archives that need a helper program: they are found after extracting.
+	pub nested_archives: Vec<NestedArchive>,
+	/// Why a helper program is used for an archive that is a ZIP archive, if that is the case.
+	pub helper_reason: Option<String>
+}
+
+/// An archive that is stored inside another archive, outside of any pack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NestedArchive {
+	/// The name of the file in the archive, with `/` as separator.
+	pub name: String,
+	/// The size of the file in bytes, as the entry says.
+	pub size: u64
 }
 
 /// Reads the list of entries of an archive, and finds the packs in it, looking at most `max_depth` levels down.
 /// Returns `None` if the file is not an archive that is supported.
 pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>, ArchiveError> {
+	scan_archive_with_nested(path, max_depth, &[])
+}
+
+/// Reads the list of entries of an archive like [`scan_archive`], and also finds the archives inside it that
+/// are not part of a pack and have one of the given file extensions (in lowercase and without a dot). Those
+/// archives are looked for at most `max_depth` directories down, like the packs.
+pub fn scan_archive_with_nested(
+	path: &Path,
+	max_depth: usize,
+	nested_extensions: &[String]
+) -> Result<Option<ArchiveScan>, ArchiveError> {
 	let Some(format) = detect_format(path)? else {
 		return Ok(None);
 	};
@@ -763,15 +835,18 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 
 		return Ok(Some(ArchiveScan {
 			format,
-			pack_roots: None
+			pack_roots: None,
+			nested_archives: Vec::new(),
+			helper_reason: None
 		}));
 	}
 
 	let mut files = BTreeSet::new();
 	let mut manifests = BTreeMap::new();
+	let mut nested_candidates = BTreeMap::new();
 	let mut entries = 0_u64;
 
-	walk_archive(path, format, &mut |entry, reader| {
+	let walked = walk_archive(path, format, &mut |entry, reader| {
 		entries += 1;
 		if entries > DEFAULT_MAX_ENTRIES {
 			return Err(ArchiveError::TooBig(format!(
@@ -797,9 +872,36 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 			manifests.insert(name.clone(), data);
 		}
 
+		if !nested_extensions.is_empty()
+			&& depth <= max_depth
+			&& name
+				.rsplit_once('.')
+				.is_some_and(|(_, extension)| nested_extensions.contains(&extension.to_lowercase()))
+		{
+			nested_candidates.insert(name.clone(), entry.size);
+		}
+
 		files.insert(name);
 		Ok(Visit::Continue)
-	})?;
+	});
+
+	match walked {
+		Ok(()) => {}
+		Err(ArchiveError::ZipStructure(reason)) => {
+			detail!(
+				"The archive {} is a ZIP archive that the ZIP library can not read ({reason}), so a helper program will be used. The packs in it are only known after it is extracted",
+				path.display()
+			);
+
+			return Ok(Some(ArchiveScan {
+				format: ArchiveFormat::Helper,
+				pack_roots: None,
+				nested_archives: Vec::new(),
+				helper_reason: Some(reason)
+			}));
+		}
+		Err(error) => return Err(error)
+	}
 
 	let mut roots = BTreeSet::new();
 
@@ -843,7 +945,7 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 
 	// A pack inside another pack is part of that pack
 	let all_roots: Vec<_> = roots.iter().cloned().collect();
-	let pack_roots = all_roots
+	let pack_roots: Vec<String> = all_roots
 		.iter()
 		.filter(|root| {
 			!all_roots.iter().any(|other| {
@@ -853,16 +955,33 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 		.cloned()
 		.collect();
 
+	// An archive inside a pack is part of the pack. The root of the archive being a pack means that all of it is
+	let nested_archives: Vec<NestedArchive> = nested_candidates
+		.into_iter()
+		.filter(|(name, _)| {
+			let directory = name.rsplit_once('/').map_or("", |(directory, _)| directory);
+
+			!directory.split('/').any(is_ignored_directory_name)
+				&& !pack_roots
+					.iter()
+					.any(|root| is_under(name, std::slice::from_ref(root)))
+		})
+		.map(|(name, size)| NestedArchive { name, size })
+		.collect();
+
 	detail!(
-		"Scanned the archive {} ({format:?}): {entries} entries, {} files, pack directories found: {:?}",
+		"Scanned the archive {} ({format:?}): {entries} entries, {} files, pack directories found: {:?}, archives inside it that are not in a pack: {}",
 		path.display(),
 		files.len(),
-		pack_roots
+		pack_roots,
+		nested_archives.len()
 	);
 
 	Ok(Some(ArchiveScan {
 		format,
-		pack_roots: Some(pack_roots)
+		pack_roots: Some(pack_roots),
+		nested_archives,
+		helper_reason: None
 	}))
 }
 
@@ -871,7 +990,11 @@ pub fn scan_archive(path: &Path, max_depth: usize) -> Result<Option<ArchiveScan>
 pub struct ExtractedPacks {
 	_directory: tempfile::TempDir,
 	/// The root of every pack: its directory in the archive (`""` for the root of the archive), and where it is now.
-	pub packs: Vec<(String, PathBuf)>
+	pub packs: Vec<(String, PathBuf)>,
+	/// The archives that were extracted together with the packs, when a helper program extracted everything:
+	/// their name in the archive and where they are now. Archives that are not extracted with the packs are
+	/// listed in the [`ArchiveScan`], and extracted with [`extract_nested_archives`].
+	pub nested: Vec<(String, PathBuf)>
 }
 
 /// Extracts the packs of a scanned archive into a new temporary directory.
@@ -881,16 +1004,85 @@ pub fn extract_packs(
 	max_depth: usize,
 	limits: ExtractLimits
 ) -> Result<ExtractedPacks, ArchiveError> {
+	extract_packs_and_nested(archive, scan, max_depth, &[], limits)
+}
+
+/// Finds the files that have one of the given extensions (in lowercase and without a dot) in a directory tree,
+/// looking at most `max_depth` levels down. Packs and directories that [`find_pack_directories`] ignores are not
+/// searched. The result is sorted, with names relative to the directory and `/` as separator.
+fn find_nested_files(
+	directory: &Path,
+	extensions: &[String],
+	max_depth: usize
+) -> Vec<(String, PathBuf)> {
+	let mut found = Vec::new();
+	let mut pending = vec![(directory.to_path_buf(), 0_usize)];
+
+	while let Some((current, depth)) = pending.pop() {
+		if is_pack_directory(&current) {
+			continue;
+		}
+
+		let Ok(entries) = fs::read_dir(&current) else {
+			continue;
+		};
+
+		for entry in entries.filter_map(Result::ok) {
+			let Ok(kind) = entry.file_type() else {
+				continue;
+			};
+			let path = entry.path();
+			let name = entry.file_name().to_string_lossy().into_owned();
+
+			if kind.is_dir() {
+				if depth < max_depth && !is_ignored_directory_name(&name) {
+					pending.push((path, depth + 1));
+				}
+			} else if kind.is_file()
+				&& name
+					.rsplit_once('.')
+					.is_some_and(|(_, extension)| extensions.contains(&extension.to_lowercase()))
+				&& let Ok(relative) = path.strip_prefix(directory)
+			{
+				found.push((relative.to_string_lossy().replace('\\', "/"), path));
+			}
+		}
+	}
+
+	found.sort();
+	found
+}
+
+/// Extracts the packs of a scanned archive into a new temporary directory, like [`extract_packs`]. When a
+/// helper program extracts the archive, it also lists the archives with the given extensions that are not
+/// part of a pack, which are in the extracted files. An archive that has only archives and no pack is not an error.
+pub fn extract_packs_and_nested(
+	archive: &Path,
+	scan: &ArchiveScan,
+	max_depth: usize,
+	nested_extensions: &[String],
+	limits: ExtractLimits
+) -> Result<ExtractedPacks, ArchiveError> {
 	let directory = tempfile::Builder::new().prefix("packsquash-").tempdir()?;
+	let mut nested = Vec::new();
 
 	let roots: Vec<String> = match &scan.pack_roots {
 		Some(roots) => {
-			extract_archive(archive, scan.format, directory.path(), roots, limits)?;
+			if !roots.is_empty() {
+				extract_archive(archive, scan.format, directory.path(), roots, limits)?;
+			}
+
 			roots.clone()
 		}
 		None => {
-			extract_with_helper(archive, directory.path())?;
+			extract_with_helper(archive, directory.path())
+				.map_err(|error| explain_helper_error(error, scan.helper_reason.as_deref()))?;
 			clean_helper_output(directory.path(), limits)?;
+
+			if !nested_extensions.is_empty() {
+				nested = find_nested_files(directory.path(), nested_extensions, max_depth);
+			}
+
 			find_pack_directories(directory.path(), max_depth)
 				.into_iter()
 				.filter_map(|path| {
@@ -916,19 +1108,63 @@ pub fn extract_packs(
 		.collect();
 
 	detail!(
-		"Packs in the extracted archive {}, in {}: {:?}",
+		"Packs in the extracted archive {}, in {}: {:?}. Archives that were extracted with them: {:?}",
 		archive.display(),
 		directory.path().display(),
-		packs
+		packs,
+		nested
 	);
 
-	if packs.is_empty() {
+	if packs.is_empty() && nested.is_empty() && scan.nested_archives.is_empty() {
 		return Err(ArchiveError::NoPack);
 	}
 
 	Ok(ExtractedPacks {
 		_directory: directory,
-		packs
+		packs,
+		nested
+	})
+}
+
+/// Files that were extracted from an archive into a temporary directory, which is deleted when this is dropped.
+#[derive(Debug)]
+pub struct ExtractedFiles {
+	_directory: tempfile::TempDir,
+	/// The files: their name in the archive and where they are now.
+	pub files: Vec<(String, PathBuf)>
+}
+
+/// Extracts some files of an archive, given by their names in it, into a new temporary directory. The archive
+/// must not be of the [`ArchiveFormat::Helper`] format.
+pub fn extract_nested_archives(
+	archive: &Path,
+	format: ArchiveFormat,
+	names: &[String],
+	limits: ExtractLimits
+) -> Result<ExtractedFiles, ArchiveError> {
+	let directory = tempfile::Builder::new()
+		.prefix("packsquash-nested-")
+		.tempdir()?;
+
+	// With no names, the extraction would take everything
+	if !names.is_empty() {
+		extract_archive(archive, format, directory.path(), names, limits)?;
+	}
+
+	let files = names
+		.iter()
+		.map(|name| {
+			(
+				name.clone(),
+				directory.path().join(name.split('/').collect::<PathBuf>())
+			)
+		})
+		.filter(|(_, path)| path.is_file())
+		.collect();
+
+	Ok(ExtractedFiles {
+		_directory: directory,
+		files
 	})
 }
 

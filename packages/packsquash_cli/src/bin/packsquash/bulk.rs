@@ -14,7 +14,10 @@ use std::{
 use log::{debug, error, info, warn};
 use packsquash::{
 	config::SquashOptions,
-	pack_archive::{ArchiveScan, ExtractLimits, extract_packs, is_pack_directory, scan_archive}
+	pack_archive::{
+		ArchiveFormat, ArchiveScan, ExtractLimits, NestedArchive, extract_nested_archives,
+		extract_packs_and_nested, is_pack_directory, scan_archive_with_nested
+	}
 };
 use toml::{Table, Value};
 
@@ -31,11 +34,17 @@ enum Found {
 	Skipped(PathBuf, String)
 }
 
-/// How a pack ended up.
-struct Outcome {
-	/// A line that describes the result.
-	line: String,
-	failed: bool
+/// What happened to a pack or an archive.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+	/// It was squashed, or it would be in a dry run.
+	Done,
+	/// Squashing it failed.
+	Failed,
+	/// It is not squashed, and why is only in the report and the debug log.
+	Skipped,
+	/// Something that the user should read, but that is not counted.
+	Note
 }
 
 /// The counts of a bulk run.
@@ -66,35 +75,168 @@ fn archive_stem(file_name: &str) -> String {
 	}
 }
 
-/// Tells whether a name looks like the result of an earlier bulk run with the same prefix and suffix.
-fn looks_like_output(options: &BulkOptions, stem: &str) -> bool {
-	(!options.output_prefix.is_empty() || !options.output_suffix.is_empty())
-		&& stem.len() >= options.output_prefix.len() + options.output_suffix.len()
-		&& stem.starts_with(&options.output_prefix)
-		&& stem.ends_with(&options.output_suffix)
+/// How the results are named and where they go.
+struct Layout {
+	/// The text that every result name starts with.
+	prefix: String,
+	/// The text that every result name ends with, before `.zip`.
+	suffix: String,
+	/// The directory that the folders of the input are counted from. For an archive that is the input by itself,
+	/// it is the directory that holds the archive.
+	input_root: PathBuf,
+	/// Where the results go, when it is not next to the input.
+	output_root: Option<PathBuf>
 }
 
-/// The path of the result file for a pack, next to the input.
-fn output_path(
-	options: &BulkOptions,
-	input: &Path,
-	stem: &str,
-	pack_in_archive: Option<&str>
-) -> PathBuf {
-	let name = match pack_in_archive {
-		Some(root) => format!(
-			"{}{stem}_{}{}.zip",
-			options.output_prefix,
-			root.replace('/', "_"),
-			options.output_suffix
-		),
-		None => format!(
-			"{}{stem}{}.zip",
-			options.output_prefix, options.output_suffix
-		)
-	};
+/// Tells whether two paths are the same directory, even when they are written in different ways. A directory that
+/// does not exist yet is the same only when it is written in the same way.
+fn same_directory(first: &Path, second: &Path) -> bool {
+	match (fs::canonicalize(first), fs::canonicalize(second)) {
+		(Ok(first), Ok(second)) => first == second,
+		_ => first == second
+	}
+}
 
-	input.parent().unwrap_or_else(|| Path::new("")).join(name)
+impl Layout {
+	fn new(options: &BulkOptions) -> Self {
+		let input = &options.input_directory;
+		let input_root = if input.is_file() {
+			input.parent().map(Path::to_path_buf).unwrap_or_default()
+		} else {
+			input.clone()
+		};
+
+		// An output directory that is the input directory is the same as no output directory
+		let output_root = options
+			.output_directory
+			.clone()
+			.filter(|output| !same_directory(output, &input_root));
+
+		// The prefix is on by default only for the results that are next to the input
+		let prefix = options.output_prefix.clone().unwrap_or_else(|| {
+			if output_root.is_some() {
+				String::new()
+			} else {
+				"squashed_".to_string()
+			}
+		});
+
+		Self {
+			prefix,
+			suffix: options.output_suffix.clone(),
+			input_root,
+			output_root
+		}
+	}
+
+	/// Tells whether a name looks like the result of an earlier bulk run with the same prefix and suffix.
+	fn looks_like_output(&self, stem: &str) -> bool {
+		(!self.prefix.is_empty() || !self.suffix.is_empty())
+			&& stem.len() >= self.prefix.len() + self.suffix.len()
+			&& stem.starts_with(&self.prefix)
+			&& stem.ends_with(&self.suffix)
+	}
+
+	/// The directory where the results of what is in `input_parent` go.
+	fn result_directory(&self, input_parent: &Path) -> PathBuf {
+		match &self.output_root {
+			Some(output) => output.join(
+				input_parent
+					.strip_prefix(&self.input_root)
+					.unwrap_or_else(|_| Path::new(""))
+			),
+			None => input_parent.to_path_buf()
+		}
+	}
+
+	/// The name of the result of something in the input, with the prefix and the suffix.
+	fn result_name(&self, stem: &str) -> String {
+		format!("{}{stem}{}", self.prefix, self.suffix)
+	}
+}
+
+/// Where the results of an archive go. An archive with one pack and nothing else gives the file
+/// `directory/name.zip`. Any other archive gives the folder `directory/name`, which has inside what the archive
+/// has: a pack in a directory of the archive is a zip file in the same directory of the folder, and an archive inside
+/// the archive is handled like this one, with its own name.
+#[derive(Debug, Clone)]
+struct Dest {
+	directory: PathBuf,
+	/// The name without `.zip`.
+	name: String
+}
+
+impl Dest {
+	fn file(&self) -> PathBuf {
+		self.directory.join(format!("{}.zip", self.name))
+	}
+
+	fn folder(&self) -> PathBuf {
+		self.directory.join(&self.name)
+	}
+
+	/// The result file of the pack that is in the given directory of the archive, when the archive gives a folder.
+	fn pack_file(&self, root: &str) -> PathBuf {
+		match root.rsplit_once('/') {
+			Some((parent, last)) => self
+				.folder()
+				.join(parent.split('/').collect::<PathBuf>())
+				.join(format!("{last}.zip")),
+			None if root.is_empty() => self.folder().join(format!("{}.zip", self.name)),
+			None => self.folder().join(format!("{root}.zip"))
+		}
+	}
+
+	/// Where the results of an archive that is inside this one, at the given path of the archive, go.
+	fn nested(&self, name: &str) -> Self {
+		let (parent, file) = name.rsplit_once('/').unwrap_or(("", name));
+		let mut directory = self.folder();
+
+		if !parent.is_empty() {
+			directory = directory.join(parent.split('/').collect::<PathBuf>());
+		}
+
+		Self {
+			directory,
+			name: archive_stem(file)
+		}
+	}
+}
+
+/// How deep archives can be inside archives. A deeper archive is skipped.
+const MAX_NESTING: usize = 3;
+
+/// The most bytes of nested archives that are extracted together from a ZIP archive, which can give one file
+/// without reading the others. Archives of other formats have to be read from the start for every extraction, so
+/// all of the nested archives are extracted at once.
+const NESTED_ZIP_BATCH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Groups the names of nested archives, so that every group is extracted at once.
+fn nested_batches(nested: &[NestedArchive], format: ArchiveFormat) -> Vec<Vec<String>> {
+	let limit = if format == ArchiveFormat::Zip {
+		NESTED_ZIP_BATCH_BYTES
+	} else {
+		u64::MAX
+	};
+	let mut batches = Vec::new();
+	let mut current: Vec<String> = Vec::new();
+	let mut size = 0_u64;
+
+	for archive in nested {
+		if !current.is_empty() && size.saturating_add(archive.size) > limit {
+			batches.push(std::mem::take(&mut current));
+			size = 0;
+		}
+
+		current.push(archive.name.clone());
+		size = size.saturating_add(archive.size);
+	}
+
+	if !current.is_empty() {
+		batches.push(current);
+	}
+
+	batches
 }
 
 fn file_name_of(path: &Path) -> String {
@@ -102,19 +244,42 @@ fn file_name_of(path: &Path) -> String {
 		.map_or_else(String::new, |name| name.to_string_lossy().into_owned())
 }
 
+/// Tells whether an archive has something to squash: a pack, an archive inside it that may have packs, or
+/// contents that are only known after a helper program extracts them.
+fn has_content(scan: &ArchiveScan) -> bool {
+	scan.pack_roots
+		.as_ref()
+		.is_none_or(|roots| !roots.is_empty())
+		|| !scan.nested_archives.is_empty()
+}
+
 /// Searches a directory tree for packs. Links are not followed. A directory that is a pack is not searched
 /// inside.
-fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
+fn discover(options: &BulkOptions, layout: &Layout, archive_search_depth: usize) -> Vec<Found> {
 	let mut found = Vec::new();
 	let mut pending = vec![(options.input_directory.clone(), 0_usize)];
 
 	while let Some((directory, level)) = pending.pop() {
 		let name = file_name_of(&directory);
 
-		if level > 0 && looks_like_output(options, &name) {
+		if level > 0 && layout.looks_like_output(&name) {
 			found.push(Found::Skipped(
 				directory,
 				"it looks like the result of an earlier run".into()
+			));
+			continue;
+		}
+
+		// The output directory can be inside the input directory. What is in it is a result, not an input
+		if level > 0
+			&& layout
+				.output_root
+				.as_ref()
+				.is_some_and(|output| same_directory(output, &directory))
+		{
+			found.push(Found::Skipped(
+				directory,
+				"it is the output directory".into()
 			));
 			continue;
 		}
@@ -182,7 +347,7 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 					continue;
 				}
 
-				if looks_like_output(options, &archive_stem(&file_name)) {
+				if layout.looks_like_output(&archive_stem(&file_name)) {
 					found.push(Found::Skipped(
 						path,
 						"it looks like the result of an earlier run".into()
@@ -190,13 +355,12 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 					continue;
 				}
 
-				match scan_archive(&path, archive_search_depth) {
-					Ok(Some(scan))
-						if scan
-							.pack_roots
-							.as_ref()
-							.is_none_or(|roots| !roots.is_empty()) =>
-					{
+				match scan_archive_with_nested(
+					&path,
+					archive_search_depth,
+					&options.archive_extensions
+				) {
+					Ok(Some(scan)) if has_content(&scan) => {
 						found.push(Found::Archive(path, scan));
 					}
 					Ok(Some(_)) => found.push(Found::Skipped(path, "it has no pack".into())),
@@ -224,16 +388,13 @@ fn discover(options: &BulkOptions, archive_search_depth: usize) -> Vec<Found> {
 
 /// Reads an archive file that is the input of the bulk mode by itself. Its name and extension do not matter, and
 /// its name is not checked for being the result of an earlier run, because the user chose it.
-fn discover_archive_file(path: &Path, archive_search_depth: usize) -> Result<Vec<Found>, String> {
-	match scan_archive(path, archive_search_depth) {
-		Ok(Some(scan))
-			if scan
-				.pack_roots
-				.as_ref()
-				.is_none_or(|roots| !roots.is_empty()) =>
-		{
-			Ok(vec![Found::Archive(path.to_path_buf(), scan)])
-		}
+fn discover_archive_file(
+	path: &Path,
+	archive_search_depth: usize,
+	archive_extensions: &[String]
+) -> Result<Vec<Found>, String> {
+	match scan_archive_with_nested(path, archive_search_depth, archive_extensions) {
+		Ok(Some(scan)) if has_content(&scan) => Ok(vec![Found::Archive(path.to_path_buf(), scan)]),
 		Ok(Some(_)) => Ok(vec![Found::Skipped(
 			path.to_path_buf(),
 			"it has no pack".into()
@@ -425,6 +586,64 @@ impl Replacement {
 	}
 }
 
+/// What the run needs to know and does not change.
+struct Env<'a> {
+	options: &'a BulkOptions,
+	layout: &'a Layout,
+	extract_limits: ExtractLimits,
+	/// How many directory levels are searched for packs, in directories and in archives.
+	search_depth: usize,
+	table: &'a Table
+}
+
+/// What the run changes: the files it has promised, the counts, and the report.
+struct State {
+	guard: Guard,
+	summary: Summary,
+	report: String,
+	/// How many packs were numbered.
+	index: usize,
+	/// How many packs the search found. It is exact only when `exact` is set.
+	total: usize,
+	/// False when an archive has archives inside it, or needs a helper program: the number of packs is only
+	/// known when they are opened.
+	exact: bool
+}
+
+impl State {
+	/// Tells about something right away, so that a long run shows its progress, and keeps it for the report.
+	fn emit(&mut self, kind: Kind, line: String) {
+		match kind {
+			Kind::Done | Kind::Note => info!("{line}"),
+			Kind::Failed => {
+				self.summary.failed += 1;
+				error!("{line}");
+			}
+			Kind::Skipped => {
+				self.summary.skipped += 1;
+				debug!("{line}");
+			}
+		}
+
+		let _ = writeln!(self.report, "{line}");
+	}
+
+	fn fail(&mut self, label: &str, message: &str) {
+		self.emit(Kind::Failed, format!("{label}: failed: {message}"));
+	}
+
+	/// Numbers the next pack and makes its label: its number, its name and where it is.
+	fn label(&mut self, name: &str, source: &str) -> String {
+		self.index += 1;
+
+		if self.exact {
+			format!("[{}/{}] {name} ({source})", self.index, self.total)
+		} else {
+			format!("[{}] {name} ({source})", self.index)
+		}
+	}
+}
+
 /// Runs the bulk mode. Returns the exit code of the program.
 pub fn run(
 	options: &BulkOptions,
@@ -439,11 +658,27 @@ pub fn run(
 		options.input_directory.display()
 	);
 
+	let layout = Layout::new(options);
+
+	if let Some(output) = &layout.output_root {
+		info!("The results go to {}", output.display());
+
+		if options.overwrite {
+			warn!(
+				"bulk_overwrite is ignored, because bulk_output_directory is set. The originals are never replaced when the results go to another directory"
+			);
+		}
+	}
+
 	// The input is usually a directory, but it can also be a single archive file, of any format
 	let found = if options.input_directory.is_dir() {
-		discover(options, archive_search_depth)
+		discover(options, &layout, archive_search_depth)
 	} else if options.input_directory.is_file() {
-		match discover_archive_file(&options.input_directory, archive_search_depth) {
+		match discover_archive_file(
+			&options.input_directory,
+			archive_search_depth,
+			&options.archive_extensions
+		) {
 			Ok(found) => found,
 			Err(message) => {
 				error!("{message}");
@@ -467,28 +702,6 @@ pub fn run(
 		options.scan_depth
 	);
 
-	let mut report = String::new();
-	let mut summary = Summary::default();
-
-	let mut guard = Guard {
-		inputs: found
-			.iter()
-			.filter_map(|item| match item {
-				Found::Directory(path) | Found::Archive(path, _) => Some(path.clone()),
-				Found::Skipped(..) => None
-			})
-			.collect(),
-		outputs: HashSet::new()
-	};
-
-	for item in &found {
-		if let Found::Skipped(path, reason) = item {
-			summary.skipped += 1;
-			debug!("Skipped {}: {reason}", path.display());
-			let _ = writeln!(report, "skipped {}: {reason}", path.display());
-		}
-	}
-
 	let total: usize = found
 		.iter()
 		.map(|item| match item {
@@ -497,59 +710,85 @@ pub fn run(
 			Found::Skipped(..) => 0
 		})
 		.sum();
+	let exact = found.iter().all(|item| match item {
+		Found::Archive(_, scan) => scan.pack_roots.is_some() && scan.nested_archives.is_empty(),
+		_ => true
+	});
 
-	if total == 0 {
+	let mut state = State {
+		guard: Guard {
+			inputs: found
+				.iter()
+				.filter_map(|item| match item {
+					Found::Directory(path) | Found::Archive(path, _) => Some(path.clone()),
+					Found::Skipped(..) => None
+				})
+				.collect(),
+			outputs: HashSet::new()
+		},
+		summary: Summary::default(),
+		report: String::new(),
+		index: 0,
+		total,
+		exact
+	};
+
+	for item in &found {
+		if let Found::Skipped(path, reason) = item {
+			state.emit(
+				Kind::Skipped,
+				format!("skipped {}: {reason}", path.display())
+			);
+		}
+	}
+
+	if total == 0 && exact {
 		warn!(
 			"No packs were found in {}",
 			options.input_directory.display()
 		);
 	}
 
-	let mut index = 0_usize;
+	let env = Env {
+		options,
+		layout: &layout,
+		extract_limits,
+		search_depth: archive_search_depth,
+		table
+	};
 
 	for item in found {
-		let outcomes = match item {
-			Found::Skipped(..) => continue,
+		match item {
+			Found::Skipped(..) => {}
 			Found::Directory(path) => {
-				index += 1;
-				let output = output_path(options, &path, &file_name_of(&path), None);
+				let name = file_name_of(&path);
+				let dest = Dest {
+					directory: layout
+						.result_directory(path.parent().unwrap_or_else(|| Path::new(""))),
+					name: layout.result_name(&name)
+				};
+				let label = state.label(&name, &path.display().to_string());
 
-				vec![process(
-					options,
-					table,
+				process(&env, &mut state, squash, &path, &dest.file(), &label, None);
+			}
+			Found::Archive(path, scan) => {
+				let dest = Dest {
+					directory: layout
+						.result_directory(path.parent().unwrap_or_else(|| Path::new(""))),
+					name: layout.result_name(&archive_stem(&file_name_of(&path)))
+				};
+
+				process_archive(
+					&env,
+					&mut state,
 					squash,
-					&mut guard,
 					&path,
-					&output,
-					&format!("[{index}/{total}] {}", path.display()),
-					directory_size(&path),
-					None,
-					&mut summary
-				)]
+					&scan,
+					&dest,
+					&path.display().to_string(),
+					0
+				);
 			}
-			Found::Archive(path, scan) => process_archive(
-				options,
-				extract_limits,
-				archive_search_depth,
-				table,
-				squash,
-				&mut guard,
-				&path,
-				&scan,
-				total,
-				&mut index,
-				&mut summary
-			)
-		};
-
-		for outcome in outcomes {
-			if outcome.failed {
-				error!("{}", outcome.line);
-			} else {
-				info!("{}", outcome.line);
-			}
-
-			let _ = writeln!(report, "{}", outcome.line);
 		}
 	}
 
@@ -558,6 +797,7 @@ pub fn run(
 	} else {
 		"squashed"
 	};
+	let summary = &state.summary;
 	let summary_text = format!(
 		"Bulk mode finished: {} {finished}, {} failed, {} skipped. {}",
 		summary.done,
@@ -573,8 +813,9 @@ pub fn run(
 			)
 		}
 	);
+	let failed = summary.failed > 0;
 
-	if summary.failed > 0 {
+	if failed {
 		error!("{summary_text}");
 		error!(
 			"More help for this fork: <{}>",
@@ -584,10 +825,10 @@ pub fn run(
 		info!("{summary_text}");
 	}
 
-	let _ = writeln!(report, "{summary_text}");
+	let _ = writeln!(state.report, "{summary_text}");
 
 	if let Some(report_file) = &options.report_file {
-		match fs::write(report_file, report) {
+		match fs::write(report_file, &state.report) {
 			Ok(()) => info!("Report written to {}", report_file.display()),
 			Err(error) => error!(
 				"Couldn't write the report to {}: {error}",
@@ -596,84 +837,101 @@ pub fn run(
 		}
 	}
 
-	i32::from(summary.failed > 0)
+	i32::from(failed)
 }
 
 /// Squashes one pack, or tells what would happen in a dry run. `replacement` is set for an archive that is replaced.
-#[allow(clippy::too_many_arguments)]
 fn process(
-	options: &BulkOptions,
-	table: &Table,
+	env: &Env<'_>,
+	state: &mut State,
 	squash: &mut SquashFn<'_>,
-	guard: &mut Guard,
 	pack_directory: &Path,
 	output: &Path,
 	label: &str,
-	input_bytes: u64,
-	replacement: Option<&Replacement>,
-	summary: &mut Summary
-) -> Outcome {
-	let fail = |summary: &mut Summary, message: String| {
-		summary.failed += 1;
-
-		Outcome {
-			line: format!("{label}: failed: {message}"),
-			failed: true
-		}
-	};
-
+	replacement: Option<&Replacement>
+) {
 	let final_output = replacement.map_or(output, |replacement| replacement.result.as_path());
 
 	// An archive that is replaced writes to a temporary file first, and its result path is its original path
 	let written_path = replacement.map_or(output, |replacement| replacement.temporary.as_path());
 
 	if replacement.is_none() {
-		if let Err(message) = guard.claim(output) {
-			return fail(summary, message);
+		if let Err(message) = state.guard.claim(output) {
+			state.fail(label, &message);
+
+			return;
 		}
-	} else if !guard.outputs.insert(final_output.to_path_buf()) {
-		return fail(
-			summary,
-			format!(
+	} else if !state.guard.outputs.insert(final_output.to_path_buf()) {
+		state.fail(
+			label,
+			&format!(
 				"another pack already has the result {}",
 				final_output.display()
 			)
 		);
+
+		return;
 	}
 
 	if let Some(replacement) = replacement
 		&& let Err(message) = replacement.check()
 	{
-		return fail(summary, message);
+		state.fail(label, &message);
+
+		return;
 	}
 
-	if options.dry_run {
-		summary.done += 1;
+	if env.options.dry_run {
+		state.summary.done += 1;
 
-		return Outcome {
-			line: format!(
-				"{label} -> {}{}",
-				final_output.display(),
-				match replacement {
-					Some(replacement) => match &replacement.backup {
-						Some(backup) =>
-							format!(" (the original would be kept as {})", backup.display()),
-						None => " (the original would be deleted)".to_string()
-					},
-					None => String::new()
-				}
-			),
-			failed: false
-		};
+		let line = format!(
+			"{label} -> {}{}",
+			final_output.display(),
+			match replacement {
+				Some(replacement) => match &replacement.backup {
+					Some(backup) => format!(" (the original would be kept as {})", backup.display()),
+					None => " (the original would be deleted)".to_string()
+				},
+				None => String::new()
+			}
+		);
+		state.emit(Kind::Done, line);
+
+		return;
 	}
 
-	let squash_options = match options_for(table, pack_directory, written_path) {
+	// The results of an archive with several packs go in folders that do not exist yet
+	if replacement.is_none()
+		&& let Some(parent) = output.parent()
+		&& !parent.as_os_str().is_empty()
+		&& let Err(error) = fs::create_dir_all(parent)
+	{
+		state.fail(
+			label,
+			&format!("couldn't create the folder {}: {error}", parent.display())
+		);
+
+		return;
+	}
+
+	let input_bytes = directory_size(pack_directory);
+
+	debug!(
+		target: crate::debug_log::DEBUG_LOG_TARGET,
+		"Bulk pack {label}: pack directory {} ({input_bytes} bytes), result file {}",
+		pack_directory.display(),
+		final_output.display()
+	);
+
+	let squash_options = match options_for(env.table, pack_directory, written_path) {
 		Ok(squash_options) => squash_options,
 		Err(message) => {
-			return fail(
-				summary,
-				format!("the options are not valid for this pack: {message}")
+			state.fail(
+				label,
+				&format!("the options are not valid for this pack: {message}")
 			);
+
+			return;
 		}
 	};
 
@@ -682,7 +940,9 @@ fn process(
 			let _ = fs::remove_file(written_path);
 		}
 
-		return fail(summary, message);
+		state.fail(label, &message);
+
+		return;
 	}
 
 	if let Some(replacement) = replacement
@@ -690,53 +950,44 @@ fn process(
 	{
 		let _ = fs::remove_file(&replacement.temporary);
 
-		return fail(summary, message);
+		state.fail(label, &message);
+
+		return;
 	}
 
 	let output_bytes = fs::metadata(final_output).map_or(0, |metadata| metadata.len());
 
-	summary.done += 1;
-	summary.input_bytes = summary.input_bytes.saturating_add(input_bytes);
-	summary.output_bytes = summary.output_bytes.saturating_add(output_bytes);
+	state.summary.done += 1;
+	state.summary.input_bytes = state.summary.input_bytes.saturating_add(input_bytes);
+	state.summary.output_bytes = state.summary.output_bytes.saturating_add(output_bytes);
 
-	Outcome {
-		line: format!(
-			"{label} -> {} ({} -> {})",
-			final_output.display(),
-			mib(input_bytes),
-			mib(output_bytes)
-		),
-		failed: false
-	}
+	let line = format!(
+		"{label} -> {} ({} -> {})",
+		final_output.display(),
+		mib(input_bytes),
+		mib(output_bytes)
+	);
+	state.emit(Kind::Done, line);
 }
 
-/// Squashes the packs of one archive. The packs are extracted together, once, and the extracted files are deleted
-/// when this function returns.
+/// Squashes the packs of one archive, and then the archives inside it. `source` tells where the archive is, for
+/// the labels. `nesting` is how many archives this one is inside of.
+///
+/// The packs of the archive are extracted together, once, and deleted before the archives inside it are opened.
+/// The archives inside it are extracted in groups, and each one is deleted after it is done.
 #[allow(clippy::too_many_arguments)]
 fn process_archive(
-	options: &BulkOptions,
-	extract_limits: ExtractLimits,
-	archive_search_depth: usize,
-	table: &Table,
+	env: &Env<'_>,
+	state: &mut State,
 	squash: &mut SquashFn<'_>,
-	guard: &mut Guard,
 	archive: &Path,
 	scan: &ArchiveScan,
-	total: usize,
-	index: &mut usize,
-	summary: &mut Summary
-) -> Vec<Outcome> {
+	dest: &Dest,
+	source: &str,
+	nesting: usize
+) {
 	let stem = archive_stem(&file_name_of(archive));
-	let archive_bytes = fs::metadata(archive).map_or(0, |metadata| metadata.len());
-
-	let failure = |summary: &mut Summary, index: usize, message: String| {
-		summary.failed += 1;
-
-		Outcome {
-			line: format!("[{index}/{total}] {}: failed: {message}", archive.display()),
-			failed: true
-		}
-	};
+	let options = env.options;
 
 	// In a dry run, nothing is extracted, so the packs are the ones that the scan found
 	if options.dry_run {
@@ -744,42 +995,45 @@ fn process_archive(
 			.pack_roots
 			.clone()
 			.unwrap_or_else(|| vec![String::new()]);
-		let several = roots.len() > 1;
-		let mut outcomes = Vec::new();
+		let single = roots.len() == 1 && scan.nested_archives.is_empty();
 
 		for root in &roots {
-			*index += 1;
-			let label = format!(
-				"[{index}/{total}] {}{}",
-				archive.display(),
-				if root.is_empty() {
-					String::new()
-				} else {
-					format!(" ({root})")
-				}
-			);
-			let replacement =
-				(options.overwrite && !several).then(|| replacement_for(options, archive, &stem));
-			let output = output_path(options, archive, &stem, several.then_some(root.as_str()));
+			let (name, pack_source) = pack_names(&stem, source, root);
+			let label = state.label(&name, &pack_source);
+			let (output, replacement) =
+				result_for(env, archive, &stem, dest, root, single, nesting == 0);
 
-			outcomes.push(process(
-				options,
-				table,
+			process(
+				env,
+				state,
 				squash,
-				guard,
 				archive,
 				&output,
 				&label,
-				archive_bytes,
-				replacement.as_ref(),
-				summary
-			));
+				replacement.as_ref()
+			);
 		}
 
-		return outcomes;
+		for nested in &scan.nested_archives {
+			state.emit(
+				Kind::Note,
+				format!(
+					"{source} > {}: an archive inside the archive. A dry run does not open it, so it does not list its packs",
+					nested.name
+				)
+			);
+		}
+
+		return;
 	}
 
-	let extracted = match extract_packs(archive, scan, archive_search_depth, extract_limits) {
+	let mut extracted = match extract_packs_and_nested(
+		archive,
+		scan,
+		env.search_depth,
+		&options.archive_extensions,
+		env.extract_limits
+	) {
 		Ok(extracted) => extracted,
 		Err(error) => {
 			debug!(
@@ -788,48 +1042,170 @@ fn process_archive(
 				archive.display(),
 				crate::debug_log::error_chain(&error)
 			);
-			*index += 1;
 
-			return vec![failure(summary, *index, format!("{error}"))];
+			let label = state.label(&stem, source);
+			state.fail(&label, &error.to_string());
+
+			return;
 		}
+	};
+
+	// A helper program extracts everything, so the archives inside the archive are already there
+	let helper_nested = std::mem::take(&mut extracted.nested);
+	let nested_count = if scan.pack_roots.is_some() {
+		scan.nested_archives.len()
+	} else {
+		helper_nested.len()
 	};
 
 	// The scan of an archive that needs a helper program does not know the number of packs. If the real number
 	// is different from the one that was counted, the numbers in the labels are not exact, but the work is right
-	let several = extracted.packs.len() > 1;
-	let mut outcomes = Vec::new();
+	let single = extracted.packs.len() == 1 && nested_count == 0;
 
 	for (root, pack_directory) in &extracted.packs {
-		*index += 1;
+		let (name, pack_source) = pack_names(&stem, source, root);
+		let label = state.label(&name, &pack_source);
+		let (output, replacement) = result_for(env, archive, &stem, dest, root, single, nesting == 0);
 
-		let label = format!(
-			"[{index}/{total}] {}{}",
-			archive.display(),
-			if root.is_empty() {
-				String::new()
-			} else {
-				format!(" ({root})")
-			}
-		);
-		let replacement =
-			(options.overwrite && !several).then(|| replacement_for(options, archive, &stem));
-		let output = output_path(options, archive, &stem, several.then_some(root.as_str()));
-
-		outcomes.push(process(
-			options,
-			table,
+		process(
+			env,
+			state,
 			squash,
-			guard,
 			pack_directory,
 			&output,
 			&label,
-			archive_bytes,
-			replacement.as_ref(),
-			summary
-		));
+			replacement.as_ref()
+		);
 	}
 
-	outcomes
+	// Free the disk space of the packs before opening the archives inside. With a helper program, the archives
+	// inside are in the same extracted files, which are kept until the end
+	let _keep_alive = scan.pack_roots.is_none().then_some(extracted);
+
+	for (name, path) in helper_nested {
+		process_nested(env, state, squash, dest, &name, &path, source, nesting);
+
+		let _ = fs::remove_file(&path);
+	}
+
+	if scan.pack_roots.is_some() {
+		for names in nested_batches(&scan.nested_archives, scan.format) {
+			match extract_nested_archives(archive, scan.format, &names, env.extract_limits) {
+				Ok(files) => {
+					for (name, path) in &files.files {
+						process_nested(env, state, squash, dest, name, path, source, nesting);
+
+						let _ = fs::remove_file(path);
+					}
+				}
+				Err(error) => {
+					debug!(
+						target: crate::debug_log::DEBUG_LOG_TARGET,
+						"The archives inside the archive {} could not be extracted. Error, with the errors that caused it: {}",
+						archive.display(),
+						crate::debug_log::error_chain(&error)
+					);
+
+					state.fail(
+						source,
+						&format!("couldn't extract the archives inside it: {error}")
+					);
+				}
+			}
+		}
+	}
+}
+
+/// The name of a pack in an archive, and where it is, for its label. The name of a pack in the root of the archive
+/// is the name of the archive.
+fn pack_names(stem: &str, source: &str, root: &str) -> (String, String) {
+	if root.is_empty() {
+		(stem.to_string(), source.to_string())
+	} else {
+		(
+			root.rsplit('/').next().unwrap_or(root).to_string(),
+			format!("{source} > {root}")
+		)
+	}
+}
+
+/// The result file of a pack of an archive, and how the archive is replaced, if it is.
+fn result_for(
+	env: &Env<'_>,
+	archive: &Path,
+	stem: &str,
+	dest: &Dest,
+	root: &str,
+	single: bool,
+	top_level: bool
+) -> (PathBuf, Option<Replacement>) {
+	if single {
+		let replacement = (top_level && env.options.overwrite && env.layout.output_root.is_none())
+			.then(|| replacement_for(env.options, archive, stem));
+
+		(dest.file(), replacement)
+	} else {
+		(dest.pack_file(root), None)
+	}
+}
+
+/// Opens an archive that was inside another archive, and squashes what is in it.
+#[allow(clippy::too_many_arguments)]
+fn process_nested(
+	env: &Env<'_>,
+	state: &mut State,
+	squash: &mut SquashFn<'_>,
+	parent: &Dest,
+	name: &str,
+	path: &Path,
+	source: &str,
+	nesting: usize
+) {
+	let nested_source = format!("{source} > {name}");
+
+	if nesting + 1 > MAX_NESTING {
+		state.emit(
+			Kind::Skipped,
+			format!(
+				"skipped {nested_source}: it is inside more than {MAX_NESTING} archives, one inside the other"
+			)
+		);
+
+		return;
+	}
+
+	match scan_archive_with_nested(path, env.search_depth, &env.options.archive_extensions) {
+		Ok(Some(scan)) if has_content(&scan) => process_archive(
+			env,
+			state,
+			squash,
+			path,
+			&scan,
+			&parent.nested(name),
+			&nested_source,
+			nesting + 1
+		),
+		Ok(Some(_)) => state.emit(
+			Kind::Skipped,
+			format!("skipped {nested_source}: it has no pack")
+		),
+		Ok(None) => state.emit(
+			Kind::Skipped,
+			format!("skipped {nested_source}: it is not an archive")
+		),
+		Err(error) => {
+			debug!(
+				target: crate::debug_log::DEBUG_LOG_TARGET,
+				"The archive {nested_source} could not be read. Error, with the errors that caused it: {}",
+				crate::debug_log::error_chain(&error)
+			);
+
+			state.emit(
+				Kind::Skipped,
+				format!("skipped {nested_source}: it can not be read: {error}")
+			);
+		}
+	}
 }
 
 #[cfg(test)]

@@ -189,7 +189,7 @@ pub(crate) async fn find_mcchanges_jar_in_directory<V: VirtualFileSystem>(
 	path: &Path,
 	is_bedrock: bool
 ) -> Option<(PathBuf, String)> {
-	if !vfs.file_type(path).ok()?.is_dir() || vfs.file_type(&path.join(VERSION_INDEX_FILE)).is_ok() {
+	if !vfs.file_type(path).ok()?.is_dir() || vfs.file_type(path.join(VERSION_INDEX_FILE)).is_ok() {
 		return None;
 	}
 

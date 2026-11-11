@@ -38,6 +38,7 @@
   - [`archive_pack_search_depth`](#archive_pack_search_depth)
   - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
   - [`bulk_input_directory`](#bulk_input_directory)
+  - [`bulk_output_directory`](#bulk_output_directory)
   - [`bulk_output_prefix`](#bulk_output_prefix)
   - [`bulk_output_suffix`](#bulk_output_suffix)
   - [`bulk_overwrite`](#bulk_overwrite)
@@ -159,7 +160,8 @@ work without any other program:
 - TAR (`.tar`), alone or compressed with gzip (`.tar.gz`), xz (`.tar.xz`),
   Zstandard (`.tar.zst`) or bzip2 (`.tar.bz2`)
 
-RAR files need a helper program that PackSquash runs, if it is installed:
+RAR files, and ZIP files that the ZIP reader of PackSquash can not read because of how they
+are made (for example, split in several disks), need a helper program that PackSquash runs, if it is installed:
 `bsdtar`, `tar`, `7z`, `7zz`, `7za` or `unrar`, in this order, until one works.
 Windows 10 and later have `tar.exe`, which can read some RAR files. For the
 others, install 7-Zip or `unrar` and add its folder to the `PATH` environment
@@ -930,7 +932,8 @@ archive_pack_search_depth = 6
 The most data that PackSquash extracts from an archive, in MiB, when
 [`pack_directory`](#pack_directory) is an archive. If the pack in the archive is
 bigger, PackSquash stops with an error before it fills the disk. Extracting more
-than 500000 entries is also an error. This option has no effect when
+than 500000 entries is also an error. In the bulk mode, the limit is for each extraction: the
+packs of an archive, and each group of archives inside it. This option has no effect when
 `pack_directory` is a directory. Only the command-line program reads it.
 
 Example:
@@ -957,15 +960,32 @@ accepts. Its name and extension do not matter. PackSquash squashes every pack th
 it, and the results go next to the archive. A file that is not an archive is an error.
 
 PackSquash searches the subdirectories too, up to [`bulk_scan_depth`](#bulk_scan_depth)
-levels. It does not search inside a pack, and it does not follow links. Every result
-is a ZIP file next to its input, named `PREFIX` + the name of the pack + `SUFFIX` +
-`.zip`, where the name of an archive has no extension. An archive with several packs
-gives one result per pack, named with the directory of the pack in the archive:
-`PREFIX` + `archive_directory` + `SUFFIX` + `.zip`.
+levels. It does not search inside a pack, and it does not follow links.
+
+PackSquash also opens the archives that are inside an archive, and the ones inside
+those, up to 3 levels, when they are not part of a pack (a `.zip` inside a pack is a
+file of that pack and is left alone). The file extensions that are opened are the ones of
+[`bulk_archive_extensions`](#bulk_archive_extensions), and a file is read by its contents. They are
+extracted a few at a time, and each one is deleted from the temporary directory when it is
+done, so a big archive full of archives needs the space of the biggest group and not of everything.
+
+Every result is a ZIP file. Next to its input, it is named `PREFIX` + the name of the pack +
+`SUFFIX` + `.zip`, where the name of an archive has no extension. An archive that has one pack
+and nothing else gives one file. Any other archive, with several packs or with archives inside,
+gives a folder named `PREFIX` + the name of the archive + `SUFFIX`, with what the archive has:
+a pack in the directory `a/b/Pack` of the archive is the file `a/b/Pack.zip` in the folder, a pack in
+the root of the archive is a file with the name of the archive, and an archive inside the
+archive, like `a/inner.zip`, is handled the same way, with its results in `a/inner.zip` or in
+the folder `a/inner`. Only the first name has the prefix and the suffix. With
+[`bulk_output_directory`](#bulk_output_directory), all of this goes to that directory.
 
 In the bulk mode, `pack_directory` and `output_file_path` are ignored. All the other
 options, and the options of files, are used for every pack. If a pack fails, PackSquash
-goes on with the next one, prints what failed, and exits with the code 1 at the end.
+goes on with the next one, prints what failed, and exits with the code 1 at the end. The
+line of every pack has its number, its name and where it is, like
+`[3/204] Pack name (C:\packs\big.zip > folder\inner.zip > Pack name)`, and how big its files
+were and how big the result is. When archives are inside archives, the total is not known before
+they are opened, so the lines only have the number.
 
 Inputs whose name starts with the prefix and ends with the suffix are skipped, because
 they are the results of an earlier run. This only applies if the prefix or the suffix
@@ -977,11 +997,32 @@ Example:
 bulk_input_directory = 'C:\path\to\packs'
 ```
 
+### `bulk_output_directory`
+
+**Type**: [String](https://toml.io/en/v1.0.0#string)
+
+**Default value**: not set, so the results go next to their inputs
+
+The directory where the bulk mode writes the results, like `'C:\squashed'`. It is created if it
+does not exist. The results keep the folders that the input has: a pack in
+`bulk_input_directory\games\Pack` gives `bulk_output_directory\games\Pack.zip`. When this option is
+set, the results have no prefix, unless you set [`bulk_output_prefix`](#bulk_output_prefix) yourself. Nothing
+is written next to the inputs, and [`bulk_overwrite`](#bulk_overwrite) does nothing. If the
+directory is the input directory, it is the same as not setting it. It can be inside the input directory: it
+is not searched for packs.
+
+Example:
+
+```toml
+bulk_input_directory = 'C:\packs'
+bulk_output_directory = 'C:\packs_squashed'
+```
+
 ### `bulk_output_prefix`
 
 **Type**: [String](https://toml.io/en/v1.0.0#string)
 
-**Default value**: `'squashed_'`
+**Default value**: `'squashed_'`, or `''` when [`bulk_output_directory`](#bulk_output_directory) is set
 
 The text that every result file name starts with in the bulk mode. It can be empty. It
 can not have characters that are not allowed in a file name, like `/` or `:`.
@@ -1006,7 +1047,8 @@ replaced by `pack.zip`, and `pack.zip` by the new `pack.zip`. The prefix and the
 are not used for these. PackSquash writes the result to a temporary file first, and only
 changes the original after the result is complete. It does not replace a file that is
 not the original, and it does not replace a directory ever: the result of a directory
-pack is always a new file next to it. An archive with several packs is not replaced.
+pack is always a new file next to it. An archive with several packs, or with archives
+inside, is not replaced. It does nothing when [`bulk_output_directory`](#bulk_output_directory) is set.
 
 ### `bulk_backup`
 
@@ -1026,7 +1068,8 @@ result is complete, and it is lost.
 **Default value**: `false`
 
 In the bulk mode, only tells what would happen: which packs it finds, and where the
-results would go. Nothing is extracted, squashed, written or changed.
+results would go. Nothing is extracted, squashed, written or changed. The archives inside
+archives are not opened, so it only says that they are there.
 
 ### `bulk_report_file`
 
@@ -1046,7 +1089,8 @@ pack, each skipped file with the reason, and the summary. It also works in a dry
 The file extensions that the bulk mode opens as archives, to look for packs. The case and
 the dots do not matter. `jar` is not in the list on purpose: the jar files of mods have a
 `pack.mcmeta` file and an `assets` directory too, so they look like packs. A file with one
-of these extensions is read by its contents, so a file that is not an archive is skipped.
+of these extensions is read by its contents, so a file that is not an archive is skipped. The
+list is also the one for the archives that are inside archives.
 
 ### `bulk_scan_depth`
 

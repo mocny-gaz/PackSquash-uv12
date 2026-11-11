@@ -23,7 +23,7 @@ fn java_pack(prefix: &str) -> Vec<(String, Vec<u8>)> {
 		(
 			format!("{prefix}assets/minecraft/textures/a.txt"),
 			b"hello".to_vec()
-		),
+		)
 	]
 }
 
@@ -207,18 +207,18 @@ fn packs_are_found_in_every_layout() {
 	two_packs.extend(java_pack("deep/er/two/"));
 	let mut bedrock = vec![
 		("manifest.json".to_string(), BEDROCK_MANIFEST.to_vec()),
-		("textures/blocks/a.png".to_string(), b"x".to_vec()),
+		("textures/blocks/a.png".to_string(), b"x".to_vec())
 	];
 	bedrock.push(("pack_icon.png".into(), b"x".to_vec()));
 	let not_a_pack = vec![
 		("pack.mcmeta".to_string(), MCMETA.to_vec()), // no assets or data next to it
-		("lib/mod.class".to_string(), b"x".to_vec()),
+		("lib/mod.class".to_string(), b"x".to_vec())
 	];
 	let behavior_pack = vec![("manifest.json".to_string(), BEHAVIOR_MANIFEST.to_vec())];
 	let too_deep = java_pack("a/b/c/d/e/f/");
 	let data_pack = vec![
 		("pack.mcmeta".to_string(), MCMETA.to_vec()),
-		("data/minecraft/recipes/x.json".to_string(), b"{}".to_vec()),
+		("data/minecraft/recipes/x.json".to_string(), b"{}".to_vec())
 	];
 	let mut inside_a_pack = java_pack("");
 	inside_a_pack.extend(java_pack("nested/"));
@@ -235,7 +235,7 @@ fn packs_are_found_in_every_layout() {
 		("too_deep", too_deep, vec![]),
 		("data_pack", data_pack, vec![""]),
 		("inside_a_pack", inside_a_pack, vec![""]),
-		("with_junk", with_junk, vec!["real"]),
+		("with_junk", with_junk, vec!["real"])
 	];
 
 	for (name, pack, expected) in cases {
@@ -589,4 +589,229 @@ fn output_of_helper_programs_has_no_links_and_obeys_the_limits() {
 		clean_helper_output(directory.path(), too_many_entries),
 		Err(ArchiveError::TooBig(_))
 	));
+}
+
+fn extensions(list: &[&str]) -> Vec<String> {
+	list.iter()
+		.map(|extension| (*extension).to_string())
+		.collect()
+}
+
+#[test]
+fn archives_inside_archives_are_found_outside_of_packs_only() {
+	let directory = tempfile::tempdir().unwrap();
+	let inner = zip_bytes(&[("a.txt", b"inner")]);
+	let mut files = java_pack("Pack/");
+
+	files.push(("Pack/mods/in_the_pack.zip".to_string(), inner.clone()));
+	files.push(("x/z.ZIP".to_string(), inner.clone()));
+	files.push(("x/y/notes.txt".to_string(), b"text".to_vec()));
+	files.push(("__MACOSX/hidden.zip".to_string(), inner.clone()));
+	files.push((".git/hidden.zip".to_string(), inner.clone()));
+	files.push(("a/b/c/d/e/too_deep.zip".to_string(), inner.clone()));
+	files.push(("top.7z".to_string(), b"not really".to_vec()));
+
+	let archive = write(directory.path(), "big.zip", &zip_bytes(&as_files(&files)));
+
+	let scan = scan_archive_with_nested(&archive, 2, &extensions(&["zip", "7z"]))
+		.unwrap()
+		.unwrap();
+
+	assert_eq!(scan.pack_roots, Some(vec!["Pack".to_string()]));
+	assert_eq!(
+		scan.nested_archives
+			.iter()
+			.map(|nested| (nested.name.as_str(), nested.size))
+			.collect::<Vec<_>>(),
+		[("top.7z", 10), ("x/z.ZIP", inner.len() as u64)],
+		"archives in a pack, in hidden directories and deeper than the search depth are not listed"
+	);
+
+	// Without extensions, nothing is looked for
+	assert!(
+		scan_archive(&archive, 2)
+			.unwrap()
+			.unwrap()
+			.nested_archives
+			.is_empty()
+	);
+
+	// An archive that is a pack by itself has no archive outside of the pack
+	let mut files = java_pack("");
+
+	files.push(("mods/x.zip".to_string(), inner));
+
+	let archive = write(directory.path(), "pack.zip", &zip_bytes(&as_files(&files)));
+	let scan = scan_archive_with_nested(&archive, 2, &extensions(&["zip"]))
+		.unwrap()
+		.unwrap();
+
+	assert_eq!(scan.pack_roots, Some(vec![String::new()]));
+	assert!(scan.nested_archives.is_empty());
+}
+
+#[test]
+fn archives_inside_archives_are_extracted_by_name_only() {
+	let directory = tempfile::tempdir().unwrap();
+	let inner = zip_bytes(&[("a.txt", b"inner")]);
+	let files: Files<'_> = &[
+		("x/one.zip", &inner),
+		("two.zip", &inner),
+		("x/other.txt", b"other")
+	];
+	let archive = write(directory.path(), "big.zip", &zip_bytes(files));
+
+	let extracted = extract_nested_archives(
+		&archive,
+		ArchiveFormat::Zip,
+		&["x/one.zip".to_string(), "missing.zip".to_string()],
+		ExtractLimits::default()
+	)
+	.unwrap();
+
+	assert_eq!(extracted.files.len(), 1, "{:?}", extracted.files);
+	assert_eq!(extracted.files[0].0, "x/one.zip");
+	assert_eq!(fs::read(&extracted.files[0].1).unwrap(), inner);
+	assert!(!extracted.files[0].1.with_file_name("other.txt").exists());
+
+	let none =
+		extract_nested_archives(&archive, ArchiveFormat::Zip, &[], ExtractLimits::default()).unwrap();
+
+	assert!(none.files.is_empty(), "no names extracts nothing");
+}
+
+#[test]
+fn an_archive_with_only_archives_is_not_an_error_but_an_empty_one_is() {
+	let directory = tempfile::tempdir().unwrap();
+	let inner = zip_bytes(&java_pack_files(""));
+	let archive = write(
+		directory.path(),
+		"only_archives.zip",
+		&zip_bytes(&[("sub/a.zip", &inner)])
+	);
+	let nested = extensions(&["zip"]);
+	let scan = scan_archive_with_nested(&archive, 4, &nested)
+		.unwrap()
+		.unwrap();
+
+	assert_eq!(scan.pack_roots, Some(Vec::new()));
+	assert_eq!(scan.nested_archives.len(), 1);
+
+	let extracted =
+		extract_packs_and_nested(&archive, &scan, 4, &nested, ExtractLimits::default()).unwrap();
+
+	assert!(extracted.packs.is_empty() && extracted.nested.is_empty());
+
+	let empty = write(
+		directory.path(),
+		"nothing.zip",
+		&zip_bytes(&[("readme.txt", b"hi")])
+	);
+	let scan = scan_archive_with_nested(&empty, 4, &nested)
+		.unwrap()
+		.unwrap();
+
+	assert!(matches!(
+		extract_packs_and_nested(&empty, &scan, 4, &nested, ExtractLimits::default()),
+		Err(ArchiveError::NoPack)
+	));
+}
+
+fn java_pack_files(prefix: &str) -> Vec<(&'static str, &'static [u8])> {
+	assert!(prefix.is_empty());
+
+	vec![
+		("pack.mcmeta", MCMETA),
+		("assets/minecraft/textures/a.txt", b"hello")
+	]
+}
+
+#[test]
+fn a_zip_archive_that_is_split_in_disks_is_left_to_a_helper_program() {
+	let directory = tempfile::tempdir().unwrap();
+	let pack = java_pack("");
+	let mut bytes = zip_bytes(&as_files(&pack));
+	let end = bytes
+		.windows(4)
+		.rposition(|window| window == b"PK\x05\x06")
+		.expect("the archive has an end of central directory record");
+
+	// The number of this disk is 1, but the other disk numbers say that the archive has only one
+	bytes[end + 4] = 1;
+
+	let archive = write(directory.path(), "split.zip", &bytes);
+	let scan = scan_archive(&archive, DEFAULT_MAX_PACK_DEPTH)
+		.unwrap()
+		.unwrap();
+
+	assert_eq!(scan.format, ArchiveFormat::Helper);
+	assert_eq!(scan.pack_roots, None);
+	assert!(
+		scan.helper_reason
+			.as_deref()
+			.is_some_and(|reason| reason.contains("Multi-disk")),
+		"{:?}",
+		scan.helper_reason
+	);
+
+	// Whether a helper program that reads it is installed depends on the computer. Without one, or when it
+	// fails, the error says why a helper program was needed
+	match extract_packs(
+		&archive,
+		&scan,
+		DEFAULT_MAX_PACK_DEPTH,
+		ExtractLimits::default()
+	) {
+		Ok(extracted) => assert!(!extracted.packs.is_empty()),
+		Err(ArchiveError::HelperFailed(message)) => {
+			assert!(message.contains("Multi-disk"), "{message}")
+		}
+		Err(other) => panic!("unexpected error: {other}")
+	}
+}
+
+#[test]
+fn a_damaged_zip_archive_is_not_left_to_a_helper_program() {
+	let directory = tempfile::tempdir().unwrap();
+	let archive = write(
+		directory.path(),
+		"bad.zip",
+		b"PK\x03\x04 this is not a zip file at all"
+	);
+
+	assert!(matches!(
+		scan_archive(&archive, DEFAULT_MAX_PACK_DEPTH),
+		Err(ArchiveError::Format(_))
+	));
+}
+
+#[test]
+fn helper_extractions_list_the_archives_that_are_not_in_packs() {
+	let directory = tempfile::tempdir().unwrap();
+	let root = directory.path();
+
+	for (path, content) in [
+		("Pack/pack.mcmeta", MCMETA),
+		("Pack/assets/minecraft/a.txt", b"x"),
+		("Pack/mods/in_pack.zip", b"zip"),
+		("folder/one.zip", b"zip"),
+		("folder/two.TXT", b"text"),
+		("__MACOSX/hidden.zip", b"zip"),
+		("top.7z", b"7z")
+	] {
+		let target = root.join(path);
+
+		fs::create_dir_all(target.parent().unwrap()).unwrap();
+		fs::write(target, content).unwrap();
+	}
+
+	let found = find_nested_files(root, &extensions(&["zip", "7z"]), 4);
+
+	assert_eq!(
+		found
+			.iter()
+			.map(|(name, _)| name.as_str())
+			.collect::<Vec<_>>(),
+		["folder/one.zip", "top.7z"]
+	);
 }
