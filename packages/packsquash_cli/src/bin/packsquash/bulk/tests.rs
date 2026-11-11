@@ -718,7 +718,7 @@ fn pack_files(directory: &str) -> Vec<(String, Vec<u8>)> {
 
 	vec![
 		(format!("{prefix}pack.mcmeta"), MCMETA.to_vec()),
-		(format!("{prefix}assets/minecraft/a.txt"), b"hello".to_vec())
+		(format!("{prefix}assets/minecraft/a.txt"), b"hello".to_vec()),
 	]
 }
 

@@ -356,7 +356,8 @@ fn files_that_fail_to_optimize_are_copied_as_they_are_unless_asked_not_to() {
 			output
 				.read("assets/minecraft/models/block/b.json")
 				.unwrap()
-				.len() < MODEL.len()
+				.len()
+				< MODEL.len()
 		);
 	}
 }
