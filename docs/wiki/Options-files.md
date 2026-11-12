@@ -1156,11 +1156,14 @@ log = true
 
 **Type**: [String](https://toml.io/en/v1.0.0#string)
 
-**Default value**: `'packsquash-debug.log'` in the directory of the options file
+**Default value**: `'packsquash-debug-NAME.log'` in the directory of the options file, where `NAME` is the
+name of the input: the `pack_directory` (an archive without its extension), or the
+[`bulk_input_directory`](#bulk_input_directory)
 
 The path of the debug log file, if [`log`](#log) is `true`. If PackSquash reads the options
 from the standard input, the default file is in the working directory. It is an error to set
-this option when `log` is not `true`. If the file can not be written, PackSquash says so and
+this option when `log` is not `true`. Characters that a file name can not have are replaced
+with `_` in `NAME`, and `NAME` has at most 60 characters. If the file can not be written, PackSquash says so and
 goes on without a log.
 
 Example:

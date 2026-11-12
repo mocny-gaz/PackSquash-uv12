@@ -14,6 +14,7 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## This very moment
 
+- [ ] r1 make it so that debug log name also contains the input directory name (or bulk input directory name) (ai) STATE: patch 0031 (sent). The default log is `packsquash-debug-NAME.log`, where NAME is the name of the pack directory, the archive (no extension) or the bulk input directory. `log_file` still sets any path you want
 - [ ] r2 optifine properties(sky models and others) optimization - if for example sky3.properties is about aurora.png but there isnt such file then skip it (name that module optifine sky debloat/fix and put a warning that on wip packs it can lead to progress loss (if the aurora wasnt YET added or sth) so dont use it on unfinished ones or dev ones and it can fix sky problems when transforming pack to other versions (in old optifine if there wasnt a texture for sky it was just skipped but in new it does the pink/black error texture)). By r2 i mean that any bloat in optifine that isnt connected to something (isnt used in game with pack loaded) (ai) STATE: custom sky entries are done (patch 0023, applied). Next: the other OptiFine files that are not connected to anything (connected textures, custom items and the rest)
 - [ ] r3 update the artifact to match new addition (ai) STATE: updated for `bulk_output_directory` (same link as before). One more update after r11
 - [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai)
@@ -54,7 +55,7 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 - [x] F1 any archive format as input (patch 0020). Not tested: real RAR files and Windows `tar.exe`
 - [x] f4 auto detect of the game version when `mcchanges_version` is blank (patch 0022)
 - [x] r4 `mcchanges_path` can be a folder with `mcchanges-java.jar` (or `mcchanges-bedrock.jar`) by exact name (patch 0024)
-- [x] r1 and r9: no file or folder under `assets/minecraft` or any `assets/NAME` is skipped (patch 0025)
+- [x] old r1 and r9: no file or folder under `assets/minecraft` or any `assets/NAME` is skipped (patch 0025)
 - [x] r5 and r10: `log = true` writes a very detailed debug log (patch 0027). Your logs showed it works
 - [x] r8: an archive file as `bulk_input_directory` (patch 0026)
 - [x] r13: a blank `mcchanges_version` compares each file with the same file in every version that changed it (patch 0028, in your master as "mcchanges improvements")

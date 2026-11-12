@@ -301,7 +301,9 @@ The field is still called `found_unresolvable_moj_import`.
   (at most 500, what the console shows) and written first. `start` is called from `start_debug_log` in `main.rs` after the options
   are parsed (`log` and `log_file` are CLI options, in `fork_options.rs`). The header, the options file text, status results,
   the error chain, the panic hook (`log_panics`) and the exit code are written there.
-- The file is `packsquash-debug.log` next to the options file by default, replaced each run. Warnings and errors are flushed at
+- The file is `packsquash-debug-NAME.log` next to the options file by default (`default_log_file_name` in `fork_options.rs`; NAME is
+  the name of `pack_directory` or `bulk_input_directory`, an archive without its extension, cleaned for Windows file names, at most
+  60 characters; `packsquash-debug.log` when the input has no name), replaced each run. Warnings and errors are flushed at
   once, the rest when the buffer is full and at the end.
 - Tested: 3 library tests, 6 CLI tests (time format, line format, options), end to end runs with broken Ogg, PNG and ZIP files
   (the Vorbis error shows its library, function and kind).

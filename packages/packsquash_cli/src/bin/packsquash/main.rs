@@ -227,7 +227,8 @@ fn read_options_file_and_squash(
 			log_options,
 			options_file_path,
 			&options_string,
-			&fork_options
+			&fork_options,
+			&squash_options.pack_directory
 		);
 	}
 
@@ -333,16 +334,24 @@ fn start_debug_log(
 	log_options: &fork_options::LogOptions,
 	options_file_path: Option<&String>,
 	options_string: &str,
-	fork_options: &ForkOptions
+	fork_options: &ForkOptions,
+	pack_directory: &std::path::Path
 ) {
 	let path = log_options.file.clone().unwrap_or_else(|| {
+		// The name of the log has the name of the input, so that the logs of different inputs are not mixed up
+		let input = fork_options
+			.bulk
+			.as_ref()
+			.map_or(pack_directory, |bulk| bulk.input_directory.as_path());
+		let file_name = fork_options::default_log_file_name(&absolute_path(input));
+
 		options_file_path
 			.and_then(|options_file_path| {
 				std::path::Path::new(options_file_path)
 					.parent()
-					.map(|directory| directory.join(fork_options::DEFAULT_LOG_FILE_NAME))
+					.map(|directory| directory.join(&file_name))
 			})
-			.unwrap_or_else(|| fork_options::DEFAULT_LOG_FILE_NAME.into())
+			.unwrap_or_else(|| file_name.clone().into())
 	});
 
 	if let Err(error) = debug_log::start(&path) {

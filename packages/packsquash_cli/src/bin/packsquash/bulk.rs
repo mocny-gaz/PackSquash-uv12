@@ -61,7 +61,7 @@ struct Summary {
 pub type SquashFn<'a> = dyn FnMut(SquashOptions) -> Result<(), String> + 'a;
 
 /// Removes the archive extension of a file name. `pack.tar.gz` gives `pack`.
-fn archive_stem(file_name: &str) -> String {
+pub(crate) fn archive_stem(file_name: &str) -> String {
 	let Some((without_last, _)) = file_name
 		.rsplit_once('.')
 		.filter(|(stem, _)| !stem.is_empty())

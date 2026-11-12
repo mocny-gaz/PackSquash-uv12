@@ -25,7 +25,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
   texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
   missing number. Not for packs that are still being made.
-- `log = true` writes a detailed debug log (`packsquash-debug.log` next to the options file, or `log_file`) with
+- `log = true` writes a detailed debug log (`packsquash-debug-NAME.log` next to the options file, where NAME is the name of the pack directory, archive or bulk input directory, or `log_file`) with
   the machine, the options file, every pack file and why it was processed or skipped, the mcchanges hashes that
   were compared, archive details, helper program output, and every error with its causes. The library sends the
   details to the `log` crate with the target `debuglog`, which the console does not show.

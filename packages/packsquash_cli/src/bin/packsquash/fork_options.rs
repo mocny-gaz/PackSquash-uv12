@@ -3,7 +3,7 @@
 //! removed from the options file table before the rest is read as [`packsquash::config::SquashOptions`],
 //! because that struct treats every unknown key as the name of a file options table.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use packsquash::pack_archive::{DEFAULT_MAX_EXTRACTED_BYTES, DEFAULT_MAX_PACK_DEPTH};
 use toml::{Table, Value};
@@ -35,8 +35,45 @@ const LOG: &str = "log";
 /// The name of the option that sets where the debug log is written.
 const LOG_FILE: &str = "log_file";
 
-/// The name of the debug log file, if the options file does not give another one.
-pub const DEFAULT_LOG_FILE_NAME: &str = "packsquash-debug.log";
+/// The name of the debug log file when the input has no name that can be used, like a drive root.
+const DEFAULT_LOG_FILE_NAME: &str = "packsquash-debug.log";
+
+/// The most characters of the name of the input that are put in the name of the debug log file.
+const LOG_FILE_NAME_INPUT_LENGTH: usize = 60;
+
+/// The name of the debug log file, if the options file does not give another one: `packsquash-debug-NAME.log`,
+/// where NAME is the name of the input. The input is the pack directory, the archive (without its extension),
+/// or the bulk input directory. Characters that are not allowed in a file name become `_`.
+pub fn default_log_file_name(input: &Path) -> String {
+	let Some(file_name) = input.file_name().map(|name| name.to_string_lossy()) else {
+		return DEFAULT_LOG_FILE_NAME.to_string();
+	};
+	let name = if input.is_file() {
+		crate::bulk::archive_stem(&file_name)
+	} else {
+		file_name.into_owned()
+	};
+	let name: String = name
+		.chars()
+		.map(|character| {
+			if character.is_control() || "<>:\"/\\|?*".contains(character) {
+				'_'
+			} else {
+				character
+			}
+		})
+		.take(LOG_FILE_NAME_INPUT_LENGTH)
+		.collect();
+
+	// A name can not end with a space or a dot on Windows
+	let name = name.trim_matches(|character| character == ' ' || character == '.');
+
+	if name.is_empty() {
+		DEFAULT_LOG_FILE_NAME.to_string()
+	} else {
+		format!("packsquash-debug-{name}.log")
+	}
+}
 
 /// All the options of the bulk mode.
 const BULK_OPTIONS: [&str; 10] = [
@@ -89,7 +126,8 @@ pub struct BulkOptions {
 /// The options of the debug log, which is a file with every detail of what the program did and decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogOptions {
-	/// Where the log is written, if the options file says it. By default, it is next to the options file.
+	/// Where the log is written, if the options file says it. By default, it is next to the options file, and
+	/// its name has the name of the input (see [`default_log_file_name`]).
 	pub file: Option<PathBuf>
 }
 
@@ -397,6 +435,66 @@ mod tests {
 		let mut options = table("pack_directory = 'pack'\n");
 
 		assert_eq!(split_fork_options(&mut options).unwrap().bulk, None);
+	}
+
+	#[test]
+	fn the_default_log_file_name_has_the_name_of_the_input() {
+		assert_eq!(
+			default_log_file_name(Path::new("packs/My Pack")),
+			"packsquash-debug-My Pack.log"
+		);
+		assert_eq!(
+			default_log_file_name(Path::new("some/dir/")),
+			"packsquash-debug-dir.log",
+			"a trailing separator is ignored"
+		);
+		assert_eq!(
+			default_log_file_name(Path::new("a/we<ir>d:na\"me?*|")),
+			"packsquash-debug-we_ir_d_na_me___.log",
+			"characters that a file name can not have become underscores"
+		);
+		assert_eq!(
+			default_log_file_name(Path::new("a/ pack. .")),
+			"packsquash-debug-pack.log",
+			"no spaces or dots at the ends"
+		);
+
+		let long = "x".repeat(200);
+		let name = default_log_file_name(&Path::new("a").join(long));
+
+		assert_eq!(
+			name.len(),
+			"packsquash-debug-.log".len() + LOG_FILE_NAME_INPUT_LENGTH
+		);
+	}
+
+	#[test]
+	fn the_default_log_file_name_of_an_archive_has_no_extension() {
+		let directory = tempfile::tempdir().unwrap();
+		let archive = directory.path().join("Big Pack.tar.gz");
+		let zip = directory.path().join("skins.zip");
+
+		std::fs::write(&archive, b"x").unwrap();
+		std::fs::write(&zip, b"x").unwrap();
+
+		assert_eq!(
+			default_log_file_name(&archive),
+			"packsquash-debug-Big Pack.log"
+		);
+		assert_eq!(default_log_file_name(&zip), "packsquash-debug-skins.log");
+	}
+
+	#[test]
+	fn the_default_log_file_name_without_a_usable_input_name_has_no_name() {
+		assert_eq!(default_log_file_name(Path::new("")), "packsquash-debug.log");
+		assert_eq!(
+			default_log_file_name(Path::new("/")),
+			"packsquash-debug.log"
+		);
+		assert_eq!(
+			default_log_file_name(Path::new("a/ . ")),
+			"packsquash-debug.log"
+		);
 	}
 
 	#[test]

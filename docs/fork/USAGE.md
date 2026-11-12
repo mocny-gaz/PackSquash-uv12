@@ -86,7 +86,7 @@ The options that this fork adds:
 | `bulk_archive_extensions` | `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'` | Files with these extensions are opened as archives. `jar` is not in the list. |
 | `bulk_scan_depth` | `32` | How many folder levels are searched, also inside archives. |
 | `log` | `false` | Writes a very detailed debug log file, to send when something goes wrong. |
-| `log_file` | `'packsquash-debug.log'` next to the options file | Where the debug log is written. |
+| `log_file` | `'packsquash-debug-NAME.log'` next to the options file | Where the debug log is written. NAME is the name of the input. |
 
 Things that are always on, with no option:
 
@@ -366,7 +366,9 @@ If something does not work as it should, turn on the debug log and send the file
 log = true
 ```
 
-PackSquash writes `packsquash-debug.log` next to your options file, and prints where. The log
+PackSquash writes `packsquash-debug-NAME.log` next to your options file, and prints where. NAME is the
+name of the input: the pack directory, the archive without its extension, or `bulk_input_directory`
+(`packsquash-debug-My Packs.log`). Characters that a file name can not have become `_`. The log
 has the machine and the command line, your options file, every pack file with what was decided
 and why, which hash of the mcchanges pack was compared with which file, and every error with
 its causes (why an archive could not be opened, why a Vorbis file could not be read, and so
