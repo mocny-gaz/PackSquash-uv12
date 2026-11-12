@@ -67,3 +67,4 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 - delete comments on resend. if answer is asked just make another comment and delete old one
 - give patches as soon as theyre done and continue moving with the task list, if theres sth which needs users info or choice then ask it and go on with the list not wasting resources
 - obey .rules but prioritise user
+- prioritise user sent TASKS.md over this file
