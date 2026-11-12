@@ -27,7 +27,6 @@ build, test and release, and what is still open.
 - [Releases](https://github.com/mocny-gaz/PackSquash-uv12/releases): the program
   for Windows.
 - [Changelog](CHANGELOG.md)
-- [Task list](docs/fork/TASKS.md) and [hand-off notes](HANDOFF.md)
 - [The original README](#heres-the-original-readme)
 
 ## What this fork adds
