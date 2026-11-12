@@ -203,8 +203,15 @@ impl Dest {
 	}
 }
 
-/// How deep archives can be inside archives. A deeper archive is skipped.
-const MAX_NESTING: usize = 3;
+/// The most archives that can be inside each other, whatever the options say. It keeps the disk space that the
+/// extracted archives need, and the depth of the calls, bounded. A deeper archive is skipped.
+const MAX_NESTING: usize = 32;
+
+/// How many archives can be inside each other: the same number as the levels that the search goes down, which is
+/// `bulk_scan_depth` (or `archive_pack_search_depth`, if it is higher), and at most [`MAX_NESTING`].
+fn nesting_limit(search_depth: usize) -> usize {
+	search_depth.min(MAX_NESTING)
+}
 
 /// The most bytes of nested archives that are extracted together from a ZIP archive, which can give one file
 /// without reading the others. Archives of other formats have to be read from the start for every extraction, so
@@ -1163,11 +1170,13 @@ fn process_nested(
 ) {
 	let nested_source = format!("{source} > {name}");
 
-	if nesting + 1 > MAX_NESTING {
+	let limit = nesting_limit(env.search_depth);
+
+	if nesting + 1 > limit {
 		state.emit(
 			Kind::Skipped,
 			format!(
-				"skipped {nested_source}: it is inside more than {MAX_NESTING} archives, one inside the other"
+				"skipped {nested_source}: it is inside more than {limit} archives, one inside the other. A higher bulk_scan_depth opens it (at most {MAX_NESTING})"
 			)
 		);
 

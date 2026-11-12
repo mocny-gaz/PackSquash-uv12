@@ -84,7 +84,7 @@ The options that this fork adds:
 | `bulk_dry_run` | `false` | Only lists what would happen. |
 | `bulk_report_file` | not set | Also writes the report to this file. |
 | `bulk_archive_extensions` | `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'` | Files with these extensions are opened as archives. `jar` is not in the list. |
-| `bulk_scan_depth` | `32` | How many folder levels are searched, also inside archives. |
+| `bulk_scan_depth` | `32` | How many folder levels are searched, also inside archives. It is also how many archives can be inside each other (at most 32). |
 | `log` | `false` | Writes a very detailed debug log file, to send when something goes wrong. |
 | `log_file` | `'packsquash-debug-NAME.log'` next to the options file | Where the debug log is written. NAME is the name of the input. |
 
@@ -148,7 +148,7 @@ bulk_input_directory = 'C:\packs'
 - An archive with one pack gives one file. An archive with several packs, or with archives inside it,
   gives a folder: `squashed_ARCHIVE/`, with the same folders that the archive has. The pack
   `a/b/Pack` of the archive is `squashed_ARCHIVE/a/b/Pack.zip`.
-- Archives inside archives are opened too (up to 3 levels), unless they are part of a pack. A
+- Archives inside archives are opened too, as many levels as `bulk_scan_depth` (at most 32), unless they are part of a pack. A
   `.zip` with 200 packs that are zips gives 200 results in a folder, not 200 files next to the
   big zip. They are extracted a few at a time and deleted when done.
 - To put the results somewhere else, set `bulk_output_directory`. The results keep the folders of the

@@ -130,6 +130,10 @@ struct Run {
 /// Runs the bulk mode with a squash function that writes a small result file. A pack with `bad` in the description
 /// fails. The function checks that the pack exists when it is called, because the files of an archive are deleted after.
 fn run_bulk(options: &BulkOptions) -> Run {
+	run_bulk_with_depth(options, 4)
+}
+
+fn run_bulk_with_depth(options: &BulkOptions, depth: usize) -> Run {
 	let outputs = RefCell::new(Vec::new());
 	let table: Table = "".parse().unwrap();
 
@@ -148,7 +152,13 @@ fn run_bulk(options: &BulkOptions) -> Run {
 		fs::write(output, b"RESULT").map_err(|error| error.to_string())
 	};
 
-	let code = run(options, 4, ExtractLimits::default(), &table, &mut squash);
+	let code = run(
+		options,
+		depth,
+		ExtractLimits::default(),
+		&table,
+		&mut squash
+	);
 
 	Run {
 		code,
@@ -961,48 +971,69 @@ fn a_dry_run_does_not_open_the_archives_inside_archives() {
 	);
 }
 
+/// A TAR archive that has an archive that has an archive, and so on, `levels` times. The innermost archive has
+/// a pack.
+fn archives_in_archives(levels: usize) -> Vec<u8> {
+	let mut archive = tar_bytes(&["Pack"]);
+
+	for level in (1..=levels).rev() {
+		archive = tar_files_bytes(&[(format!("a{level}.tar").as_str(), archive)]);
+	}
+
+	archive
+}
+
 #[test]
-fn archives_can_only_be_inside_a_few_other_archives() {
+fn how_many_archives_can_be_inside_each_other_follows_the_search_depth() {
+	// top > a1 > a2, and the pack is in a2
 	let root = TempDir::new().unwrap();
 	let base = root.path();
 
-	// top > a > b > c > d, and the pack is in d
-	let d = tar_bytes(&["Pack"]);
-	let c = tar_files_bytes(&[("d.tar", d)]);
-	let b = tar_files_bytes(&[("c.tar", c.clone())]);
-	let a = tar_files_bytes(&[("b.tar", b)]);
+	fs::write(base.join("top.tar"), archives_in_archives(2)).unwrap();
 
-	write_tar_files(&base.join("top.tar"), &[("a.tar", a)]);
+	let run = run_bulk_with_depth(&options(base), 2);
+
+	assert_eq!(run.code, 0);
+	assert!(
+		base.join("squashed_top/a1/a2.zip").is_file(),
+		"{:?}",
+		run.outputs
+	);
+
+	// top > a1 > a2 > a3, and the pack is in a3: one too deep
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	fs::write(base.join("top.tar"), archives_in_archives(3)).unwrap();
 
 	let mut bulk = options(base);
 	bulk.report_file = Some(base.join("report.txt"));
 
-	let run = run_bulk(&bulk);
+	let run = run_bulk_with_depth(&bulk, 2);
 
 	assert_eq!(run.code, 0);
 	assert!(run.outputs.is_empty(), "{:?}", run.outputs);
+
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+
+	assert!(report.contains("inside more than 2 archives"), "{report}");
+	assert!(report.contains("bulk_scan_depth"), "{report}");
+
+	// A higher depth opens it
+	let run = run_bulk_with_depth(&options(base), 3);
+
 	assert!(
-		fs::read_to_string(base.join("report.txt"))
-			.unwrap()
-			.contains("inside more than 3 archives")
-	);
-
-	// top > a > b > c, and the pack is in c
-	let c = tar_bytes(&["Pack"]);
-	let b = tar_files_bytes(&[("c.tar", c)]);
-	let a = tar_files_bytes(&[("b.tar", b)]);
-	let other = TempDir::new().unwrap();
-
-	write_tar_files(&other.path().join("top.tar"), &[("a.tar", a)]);
-
-	let run = run_bulk(&options(other.path()));
-
-	assert_eq!(run.code, 0);
-	assert!(
-		other.path().join("squashed_top/a/b/c.zip").is_file(),
+		base.join("squashed_top/a1/a2/a3.zip").is_file(),
 		"{:?}",
 		run.outputs
 	);
+}
+
+#[test]
+fn the_most_archives_inside_each_other_is_bounded_whatever_the_depth_is() {
+	assert_eq!(nesting_limit(4), 4);
+	assert_eq!(nesting_limit(32), 32);
+	assert_eq!(nesting_limit(256), MAX_NESTING);
 }
 
 #[test]

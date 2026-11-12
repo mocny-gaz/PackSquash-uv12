@@ -963,7 +963,7 @@ PackSquash searches the subdirectories too, up to [`bulk_scan_depth`](#bulk_scan
 levels. It does not search inside a pack, and it does not follow links.
 
 PackSquash also opens the archives that are inside an archive, and the ones inside
-those, up to 3 levels, when they are not part of a pack (a `.zip` inside a pack is a
+those, as many levels as [`bulk_scan_depth`](#bulk_scan_depth) allows (at most 32), when they are not part of a pack (a `.zip` inside a pack is a
 file of that pack and is left alone). The file extensions that are opened are the ones of
 [`bulk_archive_extensions`](#bulk_archive_extensions), and a file is read by its contents. They are
 extracted a few at a time, and each one is deleted from the temporary directory when it is
@@ -1103,6 +1103,10 @@ mode searches. A pack or an archive directly in the input directory is at level 
 also how many levels deep the bulk mode looks for packs inside an archive, so a pack that
 is 10 folders deep in a `.7z` file is found with a value of 10 or more. For archives, the
 value of [`archive_pack_search_depth`](#archive_pack_search_depth) is used if it is higher.
+
+The same number is how many archives can be inside each other: with `2`, an archive inside
+an archive is opened, and one more level is skipped, with a line in the report that says so.
+It can not be more than 32, whatever the value is.
 
 ### `log`
 

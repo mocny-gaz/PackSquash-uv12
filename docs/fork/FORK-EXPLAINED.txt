@@ -268,8 +268,8 @@ Not tested: real RAR files, and tar.exe of Windows.
 --------------
 
 Set bulk_input_directory and PackSquash squashes every pack in that folder: folders that
-are packs, and archives that have a pack. Archives inside archives are opened too (3 levels
-at most, never the ones that are part of a pack). The result of each folder or archive with
+are packs, and archives that have a pack. Archives inside archives are opened too (as many levels
+as bulk_scan_depth, 32 at most, never the ones that are part of a pack). The result of each folder or archive with
 one pack is a ZIP file next to its input, named squashed_NAME.zip. An archive with several
 packs or with archives inside gives a folder squashed_NAME with the same folders that the
 archive has, so a big zip with 200 zips inside gives one folder, not 200 files next to it.

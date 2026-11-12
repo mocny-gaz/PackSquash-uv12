@@ -33,7 +33,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `archive_pack_search_depth`), not only 4 levels. The search is logged.
 - `bulk_input_directory` can be a single archive file of any format, not only a directory. A file that is
   not an archive is an error that says so, instead of "is not a directory".
-- Bulk mode opens archives inside archives (up to 3 levels, never the ones inside a pack), with the
+- Bulk mode opens archives inside archives (as many levels as `bulk_scan_depth`, at most 32, never the ones inside a pack), with the
   extensions of `bulk_archive_extensions`. An archive with several packs or with archives inside gives a
   folder of results that mirrors the inside of the archive, instead of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
