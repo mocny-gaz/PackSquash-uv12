@@ -11,16 +11,18 @@ use oxipng::{
 };
 use rgb::{AsPixels, RGBA8};
 use spng::{ContextFlags, DecodeFlags, Format};
+use std::borrow::Cow;
 use std::cmp;
 use std::io::Read;
 use std::num::{NonZeroU16, NonZeroU64};
 use std::time::Duration;
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ImageProcessingError {
 	#[error("Invalid PNG: {0}")]
-	StripValidateError(&'static str),
+	StripValidateError(Cow<'static, str>),
 	#[error("PNG decode error: {0}")]
 	PngDecoding(#[from] spng::Error),
 	#[error("OxiPNG optimization error: {0}")]
@@ -46,7 +48,7 @@ pub fn strip_unnecessary_chunks(
 			input_png
 				.get($range)
 				.ok_or(ImageProcessingError::StripValidateError(
-					"The file is smaller than expected. Is it invalid or corrupt?"
+					"The file is smaller than expected. Is it invalid or corrupt?".into()
 				))?
 		};
 	}
@@ -64,7 +66,7 @@ pub fn strip_unnecessary_chunks(
 	let signature = get_or_err!(..8);
 	if signature != [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
 		return Err(ImageProcessingError::StripValidateError(
-			"The expected PNG signature was not found. Textures must be encoded in PNG format"
+			"The expected PNG signature was not found. Textures must be encoded in PNG format".into()
 		));
 	}
 	stripped_png.extend_from_slice(signature);
@@ -92,17 +94,25 @@ pub fn strip_unnecessary_chunks(
 			if chunk_type == b"IHDR" {
 				if data_length != 13 {
 					return Err(ImageProcessingError::StripValidateError(
-						"Unexpected size for IHDR chunk"
+						"Unexpected size for IHDR chunk".into()
 					));
 				}
 
 				let width = u32::from_be_bytes(chunk_data[..4].try_into().unwrap());
 				let height = u32::from_be_bytes(chunk_data[4..8].try_into().unwrap());
 
-				if width > maximum_dimension.get() as u32 || height > maximum_dimension.get() as u32 {
+				if width > u32::from(maximum_dimension.get())
+					|| height > u32::from(maximum_dimension.get())
+				{
+					// The sizes are in the message, because the same error also happens with a tall strip of
+					// animation frames, and the size tells which one it is
 					return Err(ImageProcessingError::StripValidateError(
-						"The texture width or height exceeds the configured maximum size. \
-						More information: <https://packsquash.aylas.org/links/Too-big-PNG-help>"
+						format!(
+							"The texture is {width}x{height} pixels, and its width or height exceeds the configured maximum size of {} pixels (option maximum_width_and_height). \
+							More information: <https://packsquash.aylas.org/links/Too-big-PNG-help>",
+							maximum_dimension.get()
+						)
+						.into()
 					));
 				}
 			}
@@ -347,7 +357,7 @@ impl<R: Read> ProcessedImage<R> {
 			bitmap,
 			width.get() as usize,
 			height.get() as usize,
-			0.0 // sRGB: spng applies gamma correction
+			0.0, // sRGB: spng applies gamma correction
 		)?;
 
 		// Configure the quantization operation for the image from its attributes

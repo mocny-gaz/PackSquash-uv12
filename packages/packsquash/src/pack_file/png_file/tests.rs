@@ -1,6 +1,7 @@
 use futures::FutureExt;
 use rgb::FromSlice;
 use spng::{ContextFlags, CrcAction, DecodeFlags, Format};
+use std::num::NonZeroU16;
 use std::panic::AssertUnwindSafe;
 use std::{env, fs};
 use tokio_stream::StreamExt;
@@ -365,4 +366,40 @@ async fn png_obfuscation_works() {
 		"png_obfuscation_works"
 	)
 	.await
+}
+
+/// The start of a PNG file: the signature and an IHDR chunk with the given size, then the end. The checksums
+/// are wrong, because the size check happens before anything reads them.
+fn png_header_only(width: u32, height: u32) -> BytesMut {
+	let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+	png.extend_from_slice(&13_u32.to_be_bytes());
+	png.extend_from_slice(b"IHDR");
+	png.extend_from_slice(&width.to_be_bytes());
+	png.extend_from_slice(&height.to_be_bytes());
+	png.extend_from_slice(&[8, 6, 0, 0, 0]);
+	png.extend_from_slice(&[0; 4]);
+	png.extend_from_slice(&0_u32.to_be_bytes());
+	png.extend_from_slice(b"IEND");
+	png.extend_from_slice(&[0; 4]);
+
+	BytesMut::from(&png[..])
+}
+
+#[test]
+fn a_too_big_png_error_tells_the_size_and_the_limit() {
+	let maximum = NonZeroU16::new(8192).unwrap();
+
+	// A tall strip of animation frames
+	let error = image_processor::strip_unnecessary_chunks(png_header_only(16, 9600), maximum)
+		.unwrap_err()
+		.to_string();
+
+	assert!(error.contains("16x9600"), "{error}");
+	assert!(error.contains("8192"), "{error}");
+	assert!(error.contains("maximum_width_and_height"), "{error}");
+
+	// The limit is for the width too, and the limit itself is allowed
+	assert!(image_processor::strip_unnecessary_chunks(png_header_only(8193, 16), maximum).is_err());
+	assert!(image_processor::strip_unnecessary_chunks(png_header_only(8192, 8192), maximum).is_ok());
 }

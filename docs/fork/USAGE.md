@@ -403,6 +403,7 @@ packsquash.exe packsquash.toml
 | `The archive ... has 2 packs` | One run squashes one pack. Extract the one you want, or make an archive with only that pack. |
 | `this archive needs a helper program` | RAR files need `bsdtar`, `7z` or `unrar`. Install 7-Zip and add its folder to the `PATH`. |
 | `PackSquash can not read this ZIP archive (Multi-disk ZIP files are not supported)` | The ZIP is made in a way that the built-in reader does not support. 7-Zip reads it: install it and add its folder to the `PATH`. |
+| `The texture is WxH pixels, and its width or height exceeds the configured maximum size` | The image is bigger than `maximum_width_and_height` (8192 by default). An animated texture with many frames in a tall strip can be that big. With `copy_failed_files`, the file is copied as it is. To optimize it, raise `maximum_width_and_height` for it in a file options table. |
 | `The option bulk_... is set, but the bulk mode is off` | Set `bulk_input_directory` too. |
 | `the result ... would replace a pack that is an input` | In the bulk mode, an empty prefix and suffix give a result with the name of an input ZIP file. Set a prefix or a suffix, or use `bulk_overwrite`. |
 | `another pack already has the result ...` | Two packs in the same folder have the same name, like `X` and `X.zip`. Rename one. |

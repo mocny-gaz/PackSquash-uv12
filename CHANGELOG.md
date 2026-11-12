@@ -37,6 +37,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   extensions of `bulk_archive_extensions`. An archive with several packs or with archives inside gives a
   folder of results that mirrors the inside of the archive, instead of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
+- The error of a PNG that is too big tells its size and the limit (`The texture is 16x9600 pixels, and ... 8192`).
+  A tall strip of animation frames can be bigger than `maximum_width_and_height` (8192 by default) and is copied as it is.
 - `bulk_output_directory`: the results go there, with the folders of the input and no prefix unless
   `bulk_output_prefix` is set. `bulk_overwrite` does nothing with it.
 - Bulk mode lines show the number, the name of the pack and where it is (`archive > inner archive > pack`).
