@@ -983,8 +983,9 @@ In the bulk mode, `pack_directory` and `output_file_path` are ignored. All the o
 options, and the options of files, are used for every pack. If a pack fails, PackSquash
 goes on with the next one, prints what failed, and exits with the code 1 at the end. The
 line of every pack has its number, its name and where it is, like
-`[3/204] Pack name (C:\packs\big.zip > folder\inner.zip > Pack name)`, and how big its files
-were and how big the result is. When archives are inside archives, the total is not known before
+`[3/204] Pack name (C:\packs\big.zip > folder\inner.zip > Pack name)`, and how big it
+was and how big the result is. A pack that is a whole archive counts as the size of the archive file, and
+any other pack as the size of its files. When archives are inside archives, the total is not known before
 they are opened, so the lines only have the number.
 
 Inputs whose name starts with the prefix and ends with the suffix are skipped, because

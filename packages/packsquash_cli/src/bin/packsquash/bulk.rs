@@ -776,7 +776,16 @@ pub fn run(
 				};
 				let label = state.label(&name, &path.display().to_string());
 
-				process(&env, &mut state, squash, &path, &dest.file(), &label, None);
+				process(
+					&env,
+					&mut state,
+					squash,
+					&path,
+					None,
+					&dest.file(),
+					&label,
+					None
+				);
 			}
 			Found::Archive(path, scan) => {
 				let dest = Dest {
@@ -848,11 +857,13 @@ pub fn run(
 }
 
 /// Squashes one pack, or tells what would happen in a dry run. `replacement` is set for an archive that is replaced.
+#[allow(clippy::too_many_arguments)]
 fn process(
 	env: &Env<'_>,
 	state: &mut State,
 	squash: &mut SquashFn<'_>,
 	pack_directory: &Path,
+	input_bytes: Option<u64>,
 	output: &Path,
 	label: &str,
 	replacement: Option<&Replacement>
@@ -921,7 +932,7 @@ fn process(
 		return;
 	}
 
-	let input_bytes = directory_size(pack_directory);
+	let input_bytes = input_bytes.unwrap_or_else(|| directory_size(pack_directory));
 
 	debug!(
 		target: crate::debug_log::DEBUG_LOG_TARGET,
@@ -1015,6 +1026,7 @@ fn process_archive(
 				state,
 				squash,
 				archive,
+				None,
 				&output,
 				&label,
 				replacement.as_ref()
@@ -1079,6 +1091,7 @@ fn process_archive(
 			state,
 			squash,
 			pack_directory,
+			archive_pack_size(archive, root),
 			&output,
 			&label,
 			replacement.as_ref()
@@ -1133,6 +1146,18 @@ fn pack_names(stem: &str, source: &str, root: &str) -> (String, String) {
 			root.rsplit('/').next().unwrap_or(root).to_string(),
 			format!("{source} > {root}")
 		)
+	}
+}
+
+/// The size that counts as the input of a pack of an archive, when it is not the size of the files of the pack.
+/// A pack that is all of the archive counts as the size of the archive file, so that it is compared with its
+/// result as a file, both compressed. The files of a pack that is in a directory of a bigger archive can not be
+/// told apart from the others while they are compressed, so their size is counted extracted.
+fn archive_pack_size(archive: &Path, root: &str) -> Option<u64> {
+	if root.is_empty() {
+		fs::metadata(archive).ok().map(|metadata| metadata.len())
+	} else {
+		None
 	}
 }
 

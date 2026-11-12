@@ -42,7 +42,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - `bulk_output_directory`: the results go there, with the folders of the input and no prefix unless
   `bulk_output_prefix` is set. `bulk_overwrite` does nothing with it.
 - Bulk mode lines show the number, the name of the pack and where it is (`archive > inner archive > pack`).
-  The size of a pack is the size of its files, not of the whole archive.
+  The size of a pack is the size of its files, not of the whole archive. A pack that is a whole archive (like a
+  zip inside a zip) counts as the size of that archive file, so it is compared with its result as a file.
 - A ZIP file that the ZIP reader can not read because of how it is made (`Multi-disk ZIP files are not
   supported`) is read with the helper program (7-Zip, bsdtar), like RAR. The error says why, when none works.
 - `copy_failed_files` (on by default): a file that can not be optimized (not Vorbis audio, a `pack.png` that is not a

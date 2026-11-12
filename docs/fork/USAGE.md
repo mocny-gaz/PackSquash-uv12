@@ -153,8 +153,9 @@ bulk_input_directory = 'C:\packs'
   big zip. They are extracted a few at a time and deleted when done.
 - To put the results somewhere else, set `bulk_output_directory`. The results keep the folders of the
   input, have no prefix (unless you set one) and nothing is written next to the inputs.
-- Each line has the number, the name of the pack and where it is, then the size of its files and of the
-  result: `[3/204] Pack (C:\packs\big.zip > inner.zip > Pack) -> ... (12.50 MiB -> 3.10 MiB)`.
+- Each line has the number, the name of the pack and where it is, then its size and the size of the
+  result (a pack that is a whole archive counts as the size of the archive file, any other pack as the size of
+  its files): `[3/204] Pack (C:\packs\big.zip > inner.zip > Pack) -> ... (12.50 MiB -> 3.10 MiB)`.
 - Names that already look like a result are skipped, so a second run does not squash the
   results of the first one.
 - All the other options, and the tables of file options, are used for every pack.

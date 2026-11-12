@@ -866,6 +866,35 @@ fn the_size_of_a_pack_is_the_size_of_the_pack_and_not_of_the_archive() {
 }
 
 #[test]
+fn the_size_of_a_pack_that_is_a_whole_archive_is_the_size_of_the_archive_file() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+	let mut entries = pack_files("");
+
+	entries.push((
+		"assets/minecraft/big.bin".to_string(),
+		vec![7_u8; 3 * 1024 * 1024]
+	));
+
+	write_tar_entries(&base.join("single.tar"), entries);
+
+	let mut bulk = options(base);
+	bulk.report_file = Some(base.join("report.txt"));
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+
+	let size = mib(fs::metadata(base.join("single.tar")).unwrap().len());
+	let report = fs::read_to_string(base.join("report.txt")).unwrap();
+
+	assert!(report.contains(&format!("({size} -> ")), "{report}");
+	assert_eq!(
+		archive_pack_size(&base.join("single.tar"), "Pack"),
+		None,
+		"a pack in a directory of the archive counts its files"
+	);
+}
+
+#[test]
 fn an_output_directory_receives_the_results_without_a_prefix() {
 	let input = TempDir::new().unwrap();
 	let output = TempDir::new().unwrap();

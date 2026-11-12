@@ -1,33 +1,28 @@
 # Task list of the fork
 
-Updated 2026-11-11. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-12. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
 
-- [ ] b1 when using bulk input as a zip it did only 20 out of 204 that there were and just spammed the folder that zip was in (make r14) also .7z as an input doesnt work either (also r8 and r12) (ai) STATE: patch 0030 (sent). Archives inside archives are opened (3 levels), results go in a folder that mirrors the inside, and progress prints as each pack ends. Tested here with a zip of 204 packs (184 zips and 20 folders) and a 7z that has only zips. Waiting for your real run
-- [ ] b2 still things like .py and other get skipped in other mods folders so make it optimise but never skip no matter what (unless damaged, dont make it false flag obfuscation as damaged) (ai) STATE: patch 0029 (sent again, rebased on your master). `include_unrecognized_asset_files` is on by default, and `copy_failed_files` (on by default) copies a file that fails to optimize as it is, with a notice. Only a failure before anything of the file was written can be copied
-- [ ] b3 files that fail to optimize failed whole packs: `.ogg` files that are not Vorbis, `pack.png` that is not a PNG, PNG too big, invalid `.json` and `.lang` files (36 of 204 packs failed in one run) (ai) STATE: same patch as b2 (0029)
-- [ ] b4 29 zip files could not be read: `Multi-disk ZIP files are not supported` (ai) STATE: patch 0030 (sent). The zip reader gives them to the helper program (7z, bsdtar, tar), like RAR. Not tested here with a real multi-disk zip or with 7-Zip (my sandbox has no 7-Zip): only the decision to use the helper and the error text are tested. If no helper reads it, the error says why and what to install
-- [ ] b5 bulk size line is wrong, like `24061.29 MiB -> 7.77 MiB` (ai) STATE: patch 0030 (sent). The size is the size of the pack's files
-- [ ] b6 bulk labels should show the pack name and fuller directory (this is f5), and the log of the bulk run is hard to read when an archive has many packs (ai) STATE: patch 0030 (sent). Labels are `[3/204] Pack (C:\in\big.zip > folder\inner.zip > Pack)`. The debug log has a line for every pack with its folder and result
+- [ ] b5 bulk size line is wrong, like `24061.29 MiB -> 7.77 MiB` (ai) STATE: patch 0030 made it the size of the pack's files. Patch 0034 (sent): a pack that is a whole archive (a zip inside a zip) counts as the size of that archive file, so both sizes are compressed. A pack in a folder of a bigger archive still counts its extracted files, because its compressed size is not known
+- [ ] b7 potential bug because i get a lot of "could not be optimized (Invalid PNG: The texture width or height exceeds the configured maximum size. More information: <https://packsquash.aylas.org/links/Too-big-PNG-help>), so it was copied as it is" so it may apply to more than it tells but im unsure its a possibility that its just my case but i see a lot of these on shulkerbox entities (and other too) (ai) STATE: patch 0032 (sent). The check is `maximum_width_and_height` (8192 by default) and it is correct: your logs have `fire_0.png`, `fire_1.png` (tall strips of animation frames) and `seagrass.png`. The message now says the real size, like `The texture is 16x9600 pixels`. Run again and read the sizes. If a shulker texture is 8192 or smaller, tell me the file
 
 ## This very moment
 
-- [ ] r1 make it so that debug log name also contains the input directory name (or bulk input directory name) (ai) STATE: patch 0031 (sent). The default log is `packsquash-debug-NAME.log`, where NAME is the name of the pack directory, the archive (no extension) or the bulk input directory. `log_file` still sets any path you want
+- [ ] r1 make it so that debug log name also contains the input directory name (or bulk input directory name) (ai) STATE: patch 0031 (sent). The default log is `packsquash-debug-NAME.log`, where NAME is the name of the pack directory, the archive (no extension) or the bulk input directory
 - [ ] r2 optifine properties(sky models and others) optimization - if for example sky3.properties is about aurora.png but there isnt such file then skip it (name that module optifine sky debloat/fix and put a warning that on wip packs it can lead to progress loss (if the aurora wasnt YET added or sth) so dont use it on unfinished ones or dev ones and it can fix sky problems when transforming pack to other versions (in old optifine if there wasnt a texture for sky it was just skipped but in new it does the pink/black error texture)). By r2 i mean that any bloat in optifine that isnt connected to something (isnt used in game with pack loaded) (ai) STATE: custom sky entries are done (patch 0023, applied). Next: the other OptiFine files that are not connected to anything (connected textures, custom items and the rest)
 - [ ] r3 update the artifact to match new addition (ai) STATE: updated for `bulk_output_directory` (same link as before). One more update after r11
-- [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai)
-- [ ] r7 make mc-changes auto download and delete after use (unless no wifi then check if in folder(the one where the packsquash and the one where input or the one where output) and if not in folder type in cmd that no mcchanges jar skipping that step and does the normal one) by default (ai) STATE: not done, with L6
-- [ ] r11 make all the long options names (like the skip_optifine_sky_entries_with_missing_images make it some like optifine sky debloat/fix or anything else thats shorter and makes sense and doesnt collide with other options) way shorter (ai) STATE: next patch (0031). Plan: shorter names, and the old names keep working as serde aliases, so no options file breaks
-- [ ] r14 make bulk output option (if its set to sth other than default or same as input then put there without prefix (unless other than default)) (ai) STATE: patch 0030 (sent). Option `bulk_output_directory`. The results keep the folders of the input and have no prefix unless you set `bulk_output_prefix`. Same folder as the input means not set. `bulk_overwrite` does nothing with it
+- [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai) note: when getting to that point tell owner to send the idea files
+- [ ] r7 make mc-changes auto download and delete after use (unless no wifi then check if in folder(the one where the packsquash and the one where input or the one where output) and if not in folder type in cmd that no mcchanges jar skipping that step and does the normal one) by default; also make it auto clear after each run all temp resources or anything left to consume itself least space (ai) STATE: not done, with L6
+- [ ] r11 make all the long options names (like the skip_optifine_sky_entries_with_missing_images make it some like optifine sky debloat/fix or anything else thats shorter and makes sense and doesnt collide with other options) way shorter (ai) STATE: next patch (0035). Plan: shorter names, and the old names keep working as serde aliases, so no options file breaks
+- [ ] r15 make it so that the bulk archive depth also is how many archives in archives depth (ai) STATE: patch 0033 (sent). I used `bulk_scan_depth` (default 32; `archive_pack_search_depth` counts if it is higher), at most 32. Tell me if you meant another option
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F2 Bulk squash: every pack found in a directory, whatever it looks like, also when it is an archive of any kind. Output next to the input with the prefix `squashed_` by default; options for a custom prefix and suffix, an overwrite option (keep a backup unless told not to), a dry run and a report. STATE: patch 0021 (applied). Patch 0030 (sent) has the b1 fixes it needed
 - [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (ai)
-- [ ] f5 when bulk show also packs name/fuller directory (ai) STATE: patch 0030 (sent), see b6
 - [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai)
+- [ ] f7 make results not folder but an archive (same type as input, but with squashed prefix unless in other directory where there isnt any with such name) (ai) STATE: not started. A zip, tar, tar.gz and the like input is possible. A 7z input needs the `compress` feature of `sevenz-rust2` in the normal build. A RAR can not be written by anyone but WinRAR, so a RAR input would give a zip. The results inside are already zips, so they would be stored, not compressed again
 
 ## Later
 
@@ -43,6 +38,9 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## Done
 
+- [x] b1, r8, r12, r14, F2, f5, b6: bulk mode opens archives inside archives, results in a folder or in `bulk_output_directory`, labels with the pack name and where it is (patches 0026, 0030). You marked them fixed
+- [x] b2 and b3: files that fail to optimize are copied as they are, and nothing under `assets` is skipped (patch 0029). Checked against your logs: a pack with every kind of failure in them (`.ogg` that is not Vorbis, MP4 audio named `.ogg`, `pack.png` that is not a PNG, PNG too big, invalid `.json`, `.lang`, a `.py` in a mod folder) squashes with exit code 0 and every file is kept
+- [x] b4: a zip the zip reader can not read (multi-disk) goes to the helper program (patch 0030). You marked it fixed
 - [x] 0001 to 0008: skip files same as vanilla (mcchanges), versions, Bedrock, language keys, sky images, `copy_as_is`, shader `#include`, audio hashes
 - [x] 0010: hash tokens (`png:`, `json:`, `langkeys:`), in master as "mc-changes ready"
 - [x] 0011 to 0016 applied: release prep, task list, dependency fixes, compact language keys (`langfull:`, `langdelta:`), no `generic_const_exprs`
