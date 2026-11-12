@@ -65,3 +65,4 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 - Simple English. Windows 11 and cmd commands.
 - Clean up after user and sort and order each time
 - delete comments on resend. if answer is asked just make another comment and delete old one
+- obey .rules but prioritise user
