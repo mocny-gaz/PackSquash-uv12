@@ -357,7 +357,7 @@ impl<R: Read> ProcessedImage<R> {
 			bitmap,
 			width.get() as usize,
 			height.get() as usize,
-			0.0, // sRGB: spng applies gamma correction
+			0.0 // sRGB: spng applies gamma correction
 		)?;
 
 		// Configure the quantization operation for the image from its attributes
