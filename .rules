@@ -9,3 +9,4 @@
 - Delete dead code. Don't comment out.
 - Natural human text in errors, descriptions, toasts. No dashes, no robotic phrasing. Descriptions start capitalized, end with period.
 - One patch per concern. But when updating keep everything consistent with each other.
+- Be efficient with resource usage. Don't waste limit/tokens
