@@ -34,13 +34,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - `bulk_input_directory` can be a single archive file of any format, not only a directory. A file that is
   not an archive is an error that says so, instead of "is not a directory".
 - Bulk mode opens archives inside archives (as many levels as `bulk_scan_depth`, at most 32, never the ones inside a pack), with the
-  extensions of `bulk_archive_extensions`. An archive with several packs or with archives inside gives a
-  folder of results that mirrors the inside of the archive, instead of many files next to it. Archives inside
+  extensions of `bulk_archive_extensions`. An archive with several packs or with archives inside gives one archive of the same kind (zip, 7z, tar, tar.gz and
+  tar.bz2; other kinds give a zip), compressed as much as possible, with the same folders that the archive has, instead
+  of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
 - The error of a PNG that is too big tells its size and the limit (`The texture is 16x9600 pixels, and ... 8192`).
   A tall strip of animation frames can be bigger than `maximum_width_and_height` (8192 by default) and is copied as it is.
-- `bulk_output_directory`: the results go there, with the folders of the input and no prefix unless
-  `bulk_output_prefix` is set. `bulk_overwrite` does nothing with it.
+- `bulk_output_directory`: the results go there, in a folder with the name of the input folder, with its folders and no prefix
+  unless `bulk_output_prefix` is set. A name that is already taken gets the prefix `squashed_`. `bulk_overwrite` does nothing with it.
 - Bulk mode lines show the number, the name of the pack and where it is (`archive > inner archive > pack`).
   The size of a pack is the size of its files, not of the whole archive. A pack that is a whole archive (like a
   zip inside a zip) counts as the size of that archive file, so it is compared with its result as a file.

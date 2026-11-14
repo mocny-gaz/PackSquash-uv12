@@ -969,14 +969,19 @@ file of that pack and is left alone). The file extensions that are opened are th
 extracted a few at a time, and each one is deleted from the temporary directory when it is
 done, so a big archive full of archives needs the space of the biggest group and not of everything.
 
-Every result is a ZIP file. Next to its input, it is named `PREFIX` + the name of the pack +
+Every pack gives a ZIP file. Next to its input, it is named `PREFIX` + the name of the pack +
 `SUFFIX` + `.zip`, where the name of an archive has no extension. An archive that has one pack
-and nothing else gives one file. Any other archive, with several packs or with archives inside,
-gives a folder named `PREFIX` + the name of the archive + `SUFFIX`, with what the archive has:
-a pack in the directory `a/b/Pack` of the archive is the file `a/b/Pack.zip` in the folder, a pack in
-the root of the archive is a file with the name of the archive, and an archive inside the
-archive, like `a/inner.zip`, is handled the same way, with its results in `a/inner.zip` or in
-the folder `a/inner`. Only the first name has the prefix and the suffix. With
+and nothing else gives one ZIP file. Any other archive, with several packs or with archives inside,
+gives one archive of the same kind as the input, named `PREFIX` + the name of the archive +
+`SUFFIX` + its extension, like `squashed_big.7z` for `big.7z`. It has what the archive has: a pack
+in the directory `a/b/Pack` of the archive is `a/b/Pack.zip` in the result, a pack in the root of the
+archive is a file with the name of the archive, and an archive inside the archive, like
+`a/inner.zip`, is handled the same way, as `a/inner.zip` or as the directory `a/inner`. Only the
+first name has the prefix and the suffix.
+
+ZIP, 7z, TAR, TAR.GZ (`.tgz`) and TAR.BZ2 (`.tbz2`, `.tbz`) archives are written, compressed as much as
+possible: Deflate level 9 for ZIP, which Windows opens without other programs, and LZMA2 level 9 for 7z.
+An input of any other kind, like RAR, gives a ZIP archive. With
 [`bulk_output_directory`](#bulk_output_directory), all of this goes to that directory.
 
 In the bulk mode, `pack_directory` and `output_file_path` are ignored. All the other
@@ -1005,10 +1010,10 @@ bulk_input_directory = 'C:\path\to\packs'
 **Default value**: not set, so the results go next to their inputs
 
 The directory where the bulk mode writes the results, like `'C:\squashed'`. It is created if it
-does not exist. The results keep the folders that the input has: a pack in
-`bulk_input_directory\games\Pack` gives `bulk_output_directory\games\Pack.zip`. When this option is
-set, the results have no prefix, unless you set [`bulk_output_prefix`](#bulk_output_prefix) yourself. Nothing
-is written next to the inputs, and [`bulk_overwrite`](#bulk_overwrite) does nothing. If the
+does not exist. When the input is a directory, the results go in a folder of the output directory with the name of the
+input directory, and keep the folders that the input has: a pack in `C:\packs\games\Pack` gives
+`bulk_output_directory\packs\games\Pack.zip`. If the folder already exists, the results go in
+`squashed_packs`, and a result that already exists gets the prefix `squashed_` too. is written next to the inputs, and [`bulk_overwrite`](#bulk_overwrite) does nothing. If the
 directory is the input directory, it is the same as not setting it. It can be inside the input directory: it
 is not searched for packs.
 

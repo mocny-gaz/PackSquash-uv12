@@ -815,3 +815,68 @@ fn helper_extractions_list_the_archives_that_are_not_in_packs() {
 		["folder/one.zip", "top.7z"]
 	);
 }
+
+#[test]
+fn only_some_extensions_can_be_written() {
+	for (name, extension) in [
+		("a.zip", Some("zip")),
+		("A.Tar.GZ", Some("Tar.GZ")),
+		("a.tgz", Some("tgz")),
+		("a.7z", Some("7z")),
+		("a.tar", Some("tar")),
+		("a.rar", None),
+		("a.tar.xz", None),
+		("zip", None)
+	] {
+		assert_eq!(writable_archive_extension(name), extension, "{name}");
+	}
+}
+
+#[test]
+fn archives_are_written_in_the_format_of_the_extension_and_read_back() {
+	let directory = tempfile::tempdir().unwrap();
+	let inner = zip_bytes(&[("a.txt", &b"inner".repeat(1000))]);
+	let source = write(directory.path(), "source.zip", &inner);
+
+	for (name, magic) in [
+		("out.zip", &b"PK"[..]),
+		("out.7z", b"7z"),
+		("out.tar", b""),
+		("out.tar.gz", b"\x1f\x8b"),
+		("out.tgz", b"\x1f\x8b"),
+		("out.tar.bz2", b"BZ"),
+		("out.rar", b"PK")
+	] {
+		let path = directory.path().join(name);
+		let mut writer = ArchiveWriter::create(&path).unwrap();
+
+		writer.add_file("a/one.zip", &source).unwrap();
+		writer.add_file("two.zip", &source).unwrap();
+		writer.finish().unwrap();
+
+		assert!(fs::read(&path).unwrap().starts_with(magic), "{name}");
+
+		let scan = scan_archive_with_nested(&path, 4, &extensions(&["zip"]))
+			.unwrap()
+			.unwrap();
+
+		assert_eq!(
+			scan.nested_archives
+				.iter()
+				.map(|nested| nested.name.as_str())
+				.collect::<Vec<_>>(),
+			["a/one.zip", "two.zip"],
+			"{name}"
+		);
+
+		let extracted = extract_nested_archives(
+			&path,
+			scan.format,
+			&["a/one.zip".to_string()],
+			ExtractLimits::default()
+		)
+		.unwrap();
+
+		assert_eq!(fs::read(&extracted.files[0].1).unwrap(), inner, "{name}");
+	}
+}

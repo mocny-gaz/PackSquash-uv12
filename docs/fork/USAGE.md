@@ -145,14 +145,15 @@ bulk_input_directory = 'C:\packs'
   is squashed, and the results go next to it. The name and extension do not matter.
 - Every result is a ZIP file next to its input: `squashed_NAME.zip` by default. For an archive,
   NAME has no extension. `bulk_output_prefix` and `bulk_output_suffix` change the name.
-- An archive with one pack gives one file. An archive with several packs, or with archives inside it,
-  gives a folder: `squashed_ARCHIVE/`, with the same folders that the archive has. The pack
-  `a/b/Pack` of the archive is `squashed_ARCHIVE/a/b/Pack.zip`.
-- Archives inside archives are opened too, as many levels as `bulk_scan_depth` (at most 32), unless they are part of a pack. A
-  `.zip` with 200 packs that are zips gives 200 results in a folder, not 200 files next to the
-  big zip. They are extracted a few at a time and deleted when done.
-- To put the results somewhere else, set `bulk_output_directory`. The results keep the folders of the
-  input, have no prefix (unless you set one) and nothing is written next to the inputs.
+- An archive with one pack gives one ZIP file. An archive with several packs, or with archives inside it,
+  gives one archive of the same kind: a zip gives a zip, and a 7z, tar, tar.gz or tar.bz2 gives the same.
+  Any other kind, like RAR, gives a zip. It is `squashed_ARCHIVE.7z` and has the same folders that the
+  archive has: the pack `a/b/Pack` is `a/b/Pack.zip` inside it. It is compressed as much as possible.
+- Archives inside archives are opened too, as many levels as `bulk_scan_depth` (at most 32), unless they are
+  part of a pack. They are extracted a few at a time and deleted when done.
+- To put the results somewhere else, set `bulk_output_directory`. They go in a folder with the name of the
+  input folder, keep its folders and have no prefix (unless you set one). A name that is already taken gets
+  `squashed_`. Nothing is written next to the inputs.
 - Each line has the number, the name of the pack and where it is, then its size and the size of the
   result (a pack that is a whole archive counts as the size of the archive file, any other pack as the size of
   its files): `[3/204] Pack (C:\packs\big.zip > inner.zip > Pack) -> ... (12.50 MiB -> 3.10 MiB)`.

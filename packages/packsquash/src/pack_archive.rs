@@ -17,7 +17,7 @@ use std::{
 	collections::{BTreeMap, BTreeSet},
 	ffi::OsString,
 	fs::{self, File},
-	io::{self, BufReader, Read},
+	io::{self, BufReader, Read, Write},
 	path::{Path, PathBuf},
 	process::{Command, Stdio}
 };
@@ -1166,6 +1166,104 @@ pub fn extract_nested_archives(
 		_directory: directory,
 		files
 	})
+}
+
+const WRITABLE_EXTENSIONS: [&str; 8] = [
+	"tar.gz", "tar.bz2", "tgz", "tbz2", "tbz", "tar", "zip", "7z"
+];
+
+/// The extension of the archive formats that can be written, if the file name ends with one.
+pub fn writable_archive_extension(file_name: &str) -> Option<&str> {
+	let lowercase = file_name.to_ascii_lowercase();
+
+	WRITABLE_EXTENSIONS
+		.iter()
+		.find(|extension| lowercase.ends_with(&format!(".{extension}")))
+		.map(|extension| &file_name[file_name.len() - extension.len()..])
+}
+
+/// Writes files into an archive, compressed as much as possible. The format is the one that the extension of
+/// the file name says, or ZIP, which any Windows can open, if it says none that can be written.
+pub enum ArchiveWriter {
+	/// A ZIP archive.
+	Zip(Box<zip::ZipWriter<File>>),
+	/// A 7z archive.
+	SevenZ(Box<sevenz_rust2::ArchiveWriter<File>>),
+	/// A TAR archive, which can be compressed.
+	Tar(tar::Builder<Box<dyn Write>>)
+}
+
+impl ArchiveWriter {
+	/// Creates the archive file.
+	pub fn create(path: &Path) -> Result<Self, ArchiveError> {
+		let extension = path
+			.file_name()
+			.and_then(|name| name.to_str())
+			.and_then(writable_archive_extension)
+			.unwrap_or("zip")
+			.to_ascii_lowercase();
+		let file = File::create(path)?;
+
+		Ok(match extension.as_str() {
+			"7z" => {
+				let mut writer = sevenz_rust2::ArchiveWriter::new(file).map_err(io::Error::other)?;
+
+				writer.set_content_methods(vec![
+					sevenz_rust2::encoder_options::Lzma2Options::from_level(9).into()
+				]);
+				Self::SevenZ(Box::new(writer))
+			}
+			"tar" => Self::Tar(tar::Builder::new(Box::new(file))),
+			"tar.gz" | "tgz" => Self::Tar(tar::Builder::new(Box::new(
+				flate2::write::GzEncoder::new(file, flate2::Compression::best())
+			))),
+			"tar.bz2" | "tbz2" | "tbz" => Self::Tar(tar::Builder::new(Box::new(
+				bzip2::write::BzEncoder::new(file, bzip2::Compression::best())
+			))),
+			_ => Self::Zip(Box::new(zip::ZipWriter::new(file)))
+		})
+	}
+
+	/// Adds a file to the archive, with the given name, which uses `/` as separator.
+	pub fn add_file(&mut self, name: &str, path: &Path) -> Result<(), ArchiveError> {
+		match self {
+			Self::Zip(writer) => {
+				let options = zip::write::SimpleFileOptions::default()
+					.compression_method(zip::CompressionMethod::Deflated)
+					.compression_level(Some(9))
+					.large_file(fs::metadata(path)?.len() > u64::from(u32::MAX));
+
+				writer.start_file(name, options).map_err(io::Error::other)?;
+				io::copy(&mut File::open(path)?, writer)?;
+			}
+			Self::SevenZ(writer) => {
+				writer
+					.push_archive_entry(
+						sevenz_rust2::ArchiveEntry::from_path(path, name.to_string()),
+						Some(File::open(path)?)
+					)
+					.map_err(io::Error::other)?;
+			}
+			Self::Tar(builder) => builder.append_path_with_name(path, name)?
+		}
+
+		Ok(())
+	}
+
+	/// Writes the end of the archive.
+	pub fn finish(self) -> Result<(), ArchiveError> {
+		match self {
+			Self::Zip(writer) => {
+				writer.finish().map_err(io::Error::other)?;
+			}
+			Self::SevenZ(writer) => {
+				writer.finish()?;
+			}
+			Self::Tar(builder) => builder.into_inner()?.flush()?
+		}
+
+		Ok(())
+	}
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ serde_json = {
   ]
 }
 serde_stacker = "0.1.14"
-sevenz-rust2 = { version = "0.24.2", default-features = false }
+sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["compress", "util"] }
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 spng = {
@@ -130,7 +130,6 @@ zopfli = {
 criterion = { version = "=0.5.1", features = ["html_reports"] }
 futures = { version = "0.3.34", default-features = false, features = ["std"] }
 pretty_assertions = "1.4.1"
-sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["compress", "util"] }
 tar = { version = "0.4.46", default-features = false }
 tokio-test = "0.4.6"
 xz2 = "0.1.7"

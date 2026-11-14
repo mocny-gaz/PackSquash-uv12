@@ -121,6 +121,16 @@ fn find(options: &BulkOptions, depth: usize) -> Vec<Found> {
 	discover(options, &Layout::new(options), depth)
 }
 
+fn entries(archive: &Path) -> Vec<String> {
+	scan_archive_with_nested(archive, 32, &["zip".to_string()])
+		.unwrap()
+		.unwrap()
+		.nested_archives
+		.into_iter()
+		.map(|nested| nested.name)
+		.collect()
+}
+
 struct Run {
 	code: i32,
 	/// The result files that the squash function was asked to write.
@@ -511,8 +521,10 @@ fn an_archive_with_several_packs_gives_one_result_per_pack_and_is_kept() {
 	let run = run_bulk(&bulk);
 
 	assert_eq!(run.code, 0);
-	assert!(base.join("squashed_two/a.zip").is_file());
-	assert!(base.join("squashed_two/sub/b.zip").is_file());
+	assert_eq!(
+		entries(&base.join("squashed_two.tar")),
+		["a.zip", "sub/b.zip"]
+	);
 	assert!(
 		base.join("two.tar").is_file(),
 		"it has several packs, so it is not replaced"
@@ -641,8 +653,10 @@ fn the_input_can_be_an_archive_file() {
 	let run = run_bulk(&options(&base.join("two.7z")));
 
 	assert_eq!(run.code, 0);
-	assert!(base.join("squashed_two/a.zip").is_file());
-	assert!(base.join("squashed_two/sub/b.zip").is_file());
+	assert_eq!(
+		entries(&base.join("squashed_two.7z")),
+		["a.zip", "sub/b.zip"]
+	);
 	assert!(
 		base.join("two.7z").is_file(),
 		"the archive is kept without bulk_overwrite"
@@ -770,20 +784,27 @@ fn archives_inside_archives_are_opened_and_the_results_mirror_the_inside() {
 
 	assert_eq!(run.code, 0, "{:?}", run.outputs);
 
-	for result in [
-		"squashed_big/Loose.zip",
-		"squashed_big/sub/inner.zip",
-		"squashed_big/other/two/a.zip",
-		"squashed_big/other/two/b.zip"
-	] {
-		assert!(base.join(result).is_file(), "{result}");
-	}
-
+	assert_eq!(
+		entries(&base.join("squashed_big.tar")),
+		[
+			"Loose.zip",
+			"other/two/a.zip",
+			"other/two/b.zip",
+			"sub/inner.zip"
+		]
+	);
 	assert_eq!(run.outputs.len(), 4);
 	assert!(base.join("big.tar").is_file(), "the input is kept");
 	assert!(
-		!base.join("squashed_big/notes.zip").exists() && !base.join("squashed_notes.zip").exists(),
+		!base.join("squashed_notes.zip").exists(),
 		"an archive without a pack gives nothing"
+	);
+	assert!(
+		fs::read_dir(base)
+			.unwrap()
+			.flatten()
+			.all(|entry| !file_name_of(&entry.path()).starts_with(".packsquash-")),
+		"the folder of the results is gone"
 	);
 
 	let report = fs::read_to_string(base.join("report.txt")).unwrap();
@@ -895,9 +916,10 @@ fn the_size_of_a_pack_that_is_a_whole_archive_is_the_size_of_the_archive_file() 
 }
 
 #[test]
-fn an_output_directory_receives_the_results_without_a_prefix() {
+fn an_output_directory_receives_the_results_in_a_folder_named_like_the_input() {
 	let input = TempDir::new().unwrap();
 	let output = TempDir::new().unwrap();
+	let name = file_name_of(input.path());
 
 	write_pack(&input.path().join("PackA"), "a");
 	write_pack(&input.path().join("group/PackC"), "c");
@@ -910,19 +932,15 @@ fn an_output_directory_receives_the_results_without_a_prefix() {
 	bulk.overwrite = true;
 
 	let run = run_bulk(&bulk);
+	let results = output.path().join(&name);
 
 	assert_eq!(run.code, 0);
 
-	for result in [
-		"PackA.zip",
-		"group/PackC.zip",
-		"group/x.zip",
-		"two/a.zip",
-		"two/sub/b.zip"
-	] {
-		assert!(output.path().join(result).is_file(), "{result}");
+	for result in ["PackA.zip", "group/PackC.zip", "group/x.zip"] {
+		assert!(results.join(result).is_file(), "{result}");
 	}
 
+	assert_eq!(entries(&results.join("two.tar")), ["a.zip", "sub/b.zip"]);
 	assert!(
 		input.path().join("group/x.tar").is_file() && input.path().join("two.tar").is_file(),
 		"nothing is replaced when the results go to another directory"
@@ -935,6 +953,15 @@ fn an_output_directory_receives_the_results_without_a_prefix() {
 		"nothing is written next to the input"
 	);
 
+	// The same output directory again: the folder is taken, so the results go in one with the prefix
+	assert_eq!(run_bulk(&bulk).code, 0);
+
+	let again = output.path().join(format!("squashed_{name}"));
+
+	assert!(again.join("PackA.zip").is_file());
+	assert!(again.join("two.tar").is_file());
+	assert!(results.join("PackA.zip").is_file());
+
 	// The prefix is used when the owner sets it
 	let prefixed = TempDir::new().unwrap();
 	let mut bulk = options(input.path());
@@ -942,15 +969,50 @@ fn an_output_directory_receives_the_results_without_a_prefix() {
 	bulk.output_prefix = Some("small_".to_string());
 
 	assert_eq!(run_bulk(&bulk).code, 0);
-	assert!(prefixed.path().join("small_PackA.zip").is_file());
-	assert!(prefixed.path().join("group/small_PackC.zip").is_file());
-	assert!(prefixed.path().join("small_two/a.zip").is_file());
+
+	let results = prefixed.path().join(&name);
+
+	assert!(results.join("small_PackA.zip").is_file());
+	assert!(results.join("group/small_PackC.zip").is_file());
+	assert!(results.join("small_two.tar").is_file());
+}
+
+#[test]
+fn a_result_that_exists_in_the_output_directory_gets_the_prefix() {
+	let input = TempDir::new().unwrap();
+	let output = TempDir::new().unwrap();
+
+	write_tar(&input.path().join("single.tar"), &["Inner"]);
+	write_tar(&input.path().join("two.tar"), &["a", "b"]);
+	fs::write(output.path().join("single.zip"), b"taken").unwrap();
+	fs::write(output.path().join("two.tar"), b"taken").unwrap();
+
+	let mut bulk = options(&input.path().join("single.tar"));
+	bulk.output_directory = Some(output.path().to_path_buf());
+	bulk.output_prefix = None;
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+	assert_eq!(
+		fs::read(output.path().join("single.zip")).unwrap(),
+		b"taken"
+	);
+	assert!(output.path().join("squashed_single.zip").is_file());
+
+	bulk.input_directory = input.path().join("two.tar");
+
+	assert_eq!(run_bulk(&bulk).code, 0);
+	assert_eq!(fs::read(output.path().join("two.tar")).unwrap(), b"taken");
+	assert_eq!(
+		entries(&output.path().join("squashed_two.tar")),
+		["a.zip", "b.zip"]
+	);
 }
 
 #[test]
 fn an_output_directory_inside_the_input_is_not_searched() {
 	let root = TempDir::new().unwrap();
 	let base = root.path();
+	let results = base.join("out").join(file_name_of(base));
 
 	write_pack(&base.join("PackA"), "a");
 
@@ -959,9 +1021,8 @@ fn an_output_directory_inside_the_input_is_not_searched() {
 	bulk.output_prefix = None;
 
 	assert_eq!(run_bulk(&bulk).code, 0);
-	assert!(base.join("out/PackA.zip").is_file());
+	assert!(results.join("PackA.zip").is_file());
 
-	// The results are not squashed again, and the directory is not an input
 	fs::create_dir_all(base.join("out/Fake")).unwrap();
 	write_pack(&base.join("out/Fake"), "fake");
 
@@ -969,6 +1030,30 @@ fn an_output_directory_inside_the_input_is_not_searched() {
 
 	assert_eq!(run.code, 0);
 	assert_eq!(run.outputs.len(), 1, "{:?}", run.outputs);
+}
+
+#[test]
+fn an_archive_with_several_packs_gives_an_archive_of_the_same_kind() {
+	let root = TempDir::new().unwrap();
+	let base = root.path();
+
+	for (name, result) in [
+		("a.zip", "squashed_a.zip"),
+		("b.7z", "squashed_b.7z"),
+		("c.tar", "squashed_c.tar"),
+		("d.tgz", "squashed_d.tgz"),
+		("e.tar.bz2", "squashed_e.tar.bz2"),
+		("f.rar", "squashed_f.zip")
+	] {
+		write_tar(&base.join(name), &["one", "two"]);
+
+		assert_eq!(run_bulk(&options(&base.join(name))).code, 0, "{name}");
+		assert_eq!(
+			entries(&base.join(result)),
+			["one.zip", "two.zip"],
+			"{name}"
+		);
+	}
 }
 
 #[test]
@@ -1023,11 +1108,7 @@ fn how_many_archives_can_be_inside_each_other_follows_the_search_depth() {
 	let run = run_bulk_with_depth(&options(base), 2);
 
 	assert_eq!(run.code, 0);
-	assert!(
-		base.join("squashed_top/a1/a2.zip").is_file(),
-		"{:?}",
-		run.outputs
-	);
+	assert_eq!(entries(&base.join("squashed_top.tar")), ["a1/a2.zip"]);
 
 	// top > a1 > a2 > a3, and the pack is in a3: one too deep
 	let root = TempDir::new().unwrap();
@@ -1051,8 +1132,9 @@ fn how_many_archives_can_be_inside_each_other_follows_the_search_depth() {
 	// A higher depth opens it
 	let run = run_bulk_with_depth(&options(base), 3);
 
-	assert!(
-		base.join("squashed_top/a1/a2/a3.zip").is_file(),
+	assert_eq!(
+		entries(&base.join("squashed_top.tar")),
+		["a1/a2/a3.zip"],
 		"{:?}",
 		run.outputs
 	);
@@ -1086,6 +1168,5 @@ fn a_failed_pack_inside_an_archive_inside_an_archive_does_not_stop_the_others() 
 	let run = run_bulk(&options(base));
 
 	assert_eq!(run.code, 1);
-	assert!(base.join("squashed_big/b_good.zip").is_file());
-	assert!(!base.join("squashed_big/a_bad.zip").exists());
+	assert_eq!(entries(&base.join("squashed_big.tar")), ["b_good.zip"]);
 }

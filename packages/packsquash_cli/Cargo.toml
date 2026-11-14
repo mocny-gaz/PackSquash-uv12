@@ -54,6 +54,7 @@ env_logger = {
 getopts = "0.2.24"
 log = "0.4.34"
 packsquash = { path = "../packsquash", version = "0.5.0-fork.1" }
+tempfile = "3.27.0"
 tokio = { version = "1.54.0", default-features = false, features = ["time"] }
 toml = {
   version = "1.1.8",
@@ -89,7 +90,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 tar = { version = "0.4.46", default-features = false }
-tempfile = "3.27.0"
 
 [lints]
 workspace = true

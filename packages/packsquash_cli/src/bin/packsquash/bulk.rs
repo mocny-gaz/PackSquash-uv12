@@ -15,8 +15,9 @@ use log::{debug, error, info, warn};
 use packsquash::{
 	config::SquashOptions,
 	pack_archive::{
-		ArchiveFormat, ArchiveScan, ExtractLimits, NestedArchive, extract_nested_archives,
-		extract_packs_and_nested, is_pack_directory, scan_archive_with_nested
+		ArchiveFormat, ArchiveScan, ArchiveWriter, ExtractLimits, NestedArchive,
+		extract_nested_archives, extract_packs_and_nested, is_pack_directory,
+		scan_archive_with_nested, writable_archive_extension
 	}
 };
 use toml::{Table, Value};
@@ -85,7 +86,9 @@ struct Layout {
 	/// it is the directory that holds the archive.
 	input_root: PathBuf,
 	/// Where the results go, when it is not next to the input.
-	output_root: Option<PathBuf>
+	output_root: Option<PathBuf>,
+	/// The folder of the output directory that has the results, when the input is a directory.
+	wrapper: Option<String>
 }
 
 /// Tells whether two paths are the same directory, even when they are written in different ways. A directory that
@@ -121,12 +124,22 @@ impl Layout {
 			}
 		});
 
-		Self {
+		let mut layout = Self {
 			prefix,
 			suffix: options.output_suffix.clone(),
 			input_root,
-			output_root
+			output_root,
+			wrapper: None
+		};
+
+		if let Some(output) = &layout.output_root
+			&& input.is_dir()
+			&& let Some(name) = input.file_name()
+		{
+			layout.wrapper = Some(layout.free_name(output, &name.to_string_lossy(), ""));
 		}
+
+		layout
 	}
 
 	/// Tells whether a name looks like the result of an earlier bulk run with the same prefix and suffix.
@@ -140,11 +153,13 @@ impl Layout {
 	/// The directory where the results of what is in `input_parent` go.
 	fn result_directory(&self, input_parent: &Path) -> PathBuf {
 		match &self.output_root {
-			Some(output) => output.join(
-				input_parent
-					.strip_prefix(&self.input_root)
-					.unwrap_or_else(|_| Path::new(""))
-			),
+			Some(output) => output
+				.join(self.wrapper.as_deref().unwrap_or_default())
+				.join(
+					input_parent
+						.strip_prefix(&self.input_root)
+						.unwrap_or_else(|_| Path::new(""))
+				),
 			None => input_parent.to_path_buf()
 		}
 	}
@@ -152,6 +167,14 @@ impl Layout {
 	/// The name of the result of something in the input, with the prefix and the suffix.
 	fn result_name(&self, stem: &str) -> String {
 		format!("{}{stem}{}", self.prefix, self.suffix)
+	}
+
+	fn free_name(&self, directory: &Path, name: &str, extension: &str) -> String {
+		if self.output_root.is_some() && directory.join(format!("{name}{extension}")).exists() {
+			format!("squashed_{name}")
+		} else {
+			name.to_string()
+		}
 	}
 }
 
@@ -614,7 +637,14 @@ struct State {
 	total: usize,
 	/// False when an archive has archives inside it, or needs a helper program: the number of packs is only
 	/// known when they are opened.
-	exact: bool
+	exact: bool,
+	sink: Option<Sink>
+}
+
+struct Sink {
+	path: PathBuf,
+	root: PathBuf,
+	writer: Option<ArchiveWriter>
 }
 
 impl State {
@@ -737,7 +767,8 @@ pub fn run(
 		report: String::new(),
 		index: 0,
 		total,
-		exact
+		exact,
+		sink: None
 	};
 
 	for item in &found {
@@ -769,10 +800,11 @@ pub fn run(
 			Found::Skipped(..) => {}
 			Found::Directory(path) => {
 				let name = file_name_of(&path);
+				let directory =
+					layout.result_directory(path.parent().unwrap_or_else(|| Path::new("")));
 				let dest = Dest {
-					directory: layout
-						.result_directory(path.parent().unwrap_or_else(|| Path::new(""))),
-					name: layout.result_name(&name)
+					name: layout.free_name(&directory, &layout.result_name(&name), ".zip"),
+					directory
 				};
 				let label = state.label(&name, &path.display().to_string());
 
@@ -975,17 +1007,130 @@ fn process(
 
 	let output_bytes = fs::metadata(final_output).map_or(0, |metadata| metadata.len());
 
+	let shown = match add_to_sink(state, final_output) {
+		Ok(shown) => shown,
+		Err(message) => {
+			state.fail(label, &message);
+
+			return;
+		}
+	};
+
 	state.summary.done += 1;
 	state.summary.input_bytes = state.summary.input_bytes.saturating_add(input_bytes);
 	state.summary.output_bytes = state.summary.output_bytes.saturating_add(output_bytes);
 
 	let line = format!(
 		"{label} -> {} ({} -> {})",
-		final_output.display(),
+		shown.display(),
 		mib(input_bytes),
 		mib(output_bytes)
 	);
 	state.emit(Kind::Done, line);
+}
+
+fn add_to_sink(state: &mut State, result: &Path) -> Result<PathBuf, String> {
+	let Some(sink) = &mut state.sink else {
+		return Ok(result.to_path_buf());
+	};
+	let Ok(entry) = result.strip_prefix(&sink.root) else {
+		return Ok(result.to_path_buf());
+	};
+	let name = entry
+		.components()
+		.map(|component| component.as_os_str().to_string_lossy())
+		.collect::<Vec<_>>()
+		.join("/");
+	let writer = match &mut sink.writer {
+		Some(writer) => writer,
+		empty => empty.insert(ArchiveWriter::create(&sink.path).map_err(|error| error.to_string())?)
+	};
+
+	writer
+		.add_file(&name, result)
+		.map_err(|error| error.to_string())?;
+	fs::remove_file(result).map_err(|error| error.to_string())?;
+
+	Ok(sink.path.join(entry))
+}
+
+fn start_sink(
+	state: &mut State,
+	dest: &Dest,
+	extension: &str,
+	source: &str
+) -> Option<(tempfile::TempDir, Dest)> {
+	let path = dest.directory.join(format!("{}.{extension}", dest.name));
+	let started = state
+		.guard
+		.claim(&path)
+		.and_then(|()| fs::create_dir_all(&dest.directory).map_err(|error| error.to_string()))
+		.and_then(|()| {
+			tempfile::Builder::new()
+				.prefix(".packsquash-")
+				.tempdir_in(&dest.directory)
+				.map_err(|error| error.to_string())
+		});
+
+	match started {
+		Ok(directory) => {
+			let results = Dest {
+				directory: directory.path().to_path_buf(),
+				name: dest.name.clone()
+			};
+
+			state.sink = Some(Sink {
+				path,
+				root: results.folder(),
+				writer: None
+			});
+
+			Some((directory, results))
+		}
+		Err(message) => {
+			state.fail(source, &message);
+
+			None
+		}
+	}
+}
+
+fn finish_sink(state: &mut State) {
+	if let Some(Sink {
+		path,
+		writer: Some(writer),
+		..
+	}) = state.sink.take()
+	{
+		match writer.finish() {
+			Ok(()) => state.emit(Kind::Note, format!("The results are in {}", path.display())),
+			Err(error) => state.fail(
+				&path.display().to_string(),
+				&format!("couldn't write the archive: {error}")
+			)
+		}
+	}
+}
+
+/// Where the results of a top level archive go, and the extension of the result when it is not a single pack.
+fn top_level_dest(env: &Env<'_>, archive: &Path, dest: &Dest, single: bool) -> (Dest, String) {
+	let file_name = file_name_of(archive);
+	let extension = if single {
+		"zip"
+	} else {
+		writable_archive_extension(&file_name).unwrap_or("zip")
+	};
+	let name = env
+		.layout
+		.free_name(&dest.directory, &dest.name, &format!(".{extension}"));
+
+	(
+		Dest {
+			directory: dest.directory.clone(),
+			name
+		},
+		extension.to_string()
+	)
 }
 
 /// Squashes the packs of one archive, and then the archives inside it. `source` tells where the archive is, for
@@ -1014,12 +1159,27 @@ fn process_archive(
 			.clone()
 			.unwrap_or_else(|| vec![String::new()]);
 		let single = roots.len() == 1 && scan.nested_archives.is_empty();
+		let (mut dest, extension) = if nesting == 0 {
+			top_level_dest(env, archive, dest, single)
+		} else {
+			(dest.clone(), String::new())
+		};
+
+		if nesting == 0 && !single {
+			dest.name = format!("{}.{extension}", dest.name);
+
+			if let Err(message) = state.guard.claim(&dest.folder()) {
+				state.fail(source, &message);
+
+				return;
+			}
+		}
 
 		for root in &roots {
 			let (name, pack_source) = pack_names(&stem, source, root);
 			let label = state.label(&name, &pack_source);
 			let (output, replacement) =
-				result_for(env, archive, &stem, dest, root, single, nesting == 0);
+				result_for(env, archive, &stem, &dest, root, single, nesting == 0);
 
 			process(
 				env,
@@ -1080,6 +1240,21 @@ fn process_archive(
 	// The scan of an archive that needs a helper program does not know the number of packs. If the real number
 	// is different from the one that was counted, the numbers in the labels are not exact, but the work is right
 	let single = extracted.packs.len() == 1 && nested_count == 0;
+	let (dest, extension) = if nesting == 0 {
+		top_level_dest(env, archive, dest, single)
+	} else {
+		(dest.clone(), String::new())
+	};
+	let started = if nesting == 0 && !single {
+		let Some(started) = start_sink(state, &dest, &extension, source) else {
+			return;
+		};
+
+		Some(started)
+	} else {
+		None
+	};
+	let dest = started.as_ref().map_or(&dest, |(_, results)| results);
 
 	for (root, pack_directory) in &extracted.packs {
 		let (name, pack_source) = pack_names(&stem, source, root);
@@ -1133,6 +1308,10 @@ fn process_archive(
 				}
 			}
 		}
+	}
+
+	if started.is_some() {
+		finish_sink(state);
 	}
 }
 
