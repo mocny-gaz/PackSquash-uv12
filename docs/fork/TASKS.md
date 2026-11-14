@@ -1,20 +1,19 @@
 # Task list of the fork
 
-Updated 2026-11-13. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-14. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
 
-None open.
-
+None
 
 ## This very moment
-
-- [ ] r2 optifine properties(sky models and others) optimization - if for example sky3.properties is about aurora.png but there isnt such file then skip it (name that module optifine sky debloat/fix and put a warning that on wip packs it can lead to progress loss (if the aurora wasnt YET added or sth) so dont use it on unfinished ones or dev ones and it can fix sky problems when transforming pack to other versions (in old optifine if there wasnt a texture for sky it was just skipped but in new it does the pink/black error texture)). By r2 i mean that any bloat in optifine that isnt connected to something (isnt used in game with pack loaded) (ai) STATE: custom sky entries are done (patch 0023, applied). Next: the other OptiFine files that are not connected to anything (connected textures, custom items and the rest)
+- [ ] r2 optifine properties(sky models and others) optimization - if for example sky3.properties is about aurora.png but there isnt such file then skip it (name that module optifine sky debloat/fix and put a warning that on wip packs it can lead to progress loss (if the aurora wasnt YET added or sth) so dont use it on unfinished ones or dev ones and it can fix sky problems when transforming pack to other versions (in old optifine if there wasnt a texture for sky it was just skipped but in new it does the pink/black error texture)). By r2 i mean that any bloat in optifine that isnt connected to something (isnt used in game with pack loaded) (ai) STATE: patch 0037 (sent). Option `skip_unused_optifine_entries` (default false, with the same warning for packs that are still being made). It leaves out connected textures, custom items, custom animations, custom GUI and custom colors entries (in `optifine` and `mcpatcher`) when every file they use is missing from the pack, and numbered connected textures tiles that no entry uses. It keeps an entry when one of its files exists, when it uses a file the game or another pack can provide, or when it can not tell for sure. Sky entries keep their own options. Not done on purpose: random entities, emissive textures and other loose images, because other files can use them by name and removing them can break a pack
 - [ ] r3 update the artifact to match new addition (ai) STATE: updated for `bulk_output_directory` (same link as before). One more update after r11
 - [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai) note: when getting to that point tell owner to send the idea files
 - [ ] r7 make mc-changes auto download and delete after use (unless no wifi then check if in folder(the one where the packsquash and the one where input or the one where output) and if not in folder type in cmd that no mcchanges jar skipping that step and does the normal one) by default; also make it auto clear after each run all temp resources or anything left to consume itself least space (ai) STATE: not done, with L6
-- [ ] r11 make all the long options names (like the skip_optifine_sky_entries_with_missing_images make it some like optifine sky debloat/fix or anything else thats shorter and makes sense and doesnt collide with other options) way shorter (ai) STATE: next patch (0036). Plan: shorter names, and the old names keep working as serde aliases, so no options file breaks
+- [ ] r11 make all the long options names (like the skip_optifine_sky_entries_with_missing_images make it some like optifine sky debloat/fix or anything else thats shorter and makes sense and doesnt collide with other options) way shorter (ai) STATE: next patch (0038). Plan: shorter names, and the old names keep working as serde aliases, so no options file breaks
+- [ ] r16 after r11 and the tasks you told me to do before it, make a release prep patch for a release, then finish the other r tasks, then F3 (ai)
 - [ ] r15 make it so that the bulk archive depth also is how many archives in archives depth (ai) STATE: patch 0033 (sent). I used `bulk_scan_depth` (default 32; `archive_pack_search_depth` counts if it is higher), at most 32. Tell me if you meant another option
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
@@ -37,6 +36,7 @@ None open.
 
 ## Done
 
+- [x] `maximum_width_and_height` is ignored, images of any size are accepted (patch 0036). The key is still accepted, so old options files work
 - [x] b5: the bulk size line (patches 0030 and 0034). b7: not a bug. The 16 shulker files in your logs are about 1.5 MB each (vanilla is about 2 KB), so they really are bigger than 8192 pixels. The message shows the size now (patch 0032). Raise `maximum_width_and_height` to optimize them. old r1 (debug log name, patch 0031) and r15 (patch 0033)
 - [x] b1, r8, r12, r14, F2, f5, b6: bulk mode opens archives inside archives, results in a folder or in `bulk_output_directory`, labels with the pack name and where it is (patches 0026, 0030). You marked them fixed
 - [x] b2 and b3: files that fail to optimize are copied as they are, and nothing under `assets` is skipped (patch 0029). Checked against your logs: a pack with every kind of failure in them (`.ogg` that is not Vorbis, MP4 audio named `.ogg`, `pack.png` that is not a PNG, PNG too big, invalid `.json`, `.lang`, a `.py` in a mod folder) squashes with exit code 0 and every file is kept

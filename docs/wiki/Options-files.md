@@ -35,6 +35,7 @@
   - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
   - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
   - [`skip_optifine_sky_entries_with_missing_images`](#skip_optifine_sky_entries_with_missing_images)
+  - [`skip_unused_optifine_entries`](#skip_unused_optifine_entries)
   - [`archive_pack_search_depth`](#archive_pack_search_depth)
   - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
   - [`bulk_input_directory`](#bulk_input_directory)
@@ -902,6 +903,28 @@ Example:
 allow_mods = ['OptiFine']
 skip_optifine_sky_entries_with_missing_images = true
 ```
+
+### `skip_unused_optifine_entries`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+If `true`, PackSquash leaves out the OptiFine entries that are not connected to anything. OptiFine ignores them, so
+they only make the pack bigger. This covers:
+
+- Connected textures (`optifine/ctm`), custom items (`optifine/cit`), custom animations (`optifine/anim`), custom
+  GUIs (`optifine/gui`) and custom colors (`optifine/colormap`) entries, and the same in `mcpatcher`, when all the
+  files that they use are missing from the pack. An entry is kept if at least one of its files is in the pack, if it
+  uses a file that the game or another pack can provide (like `textures/item/stick`), or if PackSquash can not tell
+  for sure what it uses.
+- The connected textures tiles with a number as the name (`5.png`) that no entry uses, when PackSquash can tell for
+  sure what every entry of their directory uses.
+
+Do not use it on a pack that is still being made: a file that is added later is not used by the entries that were
+left out. The custom sky entries have their own options.
+
+This option has no effect unless [`allow_mods`](#allow_mods) contains OptiFine.
 
 ### `archive_pack_search_depth`
 

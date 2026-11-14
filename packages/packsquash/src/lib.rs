@@ -34,6 +34,8 @@ use debug_log::{detail, detail_error, error_chain};
 use mcchanges::{LanguageFileReduction, McChanges, McChangesError, VersionDetection};
 #[cfg(feature = "optifine")]
 use optifine_sky::SkyImageOptimizer;
+#[cfg(feature = "optifine")]
+use optifine_unused::OptifineUnused;
 use pack_metadata::{PackMetadata, PackMetadataError};
 use squash_zip::{SquashZip, SquashZipError};
 
@@ -68,6 +70,8 @@ mod debug_log;
 mod mcchanges;
 #[cfg(feature = "optifine")]
 mod optifine_sky;
+#[cfg(feature = "optifine")]
+mod optifine_unused;
 mod pack_file;
 mod pack_metadata;
 mod squash_zip;
@@ -423,6 +427,41 @@ impl PackSquasher {
 			.map(Arc::new)
 		};
 
+		#[cfg(feature = "optifine")]
+		let optifine_unused = {
+			let global_options = &options_holder.options.global_options;
+
+			(!is_bedrock
+				&& global_options.skip_unused_optifine_entries
+				&& global_options
+					.allow_mods
+					.contains(config::MinecraftMod::Optifine))
+			.then(|| {
+				runtime.block_on(OptifineUnused::scan(
+					&*vfs,
+					&options_holder.options.pack_directory,
+					IteratorTraversalOptions {
+						ignore_system_and_hidden_files: global_options.ignore_system_and_hidden_files
+					}
+				))
+			})
+			.map(Arc::new)
+		};
+
+		#[cfg(feature = "optifine")]
+		if let (Some(optifine_unused), Some(pack_file_status_sender)) =
+			(&optifine_unused, &pack_file_status_sender)
+		{
+			for notice in optifine_unused.notices() {
+				runtime
+					.block_on(
+						pack_file_status_sender
+							.send(PackSquasherStatus::Notice(Cow::Owned(notice.clone())))
+					)
+					.ok();
+			}
+		}
+
 		// Tell the user what was found about the custom sky entries
 		#[cfg(feature = "optifine")]
 		if let (Some(sky_image_optimizer), Some(pack_file_status_sender)) =
@@ -580,6 +619,8 @@ impl PackSquasher {
 				let mcchanges = mcchanges.clone();
 				#[cfg(feature = "optifine")]
 				let sky_image_optimizer = sky_image_optimizer.clone();
+				#[cfg(feature = "optifine")]
+				let optifine_unused = optifine_unused.clone();
 
 				let in_flight_tasks_semaphore = Arc::clone(&in_flight_tasks_semaphore);
 				let pack_file_optimization_failed = Arc::clone(&pack_file_optimization_failed);
@@ -710,6 +751,31 @@ impl PackSquasher {
 								file_data_override = Some(data.into());
 							}
 						}
+					}
+
+					#[cfg(feature = "optifine")]
+					if let Some(optifine_unused) = &optifine_unused
+						&& let Some(skip_reason) =
+							optifine_unused.skip_reason(pack_file_data.relative_path.as_str())
+					{
+						detail!(
+							"{}: left out by skip_unused_optifine_entries: {skip_reason}",
+							pack_file_data.relative_path.as_str()
+						);
+
+						if let Some(tx) = pack_file_status_sender {
+							tx.send(PackSquasherStatus::PackFileProcessed(PackFileStatus {
+								path: pack_file_data.relative_path,
+								optimization_strategy: Cow::Borrowed(skip_reason),
+								optimization_error: None,
+								skipped: true,
+								intentionally_skipped: true
+							}))
+							.await
+							.ok();
+						}
+
+						return;
 					}
 
 					#[cfg(feature = "optifine")]

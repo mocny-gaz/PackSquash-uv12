@@ -69,6 +69,7 @@ The options that this fork adds:
 | `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
 | `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
 | `skip_optifine_sky_entries_with_missing_images` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
+| `skip_unused_optifine_entries` | `false` | Leaves out OptiFine connected textures, custom items, animations, GUIs and colors entries whose files are missing, and unused connected textures tiles. Not for packs that are still being made. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
 | `include_unrecognized_asset_files` | `true` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. Set to `false` to skip them. |

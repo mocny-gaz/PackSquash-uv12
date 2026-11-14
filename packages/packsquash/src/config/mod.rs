@@ -313,6 +313,18 @@ pub struct GlobalOptions {
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
 	pub skip_optifine_sky_entries_with_missing_images: bool,
+	/// If `true`, PackSquash leaves out the OptiFine entries that are not connected to anything: connected textures,
+	/// custom items, custom animations, custom GUIs and custom colors entries whose files are all missing from the
+	/// pack, and the numbered connected textures tiles that no entry uses. Entries that use files that the game or
+	/// another pack can provide are kept. Do not use it on a pack that is still being made: a file that is added later
+	/// is not used by the entries that were left out.
+	///
+	/// This option has no effect unless `allow_mods` contains OptiFine.
+	///
+	/// **Default value**: `false`
+	#[cfg(feature = "optifine")]
+	#[doc(cfg(feature = "optifine"))]
+	pub skip_unused_optifine_entries: bool,
 	/// If PackSquash can not optimize a file, because the file is not what its extension says (like an `.ogg`
 	/// file that does not have Vorbis audio), is damaged, or is not supported, it copies the file to the
 	/// result as it is, tells so, and goes on, instead of making the pack processing fail. This also
@@ -417,6 +429,8 @@ impl Default for GlobalOptions {
 			merge_identical_optifine_sky_images: false,
 			#[cfg(feature = "optifine")]
 			skip_optifine_sky_entries_with_missing_images: false,
+			#[cfg(feature = "optifine")]
+			skip_unused_optifine_entries: false,
 			#[cfg(any(feature = "optifine", feature = "mtr3"))]
 			allow_mods: EnumSet::empty(),
 			threads: hardware_threads,
