@@ -34,11 +34,8 @@ pub enum ImageProcessingError {
 /// Performs a first fast optimization to an input PNG image: remove non-critical chunks
 /// that will not be parsed by the expected downstream decoders. This can never increase
 /// the input PNG image size, only decrease or maintain it.
-///
-/// It also validates that neither image dimension exceeds the specified threshold.
 pub fn strip_unnecessary_chunks(
-	input_png: BytesMut,
-	maximum_dimension: NonZeroU16
+	input_png: BytesMut
 ) -> Result<Vec<u8>, ImageProcessingError> {
 	let mut stripped_png = Vec::with_capacity(input_png.len());
 
@@ -98,23 +95,6 @@ pub fn strip_unnecessary_chunks(
 					));
 				}
 
-				let width = u32::from_be_bytes(chunk_data[..4].try_into().unwrap());
-				let height = u32::from_be_bytes(chunk_data[4..8].try_into().unwrap());
-
-				if width > u32::from(maximum_dimension.get())
-					|| height > u32::from(maximum_dimension.get())
-				{
-					// The sizes are in the message, because the same error also happens with a tall strip of
-					// animation frames, and the size tells which one it is
-					return Err(ImageProcessingError::StripValidateError(
-						format!(
-							"The texture is {width}x{height} pixels, and its width or height exceeds the configured maximum size of {} pixels (option maximum_width_and_height). \
-							More information: <https://packsquash.aylas.org/links/Too-big-PNG-help>",
-							maximum_dimension.get()
-						)
-						.into()
-					));
-				}
 			}
 
 			stripped_png.extend_from_slice(data_length_and_chunk_type);

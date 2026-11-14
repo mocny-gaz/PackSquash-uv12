@@ -98,12 +98,7 @@ impl Decoder for OptimizerDecoder {
 		// First pass: strip non-critical PNG chunks we won't use. At worst this does nothing
 		// to the input PNG, and at best it reduces its size, reducing memory requirements for
 		// the next passes. It's relatively cheap to do this, although not free.
-		// This pass also guarantees that both the width and height are not greater than
-		// maximum_width_and_height
-		let first_pass_png = image_processor::strip_unnecessary_chunks(
-			src.split_off(0),
-			self.optimization_settings.maximum_width_and_height
-		)?;
+		let first_pass_png = image_processor::strip_unnecessary_chunks(src.split_off(0))?;
 		let mut first_pass_image = ProcessedImage::read(&*first_pass_png)?;
 
 		// Second pass: downsize most textures that consist of a single color to the minimum

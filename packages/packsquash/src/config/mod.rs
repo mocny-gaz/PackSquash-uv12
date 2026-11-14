@@ -1092,9 +1092,7 @@ pub struct PngFileOptions {
 	///
 	/// **Default value**: `0.85`
 	pub color_quantization_dithering_level: UnitIntervalFloat,
-	/// The maximum width and height of the images that will be accepted. This parameter
-	/// sets a high bound of memory usage by PackSquash and helps to author packs with
-	/// reasonable texture sizes.
+	/// Ignored: images can have any size. It is still accepted so that old options files keep working.
 	///
 	/// **Default value**: 8192
 	pub maximum_width_and_height: NonZeroU16,

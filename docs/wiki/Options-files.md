@@ -2053,40 +2053,9 @@ color_quantization_dithering_level = 1
 
 #### `maximum_width_and_height`
 
-**Type**: [Integer](https://toml.io/en/v1.0.0#integer) greater than or equal to
-zero
+**Type**: [Integer](https://toml.io/en/v1.0.0#integer)
 
-**Default value**: `8192`
-
-Sets the maximum width and height of the images that PackSquash will accept
-without throwing an error. The rationale behind this option is that limiting the
-size of the images that PackSquash can deal with sets a high bound of memory
-usage and image processing time, helping authoring efficient packs, and
-improving the compatibility of the pack with GPUs that only support smaller
-texture sizes.
-
-In relation to the last point, Minecraft internally builds texture atlases with
-textures of resource packs, for efficiency reasons (a texture atlas is generated
-by stitching individual textures together so that they become part of a single
-larger texture). Assuming a maximum texture size of 65536x65536, 256 individual
-textures of 4096x4096 would fit in such an atlas, which is a fairly low number
-and not enough to hold all vanilla textures. Resource packs that replace only a
-few atlased textures may get away with textures that are even bigger than
-4096x4096, but that might only happen on "beefy" GPUs, and, in general, it does
-not make much sense to mix small textures with such big textures.
-
-It only makes sense to increase the default value if you know what you are
-doing, the affected images contain several animation frames or are texture
-atlases themselves, or use mods that somehow relax the need for GPUs to support
-big textures. If you do not plan on pushing Minecraft to its limits or making
-high-definition resource packs, setting this to an even lower value than the
-default is a good thing.
-
-Example:
-
-```toml
-maximum_width_and_height = 4096
-```
+Ignored in this fork: images can have any size. The option is still accepted so that old options files keep working.
 
 #### `skip_alpha_optimizations`
 
@@ -2607,7 +2576,6 @@ color_quantization_dithering_level = 1
 ['**/*?.png']
 image_data_compression_iterations = 15
 color_quantization_target = 'none'
-maximum_width_and_height = 2048
 skip_alpha_optimizations = true
 downsize_if_single_color = false
 png_obfuscation = true

@@ -38,8 +38,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   tar.bz2; other kinds give a zip), compressed as much as possible, with the same folders that the archive has, instead
   of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
-- The error of a PNG that is too big tells its size and the limit (`The texture is 16x9600 pixels, and ... 8192`).
-  A tall strip of animation frames can be bigger than `maximum_width_and_height` (8192 by default) and is copied as it is.
+- `maximum_width_and_height` is ignored: images of any size are accepted. A tall strip of animation frames or a very big
+  texture is optimized, not copied as it is.
 - `bulk_output_directory`: the results go there, in a folder with the name of the input folder, with its folders and no prefix
   unless `bulk_output_prefix` is set. A name that is already taken gets the prefix `squashed_`. `bulk_overwrite` does nothing with it.
 - Bulk mode lines show the number, the name of the pack and where it is (`archive > inner archive > pack`).
