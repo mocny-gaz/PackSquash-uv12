@@ -20,6 +20,8 @@ const MAX_EXTRACTED_MIB: i64 = 1_048_576;
 
 /// The name of the option that enables the bulk mode.
 const BULK_INPUT_DIRECTORY: &str = "bulk_input_directory";
+const MCCHANGES_DOWNLOAD: &str = "mcchanges_download";
+const MCCHANGES_NOWIFI: &str = "mcchanges_nowifi";
 const BULK_OUTPUT_DIRECTORY: &str = "bulk_output_directory";
 const BULK_OUTPUT_PREFIX: &str = "bulk_output_prefix";
 const BULK_OUTPUT_SUFFIX: &str = "bulk_output_suffix";
@@ -140,6 +142,10 @@ pub struct ForkOptions {
 	pub archive_max_extracted_bytes: u64,
 	/// The options of the bulk mode, if it is enabled.
 	pub bulk: Option<BulkOptions>,
+	/// Whether the mcchanges jar is searched for and downloaded when `mcchanges_path` is not set.
+	pub mcchanges_download: bool,
+	/// Whether the mcchanges jar is only searched for, without the network.
+	pub mcchanges_nowifi: bool,
 	/// The options of the debug log, if it is enabled.
 	pub log: Option<LogOptions>
 }
@@ -149,6 +155,8 @@ impl Default for ForkOptions {
 		Self {
 			archive_pack_search_depth: DEFAULT_MAX_PACK_DEPTH,
 			archive_max_extracted_bytes: DEFAULT_MAX_EXTRACTED_BYTES,
+			mcchanges_download: true,
+			mcchanges_nowifi: false,
 			bulk: None,
 			log: None
 		}
@@ -160,6 +168,8 @@ pub fn has_fork_options(table: &Table) -> bool {
 	table.contains_key(ARCHIVE_PACK_SEARCH_DEPTH)
 		|| table.contains_key(ARCHIVE_MAX_EXTRACTED_MIB)
 		|| BULK_OPTIONS.iter().any(|name| table.contains_key(*name))
+		|| table.contains_key(MCCHANGES_DOWNLOAD)
+		|| table.contains_key(MCCHANGES_NOWIFI)
 		|| table.contains_key(LOG)
 		|| table.contains_key(LOG_FILE)
 }
@@ -357,6 +367,14 @@ pub fn split_fork_options(table: &mut Table) -> Result<ForkOptions, String> {
 		options.archive_max_extracted_bytes = mebibytes as u64 * 1024 * 1024;
 	}
 
+	if let Some(download) = take_bool(table, MCCHANGES_DOWNLOAD)? {
+		options.mcchanges_download = download;
+	}
+
+	if let Some(nowifi) = take_bool(table, MCCHANGES_NOWIFI)? {
+		options.mcchanges_nowifi = nowifi;
+	}
+
 	options.bulk = take_bulk_options(table)?;
 	options.log = take_log_options(table)?;
 
@@ -392,6 +410,8 @@ mod tests {
 			Ok(ForkOptions {
 				archive_pack_search_depth: 2,
 				archive_max_extracted_bytes: 512 * 1024 * 1024,
+				mcchanges_download: true,
+				mcchanges_nowifi: false,
 				bulk: None,
 				log: None
 			})
@@ -495,6 +515,19 @@ mod tests {
 			default_log_file_name(Path::new("a/ . ")),
 			"packsquash-debug.log"
 		);
+	}
+
+	#[test]
+	fn the_mcchanges_download_options_are_read() {
+		let mut options = table("mcchanges_download = false\nmcchanges_nowifi = true\n");
+
+		assert!(has_fork_options(&options));
+
+		let options = split_fork_options(&mut options).unwrap();
+
+		assert!(!options.mcchanges_download && options.mcchanges_nowifi);
+		assert!(ForkOptions::default().mcchanges_download);
+		assert!(!ForkOptions::default().mcchanges_nowifi);
 	}
 
 	#[test]
@@ -639,6 +672,8 @@ mod tests {
 			Ok(ForkOptions {
 				archive_pack_search_depth: 16,
 				archive_max_extracted_bytes: 1024 * 1024 * 1024 * 1024,
+				mcchanges_download: true,
+				mcchanges_nowifi: false,
 				bulk: None,
 				log: None
 			})

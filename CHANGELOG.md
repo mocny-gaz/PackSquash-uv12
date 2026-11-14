@@ -38,6 +38,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   tar.bz2; other kinds give a zip), compressed as much as possible, with the same folders that the archive has, instead
   of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
+- `mcchanges_download` (on by default) and `mcchanges_nowifi`: when `mcchanges_path` is not set, PackSquash finds the mcchanges jar next to
+  the program, in the input folder or in the output folder, and downloads the newest one with curl. A downloaded jar is deleted when
+  PackSquash ends. Without a jar, it says so and goes on.
 - `skip_unused_optifine_entries`: leaves out the OptiFine connected textures, custom items, custom animations, custom GUIs and
   custom colors entries whose files are all missing from the pack, and the numbered connected textures tiles that no entry
   uses. It keeps what the game or another pack can provide, and what it can not tell for sure.

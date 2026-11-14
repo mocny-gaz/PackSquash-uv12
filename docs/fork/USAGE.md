@@ -64,6 +64,8 @@ The options that this fork adds:
 | Option | Default | What it does |
 | :--- | :--- | :--- |
 | `mcchanges_path` | not set, so **off** | Leaves out the pack files that are identical to the game files in this jar, ZIP file, or folder. |
+| `mcchanges_download` | `true` | When `mcchanges_path` is not set, finds the mcchanges jar next to the program, in the input folder or in the output folder, and downloads the newest with curl. A downloaded jar is deleted at the end. `false` turns it off. |
+| `mcchanges_nowifi` | `false` | Only searches for the jar, without the network. |
 | `mcchanges_version` | not set, so **every version** | The game version to compare with. If it is not set or empty, each file is compared with the same file in every version that changed it. `auto` chooses the one best matching version. An error for any other path. |
 | `skip_language_keys_identical_to_mcchanges` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
 | `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |

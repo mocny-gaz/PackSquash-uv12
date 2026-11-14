@@ -1,6 +1,10 @@
 MCCHANGES JAR GUIDE
 ===================
 
+You do not need to do this by hand. When mcchanges_path is not set, PackSquash finds the jar next to itself, in the
+input folder or in the output folder, and downloads the newest one with curl. A downloaded jar is deleted when
+PackSquash ends. mcchanges_nowifi = true only searches, and mcchanges_download = false turns it all off.
+
 The mcchanges jar tells PackSquash which files of your pack are the same as the
 game's files. PackSquash leaves those files out. This page says where the jars
 come from. The full usage guide is docs/fork/USAGE.md.

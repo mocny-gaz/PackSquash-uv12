@@ -30,6 +30,7 @@ mod bulk;
 mod debug_log;
 mod error_hints;
 mod fork_options;
+mod mcchanges_auto;
 mod terminal_style;
 mod terminal_title_controller;
 mod terminal_title_setter;
@@ -211,7 +212,7 @@ fn read_options_file_and_squash(
 	};
 
 	// Deserialize the options struct contained in the string
-	let (mut squash_options, fork_options, options_table) = match parse_options(&options_string) {
+	let (mut squash_options, fork_options, mut options_table) = match parse_options(&options_string) {
 		Ok(parsed_options) => parsed_options,
 		Err(deserialize_error) => {
 			error!(
@@ -231,6 +232,9 @@ fn read_options_file_and_squash(
 			&squash_options.pack_directory
 		);
 	}
+
+	let _mcchanges_jar =
+		mcchanges_auto::prepare(&fork_options, &mut squash_options, &mut options_table);
 
 	if let Some(bulk_options) = &fork_options.bulk {
 		if options_table.contains_key("pack_directory")

@@ -29,6 +29,8 @@
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
   - [`pack_edition`](#pack_edition)
+  - [`mcchanges_download`](#mcchanges_download)
+  - [`mcchanges_nowifi`](#mcchanges_nowifi)
   - [`mcchanges_path`](#mcchanges_path)
   - [`mcchanges_version`](#mcchanges_version)
   - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
@@ -612,6 +614,33 @@ Example:
 pack_edition = 'bedrock'
 output_file_path = 'pack.mcpack'
 ```
+
+### `mcchanges_download`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `true`
+
+When [`mcchanges_path`](#mcchanges_path) is not set, PackSquash finds the mcchanges jar (`mcchanges-java.jar`, or
+`mcchanges-bedrock.jar` for a Bedrock pack) in the folder of the program, in the input folder and in the output
+folder, and downloads the newest one from the Releases of mc-changes with `curl`, which Windows 10 and 11 have. A
+jar that was found is only replaced when the newest one is newer. A downloaded jar is a temporary file, and PackSquash
+deletes it when it ends. A jar that was found is never deleted.
+
+If the download fails and a jar was found, the jar that was found is used. If there is none, PackSquash says so and
+goes on without it, so the files that the game already has are not skipped. In the bulk mode, this happens once.
+
+Set it to `false` to turn all of this off. If `mcchanges_path` is set, this option does nothing.
+
+### `mcchanges_nowifi`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `false`
+
+If `true`, PackSquash does not use the network for the mcchanges jar: it only searches for it in the folder of the
+program, in the input folder and in the output folder, and uses the one it finds. See
+[`mcchanges_download`](#mcchanges_download).
 
 ### `mcchanges_path`
 
