@@ -15,13 +15,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `unrar`). The format and the pack are found by looking at the contents, also inside a
   subdirectory. The pack is extracted to a temporary directory that is deleted at the end.
   Links and unsafe names are never extracted. New command-line options:
-  `archive_pack_search_depth` and `archive_max_extracted_mib`.
+  `archive_depth` and `archive_max_mib`.
 - Bulk mode: `bulk_input_directory` squashes every pack (directory or archive) found in a
   directory, with each result next to its input as `squashed_NAME.zip`. Options: `bulk_output_prefix`,
   `bulk_output_suffix`, `bulk_overwrite` (replaces archives, atomically, with `bulk_backup` on by
   default), `bulk_dry_run`, `bulk_report_file`, `bulk_archive_extensions` and `bulk_scan_depth`.
   A failed pack does not stop the others.
-- `skip_optifine_sky_entries_with_missing_images` leaves out OptiFine custom sky entries whose image
+- `optifine_sky_fix` leaves out OptiFine custom sky entries whose image
   (in `assets/minecraft/optifine`) is not in the pack, which new OptiFine versions draw as a pink and black
   texture. An entry that a later numbered entry needs is kept, because OptiFine stops loading at the first
   missing number. Not for packs that are still being made.
@@ -30,7 +30,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   were compared, archive details, helper program output, and every error with its causes. The library sends the
   details to the `log` crate with the target `debuglog`, which the console does not show.
 - In the bulk mode, packs are searched inside archives as deep as `bulk_scan_depth` (at least
-  `archive_pack_search_depth`), not only 4 levels. The search is logged.
+  `archive_depth`), not only 4 levels. The search is logged.
 - `bulk_input_directory` can be a single archive file of any format, not only a directory. A file that is
   not an archive is an error that says so, instead of "is not a directory".
 - Bulk mode opens archives inside archives (as many levels as `bulk_scan_depth`, at most 32, never the ones inside a pack), with the
@@ -38,10 +38,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   tar.bz2; other kinds give a zip), compressed as much as possible, with the same folders that the archive has, instead
   of many files next to it. Archives inside
   archives are extracted a few at a time and deleted when done. The progress is printed as each pack ends.
+- Shorter option names. The old names still work: `skip_optifine_sky_entries_with_missing_images` is now `optifine_sky_fix`, `skip_unused_optifine_sky_images` is now `optifine_sky_unused`, `merge_identical_optifine_sky_images` is now `optifine_sky_merge`, `skip_unused_optifine_entries` is now `optifine_unused`, `skip_language_keys_identical_to_mcchanges` is now `mcchanges_skip_lang`, `include_unrecognized_asset_files` is now `keep_unknown_files`, `archive_pack_search_depth` is now `archive_depth`, `archive_max_extracted_mib` is now `archive_max_mib`.
 - `mcchanges_download` (on by default) and `mcchanges_nowifi`: when `mcchanges_path` is not set, PackSquash finds the mcchanges jar next to
   the program, in the input folder or in the output folder, and downloads the newest one with curl. A downloaded jar is deleted when
   PackSquash ends. Without a jar, it says so and goes on.
-- `skip_unused_optifine_entries`: leaves out the OptiFine connected textures, custom items, custom animations, custom GUIs and
+- `optifine_unused`: leaves out the OptiFine connected textures, custom items, custom animations, custom GUIs and
   custom colors entries whose files are all missing from the pack, and the numbered connected textures tiles that no entry
   uses. It keeps what the game or another pack can provide, and what it can not tell for sure.
 - `maximum_width_and_height` is ignored: images of any size are accepted. A tall strip of animation frames or a very big
@@ -55,9 +56,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   supported`) is read with the helper program (7-Zip, bsdtar), like RAR. The error says why, when none works.
 - `copy_failed_files` (on by default): a file that can not be optimized (not Vorbis audio, a `pack.png` that is not a
   PNG, a PNG that is too big, invalid JSON or language files) is copied as it is, with a notice, instead of failing the
-  pack. It only works for a failure that happens before anything of the file was written. `include_unrecognized_asset_files`
+  pack. It only works for a failure that happens before anything of the file was written. `keep_unknown_files`
   is now on by default.
-- `include_unrecognized_asset_files` keeps every file in a directory of `assets` (any namespace, so
+- `keep_unknown_files` keeps every file in a directory of `assets` (any namespace, so
   mods keep working), copying the files that PackSquash does not recognize as they are, instead of
   skipping them.
 - `mcchanges_path` can be a folder that has the mcchanges jar from the mc-changes downloads, with the exact
@@ -168,12 +169,12 @@ about four times smaller. The `langkeys:` token still works.
 - The new `mcchanges_version` global option selects the game version to use
 from a mcchanges pack that holds many versions, described by a `mcchanges.json`
 file at its root. Versions only store the files they added or changed.
-- The new `skip_language_keys_identical_to_mcchanges` global option, enabled by
+- The new `mcchanges_skip_lang` global option, enabled by
 default, removes the entries of `.json` and `.lang` language files that have the
 same value in the language file of the mcchanges pack, and leaves out the files
 that end up empty. For more details, please see
 [#197](https://github.com/ComunidadAylas/PackSquash/issues/197).
-- The new `skip_unused_optifine_sky_images` global option leaves OptiFine
+- The new `optifine_sky_unused` global option leaves OptiFine
 custom sky images that no sky entry names out of the result ZIP file. It only
 has an effect when OptiFine support is enabled in `allow_mods`.
 - The new `copy_as_is` file option copies the files that match its glob to the
@@ -181,7 +182,7 @@ generated ZIP file exactly as they are, even if PackSquash knows how to optimize
 them. It is the way to leave specific files out of the optimization, as asked in
 [#338](https://github.com/ComunidadAylas/PackSquash/issues/338) and
 [#368](https://github.com/ComunidadAylas/PackSquash/issues/368).
-- The new `merge_identical_optifine_sky_images` global option merges the
+- The new `optifine_sky_merge` global option merges the
 OptiFine custom sky images of a directory that have identical bytes, leaves the
 duplicates out of the result ZIP file, and updates the sky entries of that
 directory to use the kept image. It only has an effect when OptiFine support is

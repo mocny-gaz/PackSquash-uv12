@@ -23,7 +23,7 @@
   - [`work_around_minecraft_quirks`](#work_around_minecraft_quirks)
   - [`automatic_asset_types_mask_detection`](#automatic_asset_types_mask_detection)
   - [`allow_mods`](#allow_mods)
-  - [`include_unrecognized_asset_files`](#include_unrecognized_asset_files)
+  - [`keep_unknown_files`](#keep_unknown_files)
   - [`copy_failed_files`](#copy_failed_files)
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
@@ -33,13 +33,13 @@
   - [`mcchanges_nowifi`](#mcchanges_nowifi)
   - [`mcchanges_path`](#mcchanges_path)
   - [`mcchanges_version`](#mcchanges_version)
-  - [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
-  - [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
-  - [`merge_identical_optifine_sky_images`](#merge_identical_optifine_sky_images)
-  - [`skip_optifine_sky_entries_with_missing_images`](#skip_optifine_sky_entries_with_missing_images)
-  - [`skip_unused_optifine_entries`](#skip_unused_optifine_entries)
-  - [`archive_pack_search_depth`](#archive_pack_search_depth)
-  - [`archive_max_extracted_mib`](#archive_max_extracted_mib)
+  - [`mcchanges_skip_lang`](#mcchanges_skip_lang)
+  - [`optifine_sky_unused`](#optifine_sky_unused)
+  - [`optifine_sky_merge`](#optifine_sky_merge)
+  - [`optifine_sky_fix`](#optifine_sky_fix)
+  - [`optifine_unused`](#optifine_unused)
+  - [`archive_depth`](#archive_depth)
+  - [`archive_max_mib`](#archive_max_mib)
   - [`bulk_input_directory`](#bulk_input_directory)
   - [`bulk_output_directory`](#bulk_output_directory)
   - [`bulk_output_prefix`](#bulk_output_prefix)
@@ -173,7 +173,7 @@ variable.
 The pack in the archive is the directory that has a `pack.mcmeta` file and an
 `assets` or `data` directory, or the directory of a Bedrock Edition resource
 pack `manifest.json`. It can be in a subdirectory of the archive. See
-[`archive_pack_search_depth`](#archive_pack_search_depth). An archive can have
+[`archive_depth`](#archive_depth). An archive can have
 only one pack: PackSquash stops with an error that lists the packs if it finds
 more.
 
@@ -468,7 +468,9 @@ allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 for mods, which always is the case if you use a PackSquash build downloaded from
 this repository.</sup></sub>
 
-### `include_unrecognized_asset_files`
+### `keep_unknown_files`
+
+The old name `include_unrecognized_asset_files` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -492,7 +494,7 @@ of the pack, or any file of `data`, are skipped as usual. To add them, use the
 Example:
 
 ```toml
-include_unrecognized_asset_files = true
+keep_unknown_files = true
 ```
 
 ### `copy_failed_files`
@@ -606,7 +608,7 @@ Bedrock Edition support has its own rules, which are described in [Bedrock
 Edition packs](Bedrock-Edition-packs.md). The Java Edition specific options
 (`allow_mods`, `automatic_minecraft_quirks_detection`,
 `work_around_minecraft_quirks`, `automatic_asset_types_mask_detection`, and
-`skip_unused_optifine_sky_images`) do not apply to Bedrock Edition packs.
+`optifine_sky_unused`) do not apply to Bedrock Edition packs.
 
 Example:
 
@@ -773,7 +775,7 @@ root, with this structure:
     the files of the version holds a 12 byte hash of every key and value of the
     file, and the digest is the SHA-256 digest of that file. With these hashes
     PackSquash can still remove the keys that are identical to the game, as
-    [`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
+    [`mcchanges_skip_lang`](#mcchanges_skip_lang)
     describes. A whole language file that is identical is dropped by that option.
   - `langfull:<digest>` and `langdelta:<digest>`: the compact form of `langkeys:`. The
     `<path>.langkeys` file next to the files of the version holds 8 byte hashes, and the
@@ -810,7 +812,9 @@ mcchanges_path = 'C:\path\to\mcchanges.jar'
 mcchanges_version = '1.21.4'
 ```
 
-### `skip_language_keys_identical_to_mcchanges`
+### `mcchanges_skip_lang`
+
+The old name `skip_language_keys_identical_to_mcchanges` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -836,7 +840,9 @@ Please note that:
 
 This option has no effect if `mcchanges_path` is not set.
 
-### `skip_unused_optifine_sky_images`
+### `optifine_sky_unused`
+
+The old name `skip_unused_optifine_sky_images` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -856,10 +862,12 @@ Example:
 
 ```toml
 allow_mods = ['OptiFine']
-skip_unused_optifine_sky_images = true
+optifine_sky_unused = true
 ```
 
-### `merge_identical_optifine_sky_images`
+### `optifine_sky_merge`
+
+The old name `merge_identical_optifine_sky_images` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -879,7 +887,7 @@ directory that have identical bytes into one:
   name, because that entry may mean another image.
 
 Images that are identical but sit in different directories are different images,
-and are not merged. [`skip_unused_optifine_sky_images`](#skip_unused_optifine_sky_images)
+and are not merged. [`optifine_sky_unused`](#optifine_sky_unused)
 can be combined with this option. Unused images are then found after the merge.
 
 This option has no effect unless [`allow_mods`](#allow_mods) contains
@@ -889,10 +897,12 @@ Example:
 
 ```toml
 allow_mods = ['OptiFine']
-merge_identical_optifine_sky_images = true
+optifine_sky_merge = true
 ```
 
-### `skip_optifine_sky_entries_with_missing_images`
+### `optifine_sky_fix`
+
+The old name `skip_optifine_sky_entries_with_missing_images` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -930,10 +940,12 @@ Example:
 
 ```toml
 allow_mods = ['OptiFine']
-skip_optifine_sky_entries_with_missing_images = true
+optifine_sky_fix = true
 ```
 
-### `skip_unused_optifine_entries`
+### `optifine_unused`
+
+The old name `skip_unused_optifine_entries` still works.
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
 
@@ -955,7 +967,9 @@ left out. The custom sky entries have their own options.
 
 This option has no effect unless [`allow_mods`](#allow_mods) contains OptiFine.
 
-### `archive_pack_search_depth`
+### `archive_depth`
+
+The old name `archive_pack_search_depth` still works.
 
 **Type**: [Integer](https://toml.io/en/v1.0.0#integer), from 1 to 16
 
@@ -972,10 +986,12 @@ Example:
 
 ```toml
 pack_directory = 'C:\path\to\pack.7z'
-archive_pack_search_depth = 6
+archive_depth = 6
 ```
 
-### `archive_max_extracted_mib`
+### `archive_max_mib`
+
+The old name `archive_max_extracted_mib` still works.
 
 **Type**: [Integer](https://toml.io/en/v1.0.0#integer), from 1 to 1048576
 
@@ -992,7 +1008,7 @@ Example:
 
 ```toml
 pack_directory = 'C:\path\to\pack.zip'
-archive_max_extracted_mib = 2048
+archive_max_mib = 2048
 ```
 
 ### `bulk_input_directory`
@@ -1160,7 +1176,7 @@ How many directory levels below [`bulk_input_directory`](#bulk_input_directory) 
 mode searches. A pack or an archive directly in the input directory is at level 1. It is
 also how many levels deep the bulk mode looks for packs inside an archive, so a pack that
 is 10 folders deep in a `.7z` file is found with a value of 10 or more. For archives, the
-value of [`archive_pack_search_depth`](#archive_pack_search_depth) is used if it is higher.
+value of [`archive_depth`](#archive_depth) is used if it is higher.
 
 The same number is how many archives can be inside each other: with `2`, an archive inside
 an archive is opened, and one more level is skipped, with a line in the report that says so.
@@ -2426,7 +2442,7 @@ PackSquash can still optimize how the file is stored in the ZIP file. If a file
 is broken by PackSquash, please also report it, so it can be fixed for everyone.
 
 Files that are copied as-is are not changed by
-[`skip_language_keys_identical_to_mcchanges`](#skip_language_keys_identical_to_mcchanges)
+[`mcchanges_skip_lang`](#mcchanges_skip_lang)
 or by the OptiFine custom sky options. Make sure that these options do not leave
 out files that a copied file needs, like a sky image that a copied sky entry uses.
 Do not combine `copy_as_is` with the options of a specific file type for the
@@ -2562,9 +2578,9 @@ validate_pack_metadata_file = true
 ignore_system_and_hidden_files = false
 mcchanges_path = 'C:\path\to\mcchanges.jar'
 mcchanges_version = '1.8.9'
-skip_language_keys_identical_to_mcchanges = true
-skip_unused_optifine_sky_images = true
-merge_identical_optifine_sky_images = true
+mcchanges_skip_lang = true
+optifine_sky_unused = true
+optifine_sky_merge = true
 zip_spec_conformance_level = 'high'
 # These two are actually ignored due to the ZIP spec conformance level
 size_increasing_zip_obfuscation = true

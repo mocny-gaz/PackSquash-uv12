@@ -558,7 +558,7 @@ fn prepare_archive_input(
 				return Err(format!(
 					"No pack was found in the archive {display}. A pack has a pack.mcmeta file and an \
 					assets or data directory, or a manifest.json file of a Bedrock Edition resource pack. \
-					It can be at most {depth} directories deep, which archive_pack_search_depth changes"
+					It can be at most {depth} directories deep, which archive_depth changes"
 				));
 			}
 			1 => {}

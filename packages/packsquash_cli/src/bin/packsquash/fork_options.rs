@@ -9,9 +9,11 @@ use packsquash::pack_archive::{DEFAULT_MAX_EXTRACTED_BYTES, DEFAULT_MAX_PACK_DEP
 use toml::{Table, Value};
 
 /// The name of the option that sets how many directory levels are searched for a pack in an archive.
-const ARCHIVE_PACK_SEARCH_DEPTH: &str = "archive_pack_search_depth";
+const ARCHIVE_PACK_SEARCH_DEPTH: &str = "archive_depth";
+const OLD_ARCHIVE_PACK_SEARCH_DEPTH: &str = "archive_pack_search_depth";
 /// The name of the option that limits how much data is extracted from an archive.
-const ARCHIVE_MAX_EXTRACTED_MIB: &str = "archive_max_extracted_mib";
+const ARCHIVE_MAX_EXTRACTED_MIB: &str = "archive_max_mib";
+const OLD_ARCHIVE_MAX_EXTRACTED_MIB: &str = "archive_max_extracted_mib";
 
 /// The most directory levels that `archive_pack_search_depth` accepts.
 const MAX_SEARCH_DEPTH: i64 = 16;
@@ -166,7 +168,9 @@ impl Default for ForkOptions {
 /// Tells whether the options table has any option that only the command-line program reads.
 pub fn has_fork_options(table: &Table) -> bool {
 	table.contains_key(ARCHIVE_PACK_SEARCH_DEPTH)
+		|| table.contains_key(OLD_ARCHIVE_PACK_SEARCH_DEPTH)
 		|| table.contains_key(ARCHIVE_MAX_EXTRACTED_MIB)
+		|| table.contains_key(OLD_ARCHIVE_MAX_EXTRACTED_MIB)
 		|| BULK_OPTIONS.iter().any(|name| table.contains_key(*name))
 		|| table.contains_key(MCCHANGES_DOWNLOAD)
 		|| table.contains_key(MCCHANGES_NOWIFI)
@@ -359,11 +363,15 @@ fn take_bulk_options(table: &mut Table) -> Result<Option<BulkOptions>, String> {
 pub fn split_fork_options(table: &mut Table) -> Result<ForkOptions, String> {
 	let mut options = ForkOptions::default();
 
-	if let Some(depth) = take_integer(table, ARCHIVE_PACK_SEARCH_DEPTH, MAX_SEARCH_DEPTH)? {
+	if let Some(depth) = take_integer(table, ARCHIVE_PACK_SEARCH_DEPTH, MAX_SEARCH_DEPTH)?.or(
+		take_integer(table, OLD_ARCHIVE_PACK_SEARCH_DEPTH, MAX_SEARCH_DEPTH)?
+	) {
 		options.archive_pack_search_depth = depth as usize;
 	}
 
-	if let Some(mebibytes) = take_integer(table, ARCHIVE_MAX_EXTRACTED_MIB, MAX_EXTRACTED_MIB)? {
+	if let Some(mebibytes) = take_integer(table, ARCHIVE_MAX_EXTRACTED_MIB, MAX_EXTRACTED_MIB)?.or(
+		take_integer(table, OLD_ARCHIVE_MAX_EXTRACTED_MIB, MAX_EXTRACTED_MIB)?
+	) {
 		options.archive_max_extracted_bytes = mebibytes as u64 * 1024 * 1024;
 	}
 
@@ -528,6 +536,41 @@ mod tests {
 		assert!(!options.mcchanges_download && options.mcchanges_nowifi);
 		assert!(ForkOptions::default().mcchanges_download);
 		assert!(!ForkOptions::default().mcchanges_nowifi);
+	}
+
+	#[test]
+	fn the_new_and_the_old_names_of_the_options_work() {
+		for (names, depth) in [
+			("archive_depth = 3\narchive_max_mib = 2", 3),
+			(
+				"archive_pack_search_depth = 3\narchive_max_extracted_mib = 2",
+				3
+			)
+		] {
+			let mut options = table(names);
+			let options = split_fork_options(&mut options).unwrap();
+
+			assert_eq!(options.archive_pack_search_depth, depth);
+			assert_eq!(options.archive_max_extracted_bytes, 2 * 1024 * 1024);
+		}
+
+		for text in [
+			"optifine_sky_fix = true\noptifine_sky_unused = true\noptifine_sky_merge = true\noptifine_unused = true\nmcchanges_skip_lang = true\nkeep_unknown_files = false",
+			"skip_optifine_sky_entries_with_missing_images = true\nskip_unused_optifine_sky_images = true\nmerge_identical_optifine_sky_images = true\nskip_unused_optifine_entries = true\nskip_language_keys_identical_to_mcchanges = true\ninclude_unrecognized_asset_files = false"
+		] {
+			let (squash_options, ..) =
+				crate::parse_options(&format!("pack_directory = 'in'\n{text}")).unwrap();
+			let global = squash_options.global_options;
+
+			assert!(
+				global.skip_optifine_sky_entries_with_missing_images
+					&& global.skip_unused_optifine_sky_images
+					&& global.merge_identical_optifine_sky_images
+					&& global.skip_unused_optifine_entries
+					&& global.skip_language_keys_identical_to_mcchanges
+					&& !global.include_unrecognized_asset_files
+			);
+		}
 	}
 
 	#[test]

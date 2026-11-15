@@ -67,17 +67,17 @@ The options that this fork adds:
 | `mcchanges_download` | `true` | When `mcchanges_path` is not set, finds the mcchanges jar next to the program, in the input folder or in the output folder, and downloads the newest with curl. A downloaded jar is deleted at the end. `false` turns it off. |
 | `mcchanges_nowifi` | `false` | Only searches for the jar, without the network. |
 | `mcchanges_version` | not set, so **every version** | The game version to compare with. If it is not set or empty, each file is compared with the same file in every version that changed it. `auto` chooses the one best matching version. An error for any other path. |
-| `skip_language_keys_identical_to_mcchanges` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
-| `skip_unused_optifine_sky_images` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
-| `merge_identical_optifine_sky_images` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
-| `skip_optifine_sky_entries_with_missing_images` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
-| `skip_unused_optifine_entries` | `false` | Leaves out OptiFine connected textures, custom items, animations, GUIs and colors entries whose files are missing, and unused connected textures tiles. Not for packs that are still being made. |
+| `mcchanges_skip_lang` | `true` | Removes language lines that have the value of the game. Works only when `mcchanges_path` is set. |
+| `optifine_sky_unused` | `false` | Leaves out OptiFine sky images that no sky entry uses. Needs `allow_mods = ['OptiFine']`. |
+| `optifine_sky_merge` | `false` | Stores identical OptiFine sky images once. Needs `allow_mods = ['OptiFine']`. |
+| `optifine_sky_fix` | `false` | Leaves out OptiFine sky entries whose image is not in the pack. Needs `allow_mods = ['OptiFine']`. Not for packs that are still being made. |
+| `optifine_unused` | `false` | Leaves out OptiFine connected textures, custom items, animations, GUIs and colors entries whose files are missing, and unused connected textures tiles. Not for packs that are still being made. |
 | `pack_edition` | `'auto'` | `'auto'` treats a pack with `manifest.json` and no `pack.mcmeta` as a Bedrock Edition pack. Other values are `'java'` and `'bedrock'`. |
 | `copy_as_is` (file option) | `false` | When `true`, copies the files that match the glob exactly as they are. |
-| `include_unrecognized_asset_files` | `true` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. Set to `false` to skip them. |
+| `keep_unknown_files` | `true` | Keeps every file in a folder of `assets` (any namespace, so mods work), copying the ones that PackSquash does not know. Set to `false` to skip them. |
 | `copy_failed_files` | `true` | A file that can not be optimized is copied as it is, with a notice, instead of failing the pack. |
-| `archive_pack_search_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
-| `archive_max_extracted_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
+| `archive_depth` | `4` | How many directory levels are searched for the pack when `pack_directory` is an archive. |
+| `archive_max_mib` | `16384` | The most data, in MiB, that is extracted from an archive. |
 | `bulk_input_directory` | not set, so **off** | Squashes every pack found in this folder. |
 | `bulk_output_directory` | not set | Where the results go, with the same folders as the input and no prefix. |
 | `bulk_output_prefix` | `'squashed_'` (`''` with `bulk_output_directory`) | Start of every result name in the bulk mode. |
@@ -118,7 +118,7 @@ output_file_path = 'C:\packs\my_pack.zip'
   `PATH`.
 - PackSquash finds the format by looking inside the file. The name does not matter.
 - The pack is the directory with `pack.mcmeta` and `assets` or `data`, or with a Bedrock
-  `manifest.json`. It can be in a subfolder of the archive, up to `archive_pack_search_depth`
+  `manifest.json`. It can be in a subfolder of the archive, up to `archive_depth`
   levels deep.
 - One pack per run. If the archive has more, PackSquash lists them and stops.
 - The pack is extracted to a temporary folder, which is deleted at the end. You need free disk
@@ -129,8 +129,8 @@ output_file_path = 'C:\packs\my_pack.zip'
 To look deeper, or to allow more data:
 
 ```toml
-archive_pack_search_depth = 6
-archive_max_extracted_mib = 32768
+archive_depth = 6
+archive_max_mib = 32768
 ```
 
 ## Bulk: every pack in a folder
@@ -284,7 +284,7 @@ A language file with no line left is left out.
 To keep all language lines, turn it off:
 
 ```toml
-skip_language_keys_identical_to_mcchanges = false
+mcchanges_skip_lang = false
 ```
 
 Files that you mark with `copy_as_is` are never changed by this option.
@@ -304,13 +304,13 @@ Both options need OptiFine support:
 
 ```toml
 allow_mods = ['OptiFine']
-skip_unused_optifine_sky_images = true
-merge_identical_optifine_sky_images = true
+optifine_sky_unused = true
+optifine_sky_merge = true
 ```
 
-- `skip_unused_optifine_sky_images` leaves out sky images that no sky entry
+- `optifine_sky_unused` leaves out sky images that no sky entry
   names.
-- `merge_identical_optifine_sky_images` keeps the first of several identical
+- `optifine_sky_merge` keeps the first of several identical
   images in a directory and points the sky entries to it. Unused images are
   found after the merge.
 
@@ -318,7 +318,7 @@ A third option fixes the skies of finished packs:
 
 ```toml
 allow_mods = ['OptiFine']
-skip_optifine_sky_entries_with_missing_images = true
+optifine_sky_fix = true
 ```
 
 If `sky3.properties` names `aurora.png` and the pack does not have that file, old
@@ -343,7 +343,7 @@ is copied as it is, with a notice, and does not fail the pack (`copy_failed_file
 This is on by default in this fork. To turn it off:
 
 ```toml
-include_unrecognized_asset_files = false
+keep_unknown_files = false
 ```
 
 Every file in a folder of `assets`, like `assets/minecraft` or `assets/some_mod`, is then
@@ -404,7 +404,7 @@ packsquash.exe packsquash.toml
 | Files that you expected to be left out stay in | The version is wrong, or the file really differs from the game file. See which files are skipped: run `set PACKSQUASH_LOG=trace` in cmd, then run the program again. |
 | The pack looks wrong in the game | Put the files back with `copy_as_is`, turn off `mcchanges_path`, and open an issue in this repository with the options file. |
 | `is a file, but not an archive that PackSquash can read` | `pack_directory` points to a file that is not a ZIP, 7z, TAR or RAR archive. |
-| `No pack was found in the archive` | The archive has no `pack.mcmeta` with `assets` or `data`, or the pack is deeper than 4 levels. Raise `archive_pack_search_depth`. |
+| `No pack was found in the archive` | The archive has no `pack.mcmeta` with `assets` or `data`, or the pack is deeper than 4 levels. Raise `archive_depth`. |
 | `The archive ... has 2 packs` | One run squashes one pack. Extract the one you want, or make an archive with only that pack. |
 | `this archive needs a helper program` | RAR files need `bsdtar`, `7z` or `unrar`. Install 7-Zip and add its folder to the `PATH`. |
 | `PackSquash can not read this ZIP archive (Multi-disk ZIP files are not supported)` | The ZIP is made in a way that the built-in reader does not support. 7-Zip reads it: install it and add its folder to the `PATH`. |
@@ -413,7 +413,7 @@ packsquash.exe packsquash.toml
 | `another pack already has the result ...` | Two packs in the same folder have the same name, like `X` and `X.zip`. Rename one. |
 | `already exists and it is not the pack` | `bulk_overwrite` does not replace a file that is not the original. Move that file. |
 | `the backup ... already exists` | A `NAME.ext.original` file is there from an earlier run. Move it, or set `bulk_backup = false`. |
-| `the archive is too big` | The pack is bigger than `archive_max_extracted_mib`. Raise it. |
+| `the archive is too big` | The pack is bigger than `archive_max_mib`. Raise it. |
 
 Report problems with the fork in
 [this repository](https://github.com/mocny-gaz/PackSquash-uv12/issues), not in

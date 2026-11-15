@@ -759,7 +759,7 @@ impl PackSquasher {
 							optifine_unused.skip_reason(pack_file_data.relative_path.as_str())
 					{
 						detail!(
-							"{}: left out by skip_unused_optifine_entries: {skip_reason}",
+							"{}: left out by optifine_unused: {skip_reason}",
 							pack_file_data.relative_path.as_str()
 						);
 
@@ -993,7 +993,7 @@ impl PackSquasher {
 						.await
 					{
 						detail!(
-							"{}: kept as it is, because include_unrecognized_asset_files is on",
+							"{}: kept as it is, because keep_unknown_files is on",
 							pack_file_data.relative_path.as_str()
 						);
 

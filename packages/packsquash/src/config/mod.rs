@@ -265,6 +265,10 @@ pub struct GlobalOptions {
 	/// This option has no effect if `mcchanges_path` is not set.
 	///
 	/// **Default value**: `true`
+	#[serde(
+		rename = "mcchanges_skip_lang",
+		alias = "skip_language_keys_identical_to_mcchanges"
+	)]
 	pub skip_language_keys_identical_to_mcchanges: bool,
 	/// OptiFine custom sky entries are defined in `.properties` files that name the image they
 	/// use. Packs sometimes ship sky images that no entry names, either because they are
@@ -277,6 +281,10 @@ pub struct GlobalOptions {
 	/// **Default value**: `false`
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
+	#[serde(
+		rename = "optifine_sky_unused",
+		alias = "skip_unused_optifine_sky_images"
+	)]
 	pub skip_unused_optifine_sky_images: bool,
 	/// OptiFine custom sky entries name the image they use, and packs sometimes ship the same image
 	/// several times under different names. When this option is enabled, PackSquash merges the
@@ -291,6 +299,10 @@ pub struct GlobalOptions {
 	/// **Default value**: `false`
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
+	#[serde(
+		rename = "optifine_sky_merge",
+		alias = "merge_identical_optifine_sky_images"
+	)]
 	pub merge_identical_optifine_sky_images: bool,
 	/// OptiFine custom sky entries are `.properties` files that name an image, which can be in any
 	/// directory of the pack. If the image is not in the pack, old versions of OptiFine ignore the
@@ -312,6 +324,10 @@ pub struct GlobalOptions {
 	/// **Default value**: `false`
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
+	#[serde(
+		rename = "optifine_sky_fix",
+		alias = "skip_optifine_sky_entries_with_missing_images"
+	)]
 	pub skip_optifine_sky_entries_with_missing_images: bool,
 	/// If `true`, PackSquash leaves out the OptiFine entries that are not connected to anything: connected textures,
 	/// custom items, custom animations, custom GUIs and custom colors entries whose files are all missing from the
@@ -324,6 +340,7 @@ pub struct GlobalOptions {
 	/// **Default value**: `false`
 	#[cfg(feature = "optifine")]
 	#[doc(cfg(feature = "optifine"))]
+	#[serde(rename = "optifine_unused", alias = "skip_unused_optifine_entries")]
 	pub skip_unused_optifine_entries: bool,
 	/// If PackSquash can not optimize a file, because the file is not what its extension says (like an `.ogg`
 	/// file that does not have Vorbis audio), is damaged, or is not supported, it copies the file to the
@@ -345,6 +362,10 @@ pub struct GlobalOptions {
 	/// no effect on Bedrock Edition packs.
 	///
 	/// **Default value**: `true`
+	#[serde(
+		rename = "keep_unknown_files",
+		alias = "include_unrecognized_asset_files"
+	)]
 	pub include_unrecognized_asset_files: bool,
 	/// PackSquash supports pack files added by mods, but, in the interest of keeping its output as
 	/// lean as possible by default, you should indicate what mods do you want to support and include

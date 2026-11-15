@@ -33,10 +33,10 @@ guessed. Keep it up to date: update it in the same patch that changes the work.
 
 | # | Subject | What it contains |
 | :-- | :--- | :--- |
-| 1 | skip pack files identical to a baseline pack and unused OptiFine sky images | The first mcchanges feature (issue 402) and `skip_unused_optifine_sky_images`, plus `PackFileStatus::intentionally_skipped`. |
+| 1 | skip pack files identical to a baseline pack and unused OptiFine sky images | The first mcchanges feature (issue 402) and `optifine_sky_unused`, plus `PackFileStatus::intentionally_skipped`. |
 | 2 | remove language keys identical to a baseline pack and support versioned baseline packs | Language key removal (issue 197) and jars with many versions. |
 | 3 | support Bedrock Edition resource packs | Issue 266. New `bedrock_pack` module and wiki page. |
-| 4 | merge identical OptiFine sky images and document the fork | `merge_identical_optifine_sky_images`, README section, the tools folder. Clippy fixes. |
+| 4 | merge identical OptiFine sky images and document the fork | `optifine_sky_merge`, README section, the tools folder. Clippy fixes. |
 | 5 | rename baseline packs to mcchanges and add Bedrock Edition mcchanges jars | The rename, the rewritten jar builder for Java and Bedrock, ZIP64 support. |
 | 6 | add the copy_as_is file option and support #include in shaders | Issues 338, 368 and 397. |
 | 7 | store audio files of mcchanges jars as hashes | The `hashed` section and the `sha1` crate. |
@@ -112,7 +112,7 @@ A re-encoded sound does not match. Crate: `sha1` (new dependency, one lock entry
 
 ### 3.4 Language keys (original issue 197)
 
-Option `skip_language_keys_identical_to_mcchanges` (global, default `true`, needs
+Option `mcchanges_skip_lang` (global, default `true`, needs
 `mcchanges_path`). `McChanges::reduce_language_file` removes entries of
 `assets/<namespace>/lang/*.json` and `*.lang` whose value equals the vanilla value for
 the same key and path. For `.lang` files the last value of a repeated key counts, and
@@ -150,9 +150,9 @@ the pack folder has `manifest.json` and no `pack.mcmeta`/`pack.mcmetac`. Code:
 Code: `packages/packsquash/src/optifine_sky.rs`. Both options need `allow_mods` to
 contain OptiFine, and only look at `assets/minecraft/optifine/sky/`.
 
-- `skip_unused_optifine_sky_images`: a sky image is unused if no `.properties` file of
+- `optifine_sky_unused`: a sky image is unused if no `.properties` file of
   the sky directory mentions its file name. Does nothing if there are no entries.
-- `merge_identical_optifine_sky_images`: images with identical bytes (SHA-256) in the
+- `optifine_sky_merge`: images with identical bytes (SHA-256) in the
   same directory are merged into the first one in path order. Sky entries of that
   directory that mention the removed image are rewritten (whole file names only).
   Images mentioned from another directory are not merged. The unused check runs on the
@@ -191,7 +191,7 @@ The field is still called `found_unresolvable_moj_import`.
 - Pure Rust readers: `zip`, `sevenz-rust2`, `tar`, `bzip2` (libbz2-rs-sys), `lzma-rust2` (xz) and
   `ruzstd`. RAR is the only `ArchiveFormat::Helper` case: `extract_with_helper` runs `bsdtar`, `tar`,
   `7z`, `7zz`, `7za` or `unrar`, then `clean_helper_output` deletes links and checks the limits.
-- CLI: `fork_options.rs` reads and removes `archive_pack_search_depth` and `archive_max_extracted_mib`
+- CLI: `fork_options.rs` reads and removes `archive_depth` and `archive_max_mib`
   from the options table before `SquashOptions` is read (without them, the text is parsed directly,
   so error messages keep their line numbers). `prepare_archive_input` in `main.rs` runs when
   `pack_directory` is a file. Exit code 4 is an archive error.
@@ -244,7 +244,7 @@ The field is still called `found_unresolvable_moj_import`.
 ### 3.13 OptiFine sky entries with a missing image (r2)
 
 - `optifine_sky.rs`: `SkyImageOptimizer::scan` has a third flag, `skip_missing_image_entries`, from the global
-  option `skip_optifine_sky_entries_with_missing_images`. It collects all pack paths, reads the `source` of each
+  option `optifine_sky_fix`. It collects all pack paths, reads the `source` of each
   entry like a Java properties file (`source_property`: last one wins, comments, `=` `:` or space; a line that ends with a
   backslash makes the entry unclear, so it is kept), and resolves it like OptiFine does (`source_image_path`, from the
   official `sky.properties` doc: `path` is relative to assets/minecraft, `~/` to assets/minecraft/optifine, `./` to the
@@ -270,7 +270,7 @@ The field is still called `found_unresolvable_moj_import`.
 
 ### 3.15 Keep unrecognized asset files (r1 and r9)
 
-- Global option `include_unrecognized_asset_files` (`config/mod.rs`). In `lib.rs`, right before the "skipped" result of a
+- Global option `keep_unknown_files` (`config/mod.rs`). In `lib.rs`, right before the "skipped" result of a
   pack file, a file whose path is `assets/<namespace>/...` is processed with a custom asset match and
   `CustomFileOptions { force_include: true }`, like a file that the user force included (copied as it is). Not for Bedrock.
 - The owner asked for `assets/minecraft` (r1), then for any folder of `assets` (r9). `data` is not covered (he did not ask).
@@ -307,7 +307,7 @@ The field is still called `found_unresolvable_moj_import`.
   once, the rest when the buffer is full and at the end.
 - Tested: 3 library tests, 6 CLI tests (time format, line format, options), end to end runs with broken Ogg, PNG and ZIP files
   (the Vorbis error shows its library, function and kind).
-- r12 and r8: the bulk mode now uses `max(bulk_scan_depth, archive_pack_search_depth)` as the depth inside archives. The owner's
+- r12 and r8: the bulk mode now uses `max(bulk_scan_depth, archive_depth)` as the depth inside archives. The owner's
   "204" cap could not be reproduced with 300 packs in a 7z, a ZIP or a folder, so it is probably this depth, or data specific:
   the bulk search is logged ("not searched, because it is deeper than bulk_scan_depth", "Bulk search done: N packs").
 
@@ -328,7 +328,7 @@ The field is still called `found_unresolvable_moj_import`.
   the first chunk of the stream (peeked before anything is added to the ZIP file), it returns the error. `match_and_process_pack_file`
   then calls `copy_after_failure`, which processes the file again as a force included custom file (a pass through copy), sends a notice,
   and sets the strategy to "Copied as it is, because optimizing it failed: ...". Errors after the first chunk still fail the pack.
-- New global option `copy_failed_files` (default true). `include_unrecognized_asset_files` default changed to true.
+- New global option `copy_failed_files` (default true). `keep_unknown_files` default changed to true.
 - Tests: `copy_as_is_tests::files_that_fail_to_optimize_are_copied_as_they_are_unless_asked_not_to`; two older tests set the options to
   false (bedrock `lenient_json_...`, optifine_sky `squashing_leaves_out_...`). The full library run: 203 pass. `ditherbomb_*` tests use a
   lot of memory and get killed in the 4 GB sandbox, and the DMI test needs /sys/class/dmi; skip them with `-- --skip ditherbomb --skip get_aggregated_dmi`.

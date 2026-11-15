@@ -339,7 +339,7 @@ impl SkyImageOptimizer {
 				notices.push(
 					"Custom sky entries were left out because their image is missing. If the image is not added \
 					to the pack yet, the entry has to be added again. Do not use \
-					skip_optifine_sky_entries_with_missing_images on a pack that is still being made"
+					optifine_sky_fix on a pack that is still being made"
 						.to_owned()
 				);
 			}
