@@ -44,6 +44,17 @@ step, and the common problems. Every option is described in full in
 PackSquash writes the optimized ZIP file to `output_file_path`. Without any
 other option, the fork squashes a pack like the original PackSquash does.
 
+## The window
+
+`packsquash --gui` opens a window in your browser (Edge on Windows, as a small app window) with the same black options builder as the
+online one, and adds Run, Stop and a live log. Set what you want and press Run. The options go to the same program, so it does the
+same as `packsquash options.toml`.
+
+- Save .toml writes the options to a file you can use later. Open .toml reads one. Your last settings are remembered.
+- The window only works from this computer, with a secret address that PackSquash prints. It ends when you close the window, or press
+  Ctrl+C.
+- Relative paths are relative to the folder where you started `packsquash --gui`.
+
 ## How options work
 
 - The options file is a [TOML](https://toml.io/en/v1.0.0) file.

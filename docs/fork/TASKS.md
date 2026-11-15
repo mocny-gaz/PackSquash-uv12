@@ -1,6 +1,6 @@
 # Task list of the fork
 
-Updated 2026-11-14. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-15. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
@@ -8,14 +8,13 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 None
 
 ## This very moment
-- [ ] r3 update the artifact to match new addition (ai) STATE: updated for the new names and options (same link as before)
 - [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai) note: when getting to that point tell owner to send the idea files
-- [ ] r11 make all the long options names (like the skip_optifine_sky_entries_with_missing_images make it some like optifine sky debloat/fix or anything else thats shorter and makes sense and doesnt collide with other options) way shorter (ai) STATE: patch 0039 (sent). The old names keep working. New names: `optifine_sky_fix` (was `skip_optifine_sky_entries_with_missing_images`), `optifine_sky_unused` (was `skip_unused_optifine_sky_images`), `optifine_sky_merge` (was `merge_identical_optifine_sky_images`), `optifine_unused` (was `skip_unused_optifine_entries`), `mcchanges_skip_lang` (was `skip_language_keys_identical_to_mcchanges`), `keep_unknown_files` (was `include_unrecognized_asset_files`), `archive_depth` (was `archive_pack_search_depth`), `archive_max_mib` (was `archive_max_extracted_mib`). Other options were short enough and are unchanged
-- [ ] r16 after r11 and the tasks you told me to do before it, make a release prep patch for a release, then finish the other r tasks, then F3 and in it fix the issues from https://github.com/mocny-gaz/PackSquash-uv12/security/dependabot (ai) STATE: release prep patch 0040 (sent): version 0.5.0-fork.2, the changelog section with the date, `Cargo.lock`. The rest of r16 (other r tasks, then F3 with the Dependabot fixes) is not started
+
+- [ ] r17 make the release script release as release not pre (ai) STATE: sent, not a patch. `release.py` makes a normal release, also for a version with a dash. `--prerelease` marks it as pre-release. Files: `release-script/release.py`, `README.md`, `AI-HANDOFF.md`. For a release that is already a pre-release, run `gh release edit v0.5.0-fork.2 --prerelease=false`
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (ai)
+- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (ai) STATE: patch 0042 (sent). `packsquash --gui` opens the black options window (the options builder page, now with Run, Stop and a live log) in the browser, as an Edge app window on Windows. It is part of the program, so there is no PowerShell script. Tested the server with the real program: page, token and host checks, run, stop, log, result file, and ending when the window closes. Not tested: the page in a real browser, because my sandbox has none
 - [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai)
 - [ ] r1(f7) make results not folder but an archive (same type as input, but with squashed prefix unless in other directory where there isnt any with such name) (ai) note: always pack as much as possible (7zip ultra, zip the max that windows can unpack without additional software); if the bulk input is a folder, pack into a folder with the same name in the output (squashed_ on the folder if it exists, and the same for zips) STATE: patch 0035 (sent). An archive with several packs or with archives inside gives an archive of the same kind: zip, 7z, tar, tar.gz and tar.bz2 are written, a RAR input gives a zip. Zip is Deflate level 9 (Windows opens it alone), 7z is LZMA2 level 9. Results are added to the archive one by one, so the disk holds only one result at a time. With `bulk_output_directory`, the results go in a folder named like the input folder (`squashed_` if it exists), and a result that exists gets `squashed_`. Tested with tar, tgz, tar.bz2, zip, 7z and a zip of 204 packs
 
@@ -32,7 +31,8 @@ None
 
 ## Done
 
-- [x] r2: `optifine_unused` leaves out OptiFine entries that are not connected to anything (patch 0037). r7 and L6: the mcchanges jar is found or downloaded by itself and deleted at the end (patch 0038). r15: archives in archives follow `bulk_scan_depth` (patch 0033). You marked them done
+- [x] r3: the TOML builder page has the new names and options. r11: shorter option names (patch 0040). r16: release prep (patch 0041) and the Dependabot check. The only change is `soupsieve 4.0` in `scripts/test-packs/requirements.txt`. It resolves with the pinned `beautifulsoup4`, and no Rust file changed. You marked them done
+- [x] r2: `optifine_unused` leaves out OptiFine entries that are not connected to anything (patch 0037). The two files of its module were missing from your master, patch 0039 adds them. r7 and L6: the mcchanges jar is found or downloaded by itself and deleted at the end (patch 0038). r15: archives in archives follow `bulk_scan_depth` (patch 0033). You marked them done
 - [x] `maximum_width_and_height` is ignored, images of any size are accepted (patch 0036). The key is still accepted, so old options files work
 - [x] b5: the bulk size line (patches 0030 and 0034). b7: not a bug. The 16 shulker files in your logs are about 1.5 MB each (vanilla is about 2 KB), so they really are bigger than 8192 pixels. The message shows the size now (patch 0032). Raise `maximum_width_and_height` to optimize them. old r1 (debug log name, patch 0031) and r15 (patch 0033)
 - [x] b1, r8, r12, r14, F2, f5, b6: bulk mode opens archives inside archives, results in a folder or in `bulk_output_directory`, labels with the pack name and where it is (patches 0026, 0030). You marked them fixed
@@ -65,3 +65,4 @@ None
 - give patches as soon as theyre done and continue moving with the task list, if theres sth which needs users info or choice then ask it and go on with the list not wasting resources
 - obey .rules but prioritise user
 - prioritise user sent TASKS.md over this file
+- Do NOT waste usage limit/tokens and manage your resources efficiently

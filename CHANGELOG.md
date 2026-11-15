@@ -8,6 +8,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `packsquash --gui` opens a black options window in the browser (Edge as an app window on Windows) with Run, Stop and a live log. It reads and writes `.toml` options files and remembers the last settings. It only works from the same computer, with a secret address.
+
 ## [0.5.0-fork.2] - 2026-11-14
 
 ### Added

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PackSquash</title>
+<style>
+:root{color-scheme:dark;--bg:#000;--panel:#0c0c0c;--line:#232323;--text:#e8e8e8;--dim:#8f8f8f;--accent:#60cdff;--field:#161616;--bad:#ff6b6b;box-sizing:border-box;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+.win{max-width:1080px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+header{padding:18px 20px 12px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;font-weight:600;margin:0}
+header p{margin:4px 0 0;color:var(--dim)}
+main{display:flex;flex:1;min-height:0}
+nav{width:190px;flex:none;padding:10px;border-right:1px solid var(--line)}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;color:var(--text);padding:8px 10px;font:inherit;cursor:pointer;margin-bottom:2px}
+nav button:hover{background:var(--panel)}
+nav button.on{background:#1a1a1a;box-shadow:inset 3px 0 0 var(--accent)}
+nav .sp{height:10px}
+section{flex:1;padding:6px 20px 20px;min-width:0}
+.row{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)}
+.row .t{min-width:0}
+.row .t b{font-weight:600;font-family:Consolas,"Cascadia Mono",monospace;font-size:13px}
+.row .t span{display:block;color:var(--dim);font-size:13px}
+.row .c{flex:none;max-width:52%}
+input[type=text],input[type=number],select,textarea{background:var(--field);color:var(--text);border:1px solid var(--line);border-bottom-color:#555;border-radius:4px;padding:6px 8px;font:inherit;min-width:0}
+input[type=text]{width:300px;max-width:100%}
+input[type=number]{width:110px}
+input:focus,select:focus,textarea:focus{outline:0;border-bottom-color:var(--accent)}
+input[type=checkbox]{appearance:none;width:20px;height:20px;margin:0;border:1px solid #777;border-radius:4px;background:var(--field);cursor:pointer;display:grid;place-content:center;vertical-align:middle}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked::after{content:"";width:5px;height:10px;border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg) translate(-1px,-1px)}
+.multi{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:flex-end}
+.multi label{display:flex;gap:6px;align-items:center;color:var(--dim);font-size:13px}
+.set{color:var(--accent)}
+.glob{display:flex;gap:10px;align-items:center;padding:12px 0 4px;color:var(--dim)}
+.glob input{width:320px}
+h2{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);margin:18px 0 0}
+.note{color:var(--dim);margin:12px 0 0;font-size:13px}
+footer{border-top:1px solid var(--line);padding:12px 20px 16px}
+footer .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+footer .bar .sp{flex:1}
+button.b{background:var(--accent);color:#000;border:0;border-radius:4px;padding:7px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.g{background:var(--field);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:7px 14px;font:inherit;cursor:pointer}
+button.g:hover{background:#222}
+label.chk{display:flex;gap:8px;align-items:center;color:var(--dim)}
+textarea{width:100%;height:210px;resize:vertical;font:12.5px/1.5 Consolas,"Cascadia Mono",monospace;border-radius:6px;background:var(--panel)}
+#imp{display:none;margin-top:8px}
+#msg{color:var(--dim);font-size:13px}
+#warn{margin:0 0 8px;padding:0;list-style:none;font-size:13px;color:#ffd479}#warn li{padding:2px 0}#warn li::before{content:"! ";font-weight:700}
+@media (max-width:760px){main{flex-direction:column}nav{width:auto;display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);padding:6px}nav button{white-space:nowrap;width:auto}nav .sp{display:none}.row{flex-direction:column;align-items:stretch;gap:8px}.row .c{max-width:none}.multi{justify-content:flex-start}input[type=text]{width:100%}}
+#log{display:none;background:#050505;border:1px solid var(--line);border-radius:6px;margin:10px 0;padding:10px;max-height:260px;overflow:auto;white-space:pre-wrap;font:12px/1.4 Consolas,"Cascadia Mono",monospace}
+#run:disabled{opacity:.5}
+</style>
+</head>
+<body>
+<div class="win">
+<header><h1>PackSquash</h1><p>Set what you want and press Run. Only values that differ from the defaults are written. Save or copy the result to use it again.</p></header>
+<main><nav id="nav"></nav><section id="pane"></section></main>
+<footer>
+<div class="bar"><button class="b" id="run">Run</button><button class="g" id="stop">Stop</button><button class="g" id="copy">Copy</button><button class="g" id="sav">Save .toml</button><button class="g" id="opn">Open .toml…</button><input type="file" id="fil" accept=".toml,.txt" hidden><button class="g" id="sel">Select all</button><button class="g" id="imb">Import…</button><button class="g" id="rst">Reset</button><span class="sp"></span><label class="chk"><input type="checkbox" id="all"> Write every option</label></div>
+<span id="msg"></span>
+<ul id="warn"></ul>
+<pre id="log"></pre>
+<textarea id="imp" placeholder="Paste a packsquash.toml here, then press Import again"></textarea>
+<textarea id="out" readonly spellcheck="false"></textarea>
+</footer>
+</div>
+<script>
+// [key, tab, kind, default, hint, extra, table]  kinds: b yes/no, n integer, f decimal, s text, e one of, m several of
+const TABS=["Pack","Fork features","ZIP file","Images","Audio","Text and data"];
+const Q=["grayscale_images_gamma_miscorrection","restrictive_banner_layer_texture_format_check","bad_entity_eye_layer_texture_transparency_blending","java8_zip_parsing","ogg_obfuscation_incompatibility","png_obfuscation_incompatibility"];
+const O=[
+["pack_directory",0,"s","","Folder (or archive) with the pack. Required, unless you use bulk mode"],
+["output_file_path",0,"s","pack.zip","Where the squashed ZIP is written"],
+["pack_edition",0,"e","auto","Java or Bedrock pack",["auto","java","bedrock"]],
+["zip_comment",0,"s","","Comment stored in the ZIP"],
+["log",0,"b",false,"Write a very detailed debug log file to send when something goes wrong"],
+["log_file",0,"s","","Where the debug log goes. Blank: packsquash-debug.log next to the options file"],
+["allow_mods",0,"m",[],"Keep files that only these mods use",["OptiFine","Minecraft Transit Railway 3"]],
+["skip_pack_icon",0,"b",false,"Leave pack.png out"],
+["validate_pack_metadata_file",0,"b",true,"Check pack.mcmeta"],
+["ignore_system_and_hidden_files",0,"b",true,"Skip files like Thumbs.db and .DS_Store"],
+["automatic_minecraft_quirks_detection",0,"b",true,"Detect game version quirks from pack.mcmeta"],
+["work_around_minecraft_quirks",0,"m",[],"Quirks to work around by hand (ignored while detection is on)",Q],
+["automatic_asset_types_mask_detection",0,"b",true,"Skip file types the game version does not use"],
+["mcchanges_path",1,"s","","Jar with the game files’ hashes (mcchanges), or a folder that has mcchanges-java.jar with exactly that name. Files equal to the game’s are left out"],
+["mcchanges_version",1,"s","","Game version to compare with. Blank: try every version and use the best match"],
+["mcchanges_skip_lang",1,"b",true,"Drop language lines equal to the game’s"],
+["optifine_sky_unused",1,"b",false,"Drop OptiFine sky images that nothing uses"],
+["optifine_sky_merge",1,"b",false,"Store identical OptiFine sky images once"],
+["optifine_sky_fix",1,"b",false,"Drop OptiFine sky entries whose image is missing. Not for packs still being made"],
+["optifine_unused",1,"b",false,"Leave out OptiFine entries that are not connected to anything. Not for packs that are still being made"],
+["mcchanges_download",1,"b",true,"Find or download the mcchanges jar when mcchanges_path is not set. False turns it off"],
+["mcchanges_nowifi",1,"b",false,"Only search for the mcchanges jar, without the network"],
+["keep_unknown_files",1,"b",false,"Keep every file in a folder of assets, even if PackSquash does not know it (for mods)"],
+["archive_depth",1,"n",4,"Archive input: folder levels searched for the pack inside an archive",[1,16]],
+["archive_max_mib",1,"n",16384,"Archive input: stop if an archive holds more than this (MiB)",[1,1048576]],
+["bulk_input_directory",1,"s","","Bulk mode: squash every pack (folder or archive) found under this folder, or in this one archive file"],
+["bulk_output_directory",1,"s","","Bulk mode: put the results in this folder, with the same folders as the input and no prefix. Blank: next to each input"],
+["bulk_output_prefix",1,"s","squashed_","Bulk mode: start of each output name. With bulk_output_directory the results have no prefix unless you change this"],
+["bulk_output_suffix",1,"s","","Bulk mode: end of each output name, before .zip"],
+["bulk_overwrite",1,"b",false,"Bulk mode: replace the original pack with the squashed one"],
+["bulk_backup",1,"b",true,"Bulk mode: with overwrite, keep the original as NAME.original"],
+["bulk_dry_run",1,"b",false,"Bulk mode: only list what would happen"],
+["bulk_report_file",1,"s","","Bulk mode: also write the report to this file"],
+["bulk_archive_extensions",1,"s","zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2","Bulk mode: file extensions that are opened as archives"],
+["bulk_scan_depth",1,"n",32,"Bulk mode: folder levels searched, also inside archives",[1,256]],
+["recompress_compressed_files",2,"b",false,"Recompress files that are already compressed"],
+["zip_compression_iterations",2,"n",20,"Zopfli passes, 0 to 255. More is smaller and slower",[0,255]],
+["zip_spec_conformance_level",2,"e","pedantic","How strictly the ZIP follows the specification",["pedantic","high","balanced","disregard"]],
+["size_increasing_zip_obfuscation",2,"b",false,"Make the ZIP harder to open, at a size cost"],
+["percentage_of_zip_structures_tuned_for_obfuscation_discretion",2,"n",0,"Percent of ZIP structures tuned to hide the obfuscation",[0,100]],
+["never_store_squash_times",2,"b",false,"Do not store the times used to speed up later runs"],
+["threads",2,"n","","Worker threads. Blank: all physical threads",[1,1024]],
+["spooling_buffers_size",2,"n","","Spooling buffers size in bytes. Blank: half of the free memory",[0,null]],
+["image_data_compression_iterations",3,"n",5,"PNG compression passes, 0 to 255",[0,255],"png"],
+["color_quantization_target",3,"e","auto","Reduce colors to a palette",["none","auto","eight_bit_depth","four_bit_depth","two_bit_depth","one_bit_depth"],"png"],
+["color_quantization_dithering_level",3,"f",0.85,"Dithering from 0 to 1",[0,1],"png"],
+["maximum_width_and_height",3,"n",8192,"Largest image side accepted",[1,null],"png"],
+["skip_alpha_optimizations",3,"b",false,"Do not change invisible pixels",null,"png"],
+["downsize_if_single_color",3,"b",false,"Shrink images that have one color",null,"png"],
+["png_obfuscation",3,"b",false,"Obfuscate PNG files",null,"png"],
+["transcode_ogg",4,"b",true,"Re-encode OGG files",null,"audio"],
+["two_pass_vorbis_optimization_and_validation",4,"b",true,"Two encoding passes, and validation",null,"audio"],
+["empty_audio_optimization",4,"b",true,"Replace silent audio with a tiny file",null,"audio"],
+["channels",4,"n","","Channels. Blank: as the input",[1,2],"audio"],
+["sampling_frequency",4,"n","","Sampling frequency in Hz. Blank: 40050 stereo, 32000 mono",[1,null],"audio"],
+["bitrate_control_mode",4,"e","CQF","Bitrate control mode",["CQF","VBR","ABR","CABR"],"audio"],
+["target_bitrate_control_metric",4,"f","","Target for the mode. Blank: 0.25 stereo, 0.0 mono",[-2,null],"audio"],
+["target_pitch",4,"f",1,"Pitch multiplier",[0,null],"audio"],
+["ogg_obfuscation",4,"b",false,"Obfuscate OGG files",null,"audio"],
+["minify_json",5,"b",true,"Remove whitespace from JSON",null,"json"],
+["delete_bloat_keys",5,"b",true,"Remove keys the game ignores",null,"json"],
+["always_allow_json_comments",5,"b",true,"Accept comments in JSON",null,"json"],
+["sort_json_object_keys",5,"b",true,"Sort JSON keys (smaller ZIP)",null,"json"],
+["minify_legacy_language",5,"b",true,"Minify .lang files",null,"lang"],
+["strip_legacy_language_bom",5,"b",true,"Remove the BOM of .lang files",null,"lang"],
+["minify_command_function",5,"b",true,"Minify .mcfunction files",null,"fn"],
+["minify_properties",5,"b",true,"Minify .properties files",null,"prop"],
+["nbt_compression_iterations",5,"n",15,"NBT compression passes, 0 to 255",[0,255],"nbt"],
+["shader_source_transformation_strategy",5,"e","minify","What to do with shader source",["minify","prettify","keep_as_is"],"shader"]
+];
+const G={png:"**/*.png",audio:"**/*.{ogg,oga,mp3,wav,flac}",json:"**/*.{json,mcmeta}",lang:"**/*.lang",fn:"**/*.mcfunction",prop:"**/*.properties",nbt:"**/*.{nbt,dat}",shader:"**/*.{vsh,fsh,glsl}"};
+const TN={png:"PNG files",audio:"Audio files",json:"JSON files",lang:"Legacy language files",fn:"Function files",prop:"Properties files",nbt:"NBT files",shader:"Shaders"};
+let V={},GL={},tab=0,K={};
+const $=i=>document.getElementById(i);
+function init(){V={};GL={...G};O.forEach(o=>V[o[0]]=Array.isArray(o[3])?[]:o[3])}
+const dflt=o=>Array.isArray(o[3])?[]:o[3];
+const changed=o=>JSON.stringify(V[o[0]])!==JSON.stringify(dflt(o))&&V[o[0]]!==""&&!(Array.isArray(V[o[0]])&&!V[o[0]].length);
+const q=s=>/'|\n/.test(s)?'"'+s.replace(/\\/g,"\\\\").replace(/"/g,'\\"').replace(/\n/g,"\\n")+'"':"'"+s+"'";
+function val(o){const v=V[o[0]],k=o[2];if(k=="b")return String(v);if(k=="n"||k=="f")return String(v);if(k=="m")return "["+v.map(q).join(", ")+"]";return q(String(v))}
+function build(){
+ const all=$("all").checked,top=[],tabs={},bulk=!!V.bulk_input_directory;
+ O.forEach(o=>{const k=o[0];
+  if(k=="pack_directory"&&bulk)return;
+  if(k=="bulk_output_prefix"&&V.bulk_output_directory&&V[k]===o[3])return;
+  if(!(all||changed(o)))return;
+  const line=k+" = "+val(o);
+  if(o[6])(tabs[o[6]]=tabs[o[6]]||[]).push(line);else top.push(line)});
+ const t=[];
+ if(!bulk&&!V.pack_directory)t.push("# pack_directory is required (or set bulk_input_directory)");
+ t.push(...top);
+ Object.keys(G).forEach(s=>{if(tabs[s])t.push("","["+q(GL[s])+"]",...tabs[s])});
+ $("out").value=t.join("\n")+"\n";
+ try{localStorage.setItem("psq",JSON.stringify({V,GL}))}catch(e){}
+ const w=[],p=String(V.mcchanges_path||""),ver=String(V.mcchanges_version||"");
+ if(ver&&!p)w.push("mcchanges_version does nothing without mcchanges_path");
+ if(ver&&/[\\/]$/.test(p))w.push("mcchanges_path is a folder: it needs mcchanges-java.jar (or mcchanges-bedrock.jar) with exactly that name inside, or a mcchanges.json of its own. Otherwise use the jar file, like C:\\amc\\mcchanges-java.jar");
+ if(p&&!ver&&/\.(jar|zip)$/i.test(p))w.push("mcchanges_version is blank: this needs the fork build with version auto-detect");
+ if(V.work_around_minecraft_quirks.length&&V.automatic_minecraft_quirks_detection)w.push("work_around_minecraft_quirks is ignored while automatic_minecraft_quirks_detection is on");
+ if(V.bulk_input_directory&&V.pack_directory)w.push("Bulk mode is on: pack_directory and output_file_path are ignored");
+ if(V.optifine_sky_fix)w.push("optifine_sky_fix: do not use it on a pack that is still being made. If an image is added later, its sky entry is gone");
+ if(V.optifine_sky_fix&&!V.allow_mods.includes("OptiFine"))w.push("optifine_sky_fix does nothing unless allow_mods has OptiFine");
+ if(V.log_file&&!V.log)w.push("log_file is set, but log is off. PackSquash stops with an error. Turn log on");
+ if(V.zip_compression_iterations>100)w.push("More than 100 Zopfli passes is very slow");
+ if(V.bulk_overwrite&&!V.bulk_backup)w.push("Overwrite without backup: the original packs are lost");
+ if(V.bulk_output_directory&&!V.bulk_input_directory)w.push("bulk_output_directory is set but bulk_input_directory is not: PackSquash stops with an error");
+ if(V.bulk_output_directory&&V.bulk_overwrite)w.push("bulk_overwrite does nothing when bulk_output_directory is set: the originals are never replaced");
+ if(V.bulk_output_directory&&V.bulk_output_prefix==="squashed_")w.push("bulk_output_directory is set: the results have no prefix. To add one, change bulk_output_prefix");
+ $("warn").innerHTML="";w.forEach(x=>{const li=document.createElement("li");li.textContent=x;$("warn").appendChild(li)})
+}
+function row(o){
+ const k=o[0],v=V[k],d=document.createElement("div");d.className="row";
+ const t=document.createElement("div");t.className="t";t.innerHTML="<b></b><span></span>";t.firstChild.textContent=k;t.lastChild.textContent=o[4]||"";
+ const c=document.createElement("div");c.className="c";let el;
+ const set=x=>{V[k]=x;t.firstChild.className=changed(o)?"set":"";build()};
+ if(o[2]=="b"){el=document.createElement("input");el.type="checkbox";el.checked=v;el.onchange=()=>set(el.checked)}
+ else if(o[2]=="e"){el=document.createElement("select");o[5].forEach(x=>{const p=document.createElement("option");p.value=p.textContent=x;el.appendChild(p)});el.value=v;el.onchange=()=>set(el.value)}
+ else if(o[2]=="m"){el=document.createElement("div");el.className="multi";o[5].forEach(x=>{const l=document.createElement("label"),i=document.createElement("input");i.type="checkbox";i.checked=v.includes(x);i.onchange=()=>set(o[5].filter(y=>y==x?i.checked:V[k].includes(y)));l.append(i,x);el.appendChild(l)})}
+ else{el=document.createElement("input");el.type=o[2]=="s"?"text":"number";if(o[2]=="f")el.step="any";if(o[5]){if(o[5][0]!=null)el.min=o[5][0];if(o[5][1]!=null)el.max=o[5][1]}
+  el.value=v;el.placeholder=o[2]=="s"?"":"default";el.oninput=()=>{const x=el.value;set(o[2]=="s"?x:x===""?"":Number(x))}}
+ c.appendChild(el);d.append(t,c);t.firstChild.className=changed(o)?"set":"";return d}
+function render(){
+ const nav=$("nav");nav.innerHTML="";
+ TABS.forEach((n,i)=>{const b=document.createElement("button");b.textContent=n;b.className=i==tab?"on":"";b.onclick=()=>{tab=i;render()};nav.appendChild(b)});
+ const p=$("pane");p.innerHTML="";let last=null;
+ O.filter(o=>o[1]==tab).forEach(o=>{
+  if(o[6]&&o[6]!=last){const h=document.createElement("h2");h.textContent=TN[o[6]];p.appendChild(h);
+   const g=document.createElement("div");g.className="glob";g.append("Applies to files matching");const i=document.createElement("input");i.type="text";i.value=GL[o[6]];const s=o[6];i.oninput=()=>{GL[s]=i.value;build()};g.appendChild(i);p.appendChild(g)}
+  last=o[6]||null;p.appendChild(row(o))});
+ if(tab==1){const n=document.createElement("p");n.className="note";n.textContent="Archive input, bulk mode, the debug log, the sky and asset options and blank mcchanges_version need the fork build that has those features. Bulk mode ignores output_file_path.";p.appendChild(n)}
+ if(tab==3||tab==4||tab==5){const n=document.createElement("p");n.className="note";n.textContent="Each group becomes its own table. Change the pattern to limit it to some files.";p.appendChild(n)}
+ build()}
+function msg(t){$("msg").textContent=t;setTimeout(()=>{if($("msg").textContent==t)$("msg").textContent=""},3500)}
+$("copy").onclick=()=>{const o=$("out");o.select();let ok=false;try{ok=document.execCommand("copy")}catch(e){}
+ if(!ok&&navigator.clipboard){navigator.clipboard.writeText(o.value).then(()=>msg("Copied"),()=>msg("Press Ctrl+C to copy"));return}
+ msg(ok?"Copied":"Press Ctrl+C to copy")};
+$("sel").onclick=()=>{$("out").focus();$("out").select()};
+$("all").onchange=build;
+$("rst").onclick=()=>{init();render();msg("Reset")};
+function parseVal(s){s=s.trim();if(s[0]=="'"){return s.slice(1,s.lastIndexOf("'"))}
+ if(s[0]=='"'){return JSON.parse(s.slice(0,s.lastIndexOf('"')+1).replace(/\\(?!["\\nrt])/g,"\\\\"))}
+ if(s[0]=="["){const m=s.match(/'[^']*'|"(?:[^"\\]|\\.)*"/g)||[];return m.map(parseVal)}
+ if(s.startsWith("true"))return true;if(s.startsWith("false"))return false;const n=Number(s.split("#")[0]);return isNaN(n)?s:n}
+$("imb").onclick=()=>{const i=$("imp");if(i.style.display!="block"){i.style.display="block";i.focus();msg("Paste your file, then press Import again");return}
+ const text=i.value;if(!text.trim()){i.style.display="none";return}
+ init();let sec=null,unknown=[];
+ text.split(/\r?\n/).forEach(line=>{const l=line.trim();if(!l||l[0]=="#")return;
+  const h=l.match(/^\[\s*(?:'([^']*)'|"([^"]*)"|([^\]]*?))\s*\]/);
+  if(h){sec=h[1]??h[2]??h[3];return}
+  const m=l.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);if(!m)return;
+  const o=O.find(x=>x[0]==m[1]);if(!o){unknown.push(m[1]);return}
+  let v=parseVal(m[2]);if(o[2]=="m"&&!Array.isArray(v))v=[];if(o[2]!="m"&&Array.isArray(v))return;V[m[1]]=v;if(o[6]&&sec)GL[o[6]]=sec});
+ i.value="";i.style.display="none";render();msg(unknown.length?"Imported. Not known here: "+unknown.join(", "):"Imported")};
+init();
+try{const s=JSON.parse(localStorage.getItem("psq")||"null");if(s&&s.V){Object.keys(s.V).forEach(k=>{if(k in V)V[k]=s.V[k]});Object.assign(GL,s.GL||{})}}catch(e){}
+render();
+
+const T=new URLSearchParams(location.search).get("t")||"";
+function call(p,o){return fetch(p+(p.includes("?")?"&":"?")+"t="+encodeURIComponent(T),o)}
+let off=0,busy=false;
+async function poll(){try{const r=await call("/log?from="+off),x=await r.text(),l=$("log");
+ if(x){l.textContent+=x;l.scrollTop=l.scrollHeight}
+ off=+r.headers.get("X-Total")||off;busy=r.headers.get("X-Running")=="1";$("run").disabled=busy}catch(e){}
+ setTimeout(poll,busy?400:1500)}
+$("run").onclick=async()=>{
+ if(!V.pack_directory&&!V.bulk_input_directory){msg("Set pack_directory or bulk_input_directory first");return}
+ const r=await call("/run",{method:"POST",body:$("out").value}),x=await r.text();
+ if(!r.ok){msg(x);return}
+ off=0;$("log").textContent="";$("log").style.display="block";msg("Started");poll()};
+$("stop").onclick=()=>call("/stop",{method:"POST"}).then(()=>msg("Stopped"));
+$("sav").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([$("out").value],{type:"text/plain"}));a.download="packsquash.toml";a.click()};
+$("opn").onclick=()=>$("fil").click();
+$("fil").onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{const i=$("imp");i.value=t;i.style.display="block";$("imb").click();e.target.value=""})};
+setInterval(()=>call("/ping").catch(()=>{}),5000);
+poll();
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@ mod bulk;
 mod debug_log;
 mod error_hints;
 mod fork_options;
+mod gui;
 mod mcchanges_auto;
 mod terminal_style;
 mod terminal_title_controller;
@@ -69,6 +70,7 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 
 	options.optflag("h", "help", "Prints information about the command line arguments accepted by this application and exits")
 		.optflag("v", "version", "Prints version and copyright information of the application, then exits")
+		.optflag("", "gui", "Opens a window in the browser to set the options and run PackSquash")
 		.optflag(
 			"",
 			"emoji",
@@ -108,6 +110,8 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 				println!("{}", options.usage(""));
 
 				0
+			} else if option_matches.opt_present("gui") {
+				gui::run()
 			} else if option_matches.opt_present("v") {
 				print_version_information(true);
 
