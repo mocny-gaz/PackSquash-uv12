@@ -88,13 +88,10 @@ pub fn strip_unnecessary_chunks(
 			let chunk_data = get_or_err!(i + 8..i + 8 + data_length);
 			let chunk_crc = get_or_err!(i + 8 + data_length..i + 8 + data_length + 4);
 
-			if chunk_type == b"IHDR" {
-				if data_length != 13 {
-					return Err(ImageProcessingError::StripValidateError(
-						"Unexpected size for IHDR chunk".into()
-					));
-				}
-
+			if chunk_type == b"IHDR" && data_length != 13 {
+				return Err(ImageProcessingError::StripValidateError(
+					"Unexpected size for IHDR chunk".into()
+				));
 			}
 
 			stripped_png.extend_from_slice(data_length_and_chunk_type);
