@@ -217,6 +217,8 @@ impl PackSquasher {
 			.global_options
 			.automatic_asset_types_mask_detection;
 
+		let copy_failed_files = options_holder.options.global_options.copy_failed_files;
+
 		let read_pack_meta = !is_bedrock
 			&& (automatic_quirk_detection
 				|| automatic_asset_type_mask_detection
@@ -236,7 +238,27 @@ impl PackSquasher {
 			.then(|| {
 				runtime.block_on(async {
 					let pack_meta =
-						PackMetadata::read(&vfs, &options_holder.options.pack_directory).await?;
+						match PackMetadata::read(&vfs, &options_holder.options.pack_directory).await {
+							Ok(pack_meta) => pack_meta,
+							Err(error) if copy_failed_files => {
+								detail!("The pack metadata could not be used: {error}");
+
+								if let Some(pack_file_status_sender) = &pack_file_status_sender {
+									pack_file_status_sender
+										.send(PackSquasherStatus::Notice(Cow::Owned(format!(
+											"The pack metadata can not be used ({error}), so the game versions of the pack are not detected"
+										))))
+										.await
+										.ok();
+								}
+
+								return Ok(HashMap::from_iter([(
+									arcstr::literal!(""),
+									HashSet::default()
+								)]));
+							}
+							Err(error) => return Err(error.into())
+						};
 
 					if automatic_quirk_detection {
 						let quirks = pack_meta.applicable_minecraft_quirks();

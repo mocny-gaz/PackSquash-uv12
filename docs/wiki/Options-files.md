@@ -519,6 +519,8 @@ Example:
 copy_failed_files = false
 ```
 
+The same goes for a `pack.mcmeta` that does not pass the checks: the pack is squashed anyway, with a notice, and the game versions of the pack are not detected.
+
 ### `skip_pack_icon`
 
 **Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
