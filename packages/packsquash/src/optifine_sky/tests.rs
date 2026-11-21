@@ -391,7 +391,7 @@ async fn an_entry_whose_image_is_missing_is_left_out() {
 		optimizer
 			.notices()
 			.iter()
-			.any(|notice| notice.contains("Do not use skip_optifine_sky_entries_with_missing_images")),
+			.any(|notice| notice.contains("Do not use optifine_sky_fix")),
 		"the warning is there: {:?}",
 		optimizer.notices()
 	);

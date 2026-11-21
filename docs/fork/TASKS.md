@@ -10,7 +10,7 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## This very moment
 
-- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: patch 0053 (sent). Option `fix_pack_metadata`, default on. Fixes only a `pack.mcmeta` that fails the checks, shows each change as a notice, and writes more detail to the debug log when `log = true`. Tested with the real program on eight packs: whole decimal, syntax, three versions, `supported_formats` removed and added, a pack that needs no fix (not rewritten), a raw line break (reported), and an unknown mistake (left alone). Not done: the online builder page, see chat
+- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: patch 0053 (sent). Option `fix_pack_metadata`, default on. Fixes only a `pack.mcmeta` that fails the checks, shows each change as a notice, and writes more detail to the debug log when `log = true`. Tested with the real program on eight packs: whole decimal, syntax, three versions, `supported_formats` removed and added, a pack that needs no fix (not rewritten), a raw line break (reported), and an unknown mistake (left alone). The online builder page has the option too
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
@@ -19,17 +19,18 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## Later
 
-- [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. Starts when the first priority tasks run out
-- [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. Starts when the first priority tasks run out
-- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). Starts when the first priority tasks run out. Please test one real NTE pack
+- [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. The first priority tasks are done, so it starts now, but I have no shader data here (Mojang is not reachable). Send a pack with large shaders (`assets/minecraft/shaders`), then I measure the real gain first
+- [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. Needs a data pack with many `.mcfunction` files to test on
+- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). Please test one real NTE pack, I have none here
 - [ ] L4 Upstream issues 254 (overlays) and 373 (formats): wait for upstream
 - [ ] L5 Not planned: 196 (Gradle), 238 (Bukkit), 378 (Java bindings), 215 (API crate)
-- [ ] L7 Linux and macOS programs in the release: the CI way (`release.py tag`) makes them
+- [ ] L7 Linux and macOS programs in the release: the CI way (`release.py tag`) makes them (ai) STATE: checked. The CI of a tag push builds Linux (x86_64 and aarch64, gnu and musl), Windows and macOS (universal2). Nothing to do, you can close it
 - [ ] L8 Cross-check Java tokens between the builder and PackSquash with real Java data (Mojang was not reachable from the AI sandbox)
 - [ ] L9 when f3 gui will be made at around that part of development and when f6 be implemented make a mode at the bottom of gui to just FIX if any issues with packs aand it will just check everything and then a prompt will appear to apply changes (bypassable with fixer_prompt = false)
 
 ## Done
 
+- [x] A test still expected the old option name `skip_optifine_sky_entries_with_missing_images` and failed, which would have failed the CI of a tag push (patch 0054)
 - [x] b8, b11: not bugs. Patch 0048 is reverted (patch 0049). r6: design file sent. r17, r18, r20: release script (normal release, window test, free tags). f7: results are an archive of the same kind as the input (patch 0035)
 - [x] r19: `release.py build --tester` makes a local test build with no tag and no internet. You said it works. r18: the release script tests the window by itself
 - [x] r3: the TOML builder page has the new names and options. r11: shorter option names (patch 0040). r16: release prep (patch 0041) and the Dependabot check. The only change is `soupsieve 4.0` in `scripts/test-packs/requirements.txt`. It resolves with the pinned `beautifulsoup4`, and no Rust file changed. You marked them done
