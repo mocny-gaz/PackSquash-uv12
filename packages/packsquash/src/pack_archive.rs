@@ -985,13 +985,6 @@ pub fn scan_archive_with_nested(
 	}))
 }
 
-fn temp_directory(prefix: &str) -> io::Result<tempfile::TempDir> {
-	let base = std::env::temp_dir();
-
-	fs::create_dir_all(&base)?;
-	tempfile::Builder::new().prefix(prefix).tempdir_in(base)
-}
-
 /// Packs that were extracted from an archive into a temporary directory, which is deleted when this is dropped.
 #[derive(Debug)]
 pub struct ExtractedPacks {
@@ -1070,7 +1063,7 @@ pub fn extract_packs_and_nested(
 	nested_extensions: &[String],
 	limits: ExtractLimits
 ) -> Result<ExtractedPacks, ArchiveError> {
-	let directory = temp_directory("packsquash-")?;
+	let directory = tempfile::Builder::new().prefix("packsquash-").tempdir()?;
 	let mut nested = Vec::new();
 
 	let roots: Vec<String> = match &scan.pack_roots {
@@ -1085,15 +1078,6 @@ pub fn extract_packs_and_nested(
 			extract_with_helper(archive, directory.path())
 				.map_err(|error| explain_helper_error(error, scan.helper_reason.as_deref()))?;
 			clean_helper_output(directory.path(), limits)?;
-
-			if fs::read_dir(directory.path())?.next().is_none() {
-				return Err(explain_helper_error(
-					ArchiveError::HelperFailed(
-						"the helper program ran, but it extracted nothing. The archive may be damaged".into()
-					),
-					scan.helper_reason.as_deref()
-				));
-			}
 
 			if !nested_extensions.is_empty() {
 				nested = find_nested_files(directory.path(), nested_extensions, max_depth);
@@ -1158,7 +1142,9 @@ pub fn extract_nested_archives(
 	names: &[String],
 	limits: ExtractLimits
 ) -> Result<ExtractedFiles, ArchiveError> {
-	let directory = temp_directory("packsquash-nested-")?;
+	let directory = tempfile::Builder::new()
+		.prefix("packsquash-nested-")
+		.tempdir()?;
 
 	// With no names, the extraction would take everything
 	if !names.is_empty() {

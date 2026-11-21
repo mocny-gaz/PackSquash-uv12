@@ -16,7 +16,6 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A `.lang` file with a line that has no `=` no longer fails the whole pack. It is copied as it is, like the other files that can not be optimized. Before, the error came after part of the file was written.
 - A pack whose `pack.mcmeta` does not pass the checks (for example `supported_formats` together with `min_format`, three numbers in a version, or a decimal number) is squashed anyway, with a notice, when `copy_failed_files` is on. The game accepts many of these packs.
-- An archive that a helper program extracts to nothing now says so, instead of `no pack was found in the archive`. The temporary folder for extracting is created again if it is gone.
 
 ## [0.5.0-fork.2] - 2026-11-14
 
