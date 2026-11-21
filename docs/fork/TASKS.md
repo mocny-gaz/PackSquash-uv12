@@ -1,28 +1,27 @@
 # Task list of the fork
 
-Updated 2026-11-15. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-21. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
 
-None
+- [ ] b9 `Temmie.zip`: one `.lang` file with a line without `=` fails the whole pack (ai) STATE: patch 0046 (in your master). The file is copied as it is. Tested on a real pack
+- [ ] b10 12 of 46 Modrinth packs fail because of the checks of `pack.mcmeta` (`supported_formats` with `min_format`, three numbers in a version, a decimal number) (ai) STATE: patch 0047 (in your master). The pack is squashed anyway, with a notice, when `copy_failed_files` is on. Tested with the exact error of the log
 
 ## This very moment
-- [ ] r6 decide a better design as an extension of packsquash or wtv feels better for packsquashes purpose(just the idea) for the f6 and l9 (ai) note: when getting to that point tell owner to send the idea files
 
-- [ ] r17 make the release script release as release not pre (ai) STATE: sent, not a patch. `release.py` makes a normal release, also for a version with a dash. `--prerelease` marks it as pre-release. Files: `release-script/release.py`, `README.md`, `AI-HANDOFF.md`. For a release that is already a pre-release, run `gh release edit v0.5.0-fork.2 --prerelease=false`
+- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: waiting for your answers (questions 3 to 5 in chat). No code yet
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all (ai) STATE: patch 0042 (sent). `packsquash --gui` opens the black options window (the options builder page, now with Run, Stop and a live log) in the browser, as an Edge app window on Windows. It is part of the program, so there is no PowerShell script. Tested the server with the real program: page, token and host checks, run, stop, log, result file, and ending when the window closes. Not tested: the page in a real browser, because my sandbox has none
-- [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai)
-- [ ] r1(f7) make results not folder but an archive (same type as input, but with squashed prefix unless in other directory where there isnt any with such name) (ai) note: always pack as much as possible (7zip ultra, zip the max that windows can unpack without additional software); if the bulk input is a folder, pack into a folder with the same name in the output (squashed_ on the folder if it exists, and the same for zips) STATE: patch 0035 (sent). An archive with several packs or with archives inside gives an archive of the same kind: zip, 7z, tar, tar.gz and tar.bz2 are written, a RAR input gives a zip. Zip is Deflate level 9 (Windows opens it alone), 7z is LZMA2 level 9. Results are added to the archive one by one, so the disk holds only one result at a time. With `bulk_output_directory`, the results go in a folder named like the input folder (`squashed_` if it exists), and a result that exists gets `squashed_`. Tested with tar, tgz, tar.bz2, zip, 7z and a zip of 204 packs
+- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all. Open it when double clicking packsquash, also add a mode for cli in that gui (ai) STATE: patch 0042 (in your master). Patch 0050 (sent): on Windows, double clicking `packsquash.exe` opens the window; a terminal start with no arguments works as before. Not tested: a real double click and the page in a real browser, my sandbox has neither. CLI mode: waiting for your answer (question 1 in chat)
+- [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai) STATE: the JSON fixer is built (patches 0043 and 0044, kept ready, not applied). Waiting for your answers in `R6-DESIGN-FOR-YOUR-OPINION.md` (questions 6 to 8 in chat)
 
 ## Later
 
-- [ ] L1 Issue 119: shader minification. Needs study
-- [ ] L2 Issue 362: function inlining. Needs study
-- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study
+- [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. My pick is to skip or to measure a pack first. No code until you answer (question 9 in chat)
+- [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. My pick is to skip, or an opt-in safe subset only if you use data packs. No code until you answer (question 10 in chat)
+- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). I propose to close it. Please test one real NTE pack (question 11 in chat)
 - [ ] L4 Upstream issues 254 (overlays) and 373 (formats): wait for upstream
 - [ ] L5 Not planned: 196 (Gradle), 238 (Bukkit), 378 (Java bindings), 215 (API crate)
 - [ ] L7 Linux and macOS programs in the release: the CI way (`release.py tag`) makes them
@@ -31,6 +30,8 @@ None
 
 ## Done
 
+- [x] b8, b11: not bugs. Patch 0048 is reverted (patch 0049). r6: design file sent. r17, r18, r20: release script (normal release, window test, free tags). f7: results are an archive of the same kind as the input (patch 0035)
+- [x] r19: `release.py build --tester` makes a local test build with no tag and no internet. You said it works. r18: the release script tests the window by itself
 - [x] r3: the TOML builder page has the new names and options. r11: shorter option names (patch 0040). r16: release prep (patch 0041) and the Dependabot check. The only change is `soupsieve 4.0` in `scripts/test-packs/requirements.txt`. It resolves with the pinned `beautifulsoup4`, and no Rust file changed. You marked them done
 - [x] r2: `optifine_unused` leaves out OptiFine entries that are not connected to anything (patch 0037). The two files of its module were missing from your master, patch 0039 adds them. r7 and L6: the mcchanges jar is found or downloaded by itself and deleted at the end (patch 0038). r15: archives in archives follow `bulk_scan_depth` (patch 0033). You marked them done
 - [x] `maximum_width_and_height` is ignored, images of any size are accepted (patch 0036). The key is still accepted, so old options files work

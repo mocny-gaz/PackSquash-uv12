@@ -307,6 +307,21 @@ fn open_window(url: &str) {
 	}
 }
 
+#[cfg(windows)]
+pub fn opened_by_double_click() -> bool {
+	use windows_sys::Win32::System::Console::GetConsoleProcessList;
+
+	let mut processes = [0u32; 2];
+
+	// SAFETY: the buffer holds the two process identifiers that the length says
+	unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 2) == 1 }
+}
+
+#[cfg(not(windows))]
+pub fn opened_by_double_click() -> bool {
+	false
+}
+
 pub fn run() -> i32 {
 	let listener = match TcpListener::bind(("127.0.0.1", PORT))
 		.or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
