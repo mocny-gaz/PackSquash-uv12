@@ -20,6 +20,7 @@ struct State {
 	log: String,
 	child: Option<Child>,
 	running: bool,
+	cli: bool,
 	last_seen: Option<Instant>
 }
 
@@ -184,6 +185,7 @@ fn pump(pipe: impl Read + Send + 'static, state: Shared) -> thread::JoinHandle<(
 		for line in BufReader::new(pipe).lines().map_while(Result::ok) {
 			let mut guard = lock(&state);
 
+			let _ = writeln!(std::io::stdout(), "{line}");
 			guard.log.push_str(&line);
 			guard.log.push('\n');
 		}
@@ -199,7 +201,17 @@ fn route(state: &Shared, token: &str, port: u16, request: &Request) -> Response 
 		return Response::text("403 Forbidden", "Open the address that PackSquash printed");
 	}
 
-	lock(state).last_seen = Some(Instant::now());
+	let mut guard = lock(state);
+
+	if guard.cli {
+		return Response::text(
+			"410 Gone",
+			"The window is closed. PackSquash goes on in the terminal"
+		);
+	}
+
+	guard.last_seen = Some(Instant::now());
+	drop(guard);
 
 	match (request.method.as_str(), request.path.as_str()) {
 		("GET", "/") => Response {
@@ -213,6 +225,17 @@ fn route(state: &Shared, token: &str, port: u16, request: &Request) -> Response 
 			Ok(()) => Response::text("200 OK", "started"),
 			Err(message) => Response::text("409 Conflict", &message)
 		},
+		("POST", "/cli") => {
+			let mut guard = lock(state);
+
+			if guard.running {
+				return Response::text("409 Conflict", "PackSquash is running. Stop it first");
+			}
+
+			guard.cli = true;
+
+			Response::text("200 OK", "cli")
+		}
 		("POST", "/stop") => {
 			if let Some(child) = lock(state).child.as_mut() {
 				let _ = child.kill();
@@ -322,7 +345,7 @@ pub fn opened_by_double_click() -> bool {
 	false
 }
 
-pub fn run() -> i32 {
+pub fn run() -> Option<i32> {
 	let listener = match TcpListener::bind(("127.0.0.1", PORT))
 		.or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
 	{
@@ -330,7 +353,7 @@ pub fn run() -> i32 {
 		Err(error) => {
 			eprintln!("Couldn't open the window: {error}");
 
-			return 1;
+			return Some(1);
 		}
 	};
 	let port = listener.local_addr().map_or(PORT, |address| address.port());
@@ -348,33 +371,36 @@ pub fn run() -> i32 {
 	println!("Close the window to end. Press Ctrl+C to end now.");
 	open_window(&url);
 
-	let watcher = state.clone();
+	let server = state.clone();
+	let server_token = token.clone();
 
 	thread::spawn(move || {
-		loop {
-			thread::sleep(Duration::from_secs(1));
+		for stream in listener.incoming().flatten() {
+			let state = server.clone();
+			let token = server_token.clone();
 
-			let guard = lock(&watcher);
-
-			if !guard.running
-				&& guard
-					.last_seen
-					.is_some_and(|seen| seen.elapsed() > Duration::from_secs(idle))
-			{
-				println!("The window was closed.");
-				process::exit(0);
-			}
+			thread::spawn(move || handle(stream, &state, &token, port));
 		}
 	});
 
-	for stream in listener.incoming().flatten() {
-		let state = state.clone();
-		let token = token.clone();
+	loop {
+		thread::sleep(Duration::from_millis(200));
 
-		thread::spawn(move || handle(stream, &state, &token, port));
+		let guard = lock(&state);
+
+		if guard.cli {
+			return None;
+		}
+
+		if !guard.running
+			&& guard
+				.last_seen
+				.is_some_and(|seen| seen.elapsed() > Duration::from_secs(idle))
+		{
+			println!("The window was closed.");
+			process::exit(0);
+		}
 	}
-
-	0
 }
 
 #[cfg(test)]
@@ -450,10 +476,31 @@ mod tests {
 	}
 
 	#[test]
+	fn the_cli_button_ends_the_window() {
+		let state = Shared::default();
+		let call = |method: &str| {
+			route(
+				&state,
+				"t",
+				5,
+				&request(&format!(
+					"{method} /cli?t=t HTTP/1.1\r\nHost: 127.0.0.1:5\r\n\r\n"
+				))
+			)
+		};
+
+		assert_eq!(call("POST").status, "200 OK");
+		assert!(lock(&state).cli);
+		assert_eq!(call("GET").status, "410 Gone");
+	}
+
+	#[test]
 	fn the_page_has_what_the_server_needs() {
 		for needed in [
 			"id=\"run\"",
 			"id=\"stop\"",
+			"id=\"cli\"",
+			"/cli",
 			"id=\"log\"",
 			"/ping",
 			"/run",

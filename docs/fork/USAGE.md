@@ -48,7 +48,7 @@ other option, the fork squashes a pack like the original PackSquash does.
 
 `packsquash --gui` opens a window in your browser (Edge on Windows, as a small app window) with the same black options builder as the
 online one, and adds Run, Stop and a live log. Set what you want and press Run. The options go to the same program, so it does the
-same as `packsquash options.toml`. On Windows, double clicking `packsquash.exe` opens the same window. Starting `packsquash` in a terminal with no arguments still reads the options from the keyboard.
+same as `packsquash options.toml`. On Windows, double clicking `packsquash.exe` opens the same window. Starting `packsquash` in a terminal with no arguments still reads the options from the keyboard. The Use CLI button closes the window and gives you that terminal behavior. You press it once after each start, it is not a setting.
 
 - Save .toml writes the options to a file you can use later. Open .toml reads one. Your last settings are remembered.
 - The window only works from this computer, with a secret address that PackSquash prints. It ends when you close the window, or press

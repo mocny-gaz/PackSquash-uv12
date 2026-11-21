@@ -60,7 +60,7 @@ textarea{width:100%;height:210px;resize:vertical;font:12.5px/1.5 Consolas,"Casca
 <header><h1>PackSquash</h1><p>Set what you want and press Run. Only values that differ from the defaults are written. Save or copy the result to use it again.</p></header>
 <main><nav id="nav"></nav><section id="pane"></section></main>
 <footer>
-<div class="bar"><button class="b" id="run">Run</button><button class="g" id="stop">Stop</button><button class="g" id="copy">Copy</button><button class="g" id="sav">Save .toml</button><button class="g" id="opn">Open .toml…</button><input type="file" id="fil" accept=".toml,.txt" hidden><button class="g" id="sel">Select all</button><button class="g" id="imb">Import…</button><button class="g" id="rst">Reset</button><span class="sp"></span><label class="chk"><input type="checkbox" id="all"> Write every option</label></div>
+<div class="bar"><button class="b" id="run">Run</button><button class="g" id="stop">Stop</button><button class="g" id="copy">Copy</button><button class="g" id="sav">Save .toml</button><button class="g" id="opn">Open .toml…</button><input type="file" id="fil" accept=".toml,.txt" hidden><button class="g" id="sel">Select all</button><button class="g" id="imb">Import…</button><button class="g" id="rst">Reset</button><button class="g" id="cli" title="Close this window and go on in the terminal">Use CLI</button><span class="sp"></span><label class="chk"><input type="checkbox" id="all"> Write every option</label></div>
 <span id="msg"></span>
 <ul id="warn"></ul>
 <pre id="log"></pre>
@@ -241,6 +241,7 @@ $("run").onclick=async()=>{
  const r=await call("/run",{method:"POST",body:$("out").value}),x=await r.text();
  if(!r.ok){msg(x);return}
  off=0;$("log").textContent="";$("log").style.display="block";msg("Started");poll()};
+$("cli").onclick=async()=>{const r=await call("/cli",{method:"POST"});if(!r.ok){msg(await r.text());return}msg("CLI mode. You can close this window");window.close()};
 $("stop").onclick=()=>call("/stop",{method:"POST"}).then(()=>msg("Stopped"));
 $("sav").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([$("out").value],{type:"text/plain"}));a.download="packsquash.toml";a.click()};
 $("opn").onclick=()=>$("fil").click();

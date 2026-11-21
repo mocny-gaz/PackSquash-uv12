@@ -110,10 +110,12 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 				println!("{}", options.usage(""));
 
 				0
-			} else if option_matches.opt_present("gui")
-				|| (option_matches.free.is_empty() && gui::opened_by_double_click())
+			} else if let Some(exit_code) = (option_matches.opt_present("gui")
+				|| (option_matches.free.is_empty() && gui::opened_by_double_click()))
+			.then(gui::run)
+			.flatten()
 			{
-				gui::run()
+				exit_code
 			} else if option_matches.opt_present("v") {
 				print_version_information(true);
 
