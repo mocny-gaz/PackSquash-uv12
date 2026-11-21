@@ -336,8 +336,10 @@ pub fn opened_by_double_click() -> bool {
 
 	let mut processes = [0u32; 2];
 
-	// SAFETY: the buffer holds the two process identifiers that the length says
-	unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 2) == 1 }
+	#[allow(unsafe_code)] // SAFETY: the buffer holds the two process identifiers that the length says
+	let attached_processes = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 2) };
+
+	attached_processes == 1
 }
 
 #[cfg(not(windows))]
