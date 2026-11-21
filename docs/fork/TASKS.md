@@ -4,24 +4,24 @@ Updated 2026-11-21. Edit it freely and upload it. One line per task: `- [ ] ID t
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
-
+- [ ] b12 (absolute priority) the tester build failed with "usage of an `unsafe` block" in `gui.rs` (ai) STATE: patch 0052 (sent). My double click check used `unsafe` without the `allow` that the other files use, and the release build denies it. Cause: the code only builds on Windows and my sandbox is Linux. Tested: the function compiles for the Windows target with the same `-D unsafe-code` flag, in a small test crate, because my sandbox has no MinGW to build the whole program
 - [ ] b9 `Temmie.zip`: one `.lang` file with a line without `=` fails the whole pack (ai) STATE: patch 0046 (in your master). The file is copied as it is. Tested on a real pack
 - [ ] b10 12 of 46 Modrinth packs fail because of the checks of `pack.mcmeta` (`supported_formats` with `min_format`, three numbers in a version, a decimal number) (ai) STATE: patch 0047 (in your master). The pack is squashed anyway, with a notice, when `copy_failed_files` is on. Tested with the exact error of the log
 
 ## This very moment
 
-- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: waiting for your answers (questions 3 to 5 in chat). No code yet
+- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: patch 0053 (sent). Option `fix_pack_metadata`, default on. Fixes only a `pack.mcmeta` that fails the checks, shows each change as a notice, and writes more detail to the debug log when `log = true`. Tested with the real program on eight packs: whole decimal, syntax, three versions, `supported_formats` removed and added, a pack that needs no fix (not rewritten), a raw line break (reported), and an unknown mistake (left alone). Not done: the online builder page, see chat
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all. Open it when double clicking packsquash, also add a mode for cli in that gui (ai) STATE: patch 0042 (in your master). Patch 0050 (sent): on Windows, double clicking `packsquash.exe` opens the window; a terminal start with no arguments works as before. Not tested: a real double click and the page in a real browser, my sandbox has neither. Patch 0051 (sent): a Use CLI button in the window closes it and PackSquash goes on in the terminal (keyboard options as before); the terminal also shows the run output while the window is open. Tested with the real program: the button, the closed page, the options on stdin, and the echo
-- [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai) STATE: the JSON fixer is built (patches 0043 and 0044, kept ready, not applied). Waiting for your answers in `R6-DESIGN-FOR-YOUR-OPINION.md` (questions 6 to 8 in chat)
+- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all. Open it when double clicking packsquash, also add a mode for cli in that gui (ai) STATE: patch 0042 (in your master). Patch 0050 (sent): on Windows, double clicking `packsquash.exe` opens the window. Patch 0051 (sent): a Use CLI button closes the window and PackSquash goes on in the terminal with keyboard options as before; the terminal shows the run output while the window is open. Patch 0052 (sent) fixes the `unsafe` build error of 0050. Tested the button, the closed page and the output with the real program. Not tested: a real double click and the page in a real browser, my sandbox has neither
+- [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai) STATE: ON HOLD until you say. The fixer, the Bedrock conversion and the version conversion wait. The JSON fixer is built (patches 0043 and 0044, kept ready, not applied)
 
 ## Later
 
-- [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. My pick is to skip or to measure a pack first. No code until you answer (question 9 in chat)
-- [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. My pick is to skip, or an opt-in safe subset only if you use data packs. No code until you answer (question 10 in chat)
-- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). I propose to close it. Please test one real NTE pack (question 11 in chat)
+- [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. Starts when the first priority tasks run out
+- [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. Starts when the first priority tasks run out
+- [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). Starts when the first priority tasks run out. Please test one real NTE pack
 - [ ] L4 Upstream issues 254 (overlays) and 373 (formats): wait for upstream
 - [ ] L5 Not planned: 196 (Gradle), 238 (Bukkit), 378 (Java bindings), 215 (API crate)
 - [ ] L7 Linux and macOS programs in the release: the CI way (`release.py tag`) makes them

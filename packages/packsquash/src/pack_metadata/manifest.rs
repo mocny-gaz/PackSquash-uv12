@@ -864,6 +864,16 @@ impl PackMetadata {
 		vfs: &impl VirtualFileSystem,
 		root_path: impl AsRef<Path>
 	) -> Result<Self, PackMetadataError> {
+		let (pack_type, manifest_buf) = Self::read_manifest(vfs, root_path).await?;
+
+		Self::parse(pack_type, &manifest_buf)
+	}
+
+	/// Reads the type and the raw manifest of the pack at `root_path` on the given `vfs`.
+	pub(super) async fn read_manifest(
+		vfs: &impl VirtualFileSystem,
+		root_path: impl AsRef<Path>
+	) -> Result<(PackType, Vec<u8>), PackMetadataError> {
 		let root_path = root_path.as_ref();
 
 		let mut pack_type = None;
@@ -892,7 +902,12 @@ impl PackMetadata {
 			.read_to_end(&mut manifest_buf)
 			.await?;
 
-		let manifest = strip_utf8_bom(&manifest_buf);
+		Ok((*pack_type, manifest_buf))
+	}
+
+	/// Parses the raw manifest of a pack of the given type.
+	pub(super) fn parse(pack_type: PackType, manifest_buf: &[u8]) -> Result<Self, PackMetadataError> {
+		let manifest = strip_utf8_bom(manifest_buf);
 
 		match pack_type.deserialize_meta(&mut serde_json::Deserializer::from_reader(
 			StripComments::new(manifest)

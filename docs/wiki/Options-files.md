@@ -27,6 +27,7 @@
   - [`copy_failed_files`](#copy_failed_files)
   - [`skip_pack_icon`](#skip_pack_icon)
   - [`validate_pack_metadata_file`](#validate_pack_metadata_file)
+  - [`fix_pack_metadata`](#fix_pack_metadata)
   - [`ignore_system_and_hidden_files`](#ignore_system_and_hidden_files)
   - [`pack_edition`](#pack_edition)
   - [`mcchanges_download`](#mcchanges_download)
@@ -567,6 +568,42 @@ Example:
 
 ```toml
 validate_pack_metadata_file = true
+```
+
+### `fix_pack_metadata`
+
+**Type**: [Boolean](https://toml.io/en/v1.0.0#boolean)
+
+**Default value**: `true`
+
+When the `pack.mcmeta` file does not pass the checks because of a small mistake
+that PackSquash knows, this option makes PackSquash repair it and write the
+repaired file to the result. A `pack.mcmeta` that passes the checks is never
+rewritten. These mistakes are repaired:
+
+- JSON that the game accepts but a strict reader rejects: trailing commas,
+  single quotes, names without quotes and a byte order mark.
+- A decimal number that is a whole number, like `15.0` in `pack_format`, which is
+  written as `15`.
+- A list of more than two versions in `supported_formats`, which is written as
+  the first and the last version.
+- A `supported_formats` that `min_format` and `max_format` do not allow, which is
+  removed, or one that they need and is missing, which is added together with
+  `pack_format`.
+
+A raw line break or tab inside a string, which the game accepts, is always
+written as an escape in the result. This option only makes PackSquash tell about
+it.
+
+Every change is shown as a notice, and with [`log`](#log) set to `true` the debug
+log has more detail about each one. This option only has effect when the
+`pack.mcmeta` file is read, which
+[`validate_pack_metadata_file`](#validate_pack_metadata_file) describes.
+
+Example:
+
+```toml
+fix_pack_metadata = true
 ```
 
 ### `ignore_system_and_hidden_files`
@@ -2577,6 +2614,7 @@ automatic_asset_types_mask_detection = true
 allow_mods = ['OptiFine', 'Minecraft Transit Railway 3']
 skip_pack_icon = true
 validate_pack_metadata_file = true
+fix_pack_metadata = true
 ignore_system_and_hidden_files = false
 mcchanges_path = 'C:\path\to\mcchanges.jar'
 mcchanges_version = '1.8.9'

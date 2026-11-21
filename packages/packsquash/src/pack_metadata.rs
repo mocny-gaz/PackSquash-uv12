@@ -1,6 +1,9 @@
 //! Contains helper structs to parse the pack metadata file for information relevant for
 //! optimization purposes.
 
+mod fixer;
+pub use fixer::*;
+
 mod manifest;
 pub use manifest::*;
 

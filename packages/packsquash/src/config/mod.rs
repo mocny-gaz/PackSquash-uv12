@@ -85,6 +85,20 @@ pub struct GlobalOptions {
 	///
 	/// **Default value**: `true`
 	pub validate_pack_metadata_file: bool,
+	/// When `pack.mcmeta` does not pass the checks because of a small mistake that is known,
+	/// PackSquash repairs it, and writes the repaired file to the result. The known mistakes are
+	/// JSON that the game accepts but a strict reader rejects (trailing commas, single quotes,
+	/// names without quotes), decimal numbers like `15.0` and lists with more than two versions
+	/// for the pack format, and a `supported_formats` or `pack_format` that is present or missing
+	/// against the `min_format` and `max_format` of the pack. A `pack.mcmeta` that passes the
+	/// checks is not changed. Every change is shown in a notice.
+	///
+	/// This option only has effect when the `pack.mcmeta` file is read, which is controlled by
+	/// the options that [`validate_pack_metadata_file`](Self::validate_pack_metadata_file)
+	/// describes.
+	///
+	/// **Default value**: `true`
+	pub fix_pack_metadata: bool,
 	/// PackSquash uses a custom ZIP compressor that is able to balance ZIP file
 	/// interoperability and specification intent conformance with increased space savings,
 	/// compressibility and protection against external programs being able to extract files
@@ -430,6 +444,7 @@ impl Default for GlobalOptions {
 			include_unrecognized_asset_files: true,
 			copy_failed_files: true,
 			validate_pack_metadata_file: true,
+			fix_pack_metadata: true,
 			zip_spec_conformance_level: Default::default(),
 			size_increasing_zip_obfuscation: false,
 			percentage_of_zip_structures_tuned_for_obfuscation_discretion: PercentageInteger(0),

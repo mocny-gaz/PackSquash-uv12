@@ -36,7 +36,7 @@ use mcchanges::{LanguageFileReduction, McChanges, McChangesError, VersionDetecti
 use optifine_sky::SkyImageOptimizer;
 #[cfg(feature = "optifine")]
 use optifine_unused::OptifineUnused;
-use pack_metadata::{PackMetadata, PackMetadataError};
+use pack_metadata::{MetadataFixes, PackMetadata, PackMetadataError};
 use squash_zip::{SquashZip, SquashZipError};
 
 #[cfg(feature = "optifine")]
@@ -218,6 +218,7 @@ impl PackSquasher {
 			.automatic_asset_types_mask_detection;
 
 		let copy_failed_files = options_holder.options.global_options.copy_failed_files;
+		let fix_pack_metadata = options_holder.options.global_options.fix_pack_metadata;
 
 		let read_pack_meta = !is_bedrock
 			&& (automatic_quirk_detection
@@ -234,12 +235,20 @@ impl PackSquasher {
 		// Transparently modify the options before doing the actual processing we want to read the
 		// pack metadata, either to validate it, use automatic quirk detection or detect an asset
 		// type mask
-		let pack_layers = read_pack_meta
+		let (pack_layers, fixed_pack_meta) = read_pack_meta
 			.then(|| {
 				runtime.block_on(async {
-					let pack_meta =
-						match PackMetadata::read(&vfs, &options_holder.options.pack_directory).await {
-							Ok(pack_meta) => pack_meta,
+					let read = if fix_pack_metadata {
+						PackMetadata::read_and_fix(&vfs, &options_holder.options.pack_directory).await
+					} else {
+						PackMetadata::read(&vfs, &options_holder.options.pack_directory)
+							.await
+							.map(|pack_meta| (pack_meta, MetadataFixes::default()))
+					};
+
+					let (pack_meta, metadata_fixes) =
+						match read {
+							Ok(read) => read,
 							Err(error) if copy_failed_files => {
 								detail!("The pack metadata could not be used: {error}");
 
@@ -252,13 +261,38 @@ impl PackSquasher {
 										.ok();
 								}
 
-								return Ok(HashMap::from_iter([(
-									arcstr::literal!(""),
-									HashSet::default()
-								)]));
+								return Ok((
+									HashMap::from_iter([(arcstr::literal!(""), HashSet::default())]),
+									None
+								));
 							}
 							Err(error) => return Err(error.into())
 						};
+
+					for fix in &metadata_fixes.fixes {
+						detail!("pack.mcmeta fixed: {}", fix.detail);
+
+						if let Some(pack_file_status_sender) = &pack_file_status_sender {
+							pack_file_status_sender
+								.send(PackSquasherStatus::Notice(Cow::Owned(format!(
+									"pack.mcmeta fixed: {}",
+									fix.summary
+								))))
+								.await
+								.ok();
+						}
+					}
+
+					if let Some(fixed_data) = &metadata_fixes.fixed_data {
+						detail!(
+							"pack.mcmeta: the original file has {} bytes, and the repaired file has {} bytes",
+							metadata_fixes.original_len,
+							fixed_data.len()
+						);
+					}
+
+					let fixed_pack_meta: Option<Arc<[u8]>> =
+						metadata_fixes.fixed_data.map(Into::into);
 
 					if automatic_quirk_detection {
 						let quirks = pack_meta.applicable_minecraft_quirks();
@@ -296,13 +330,16 @@ impl PackSquasher {
 						);
 					}
 
-					Ok::<_, PackSquasherError>(pack_meta.layers)
+					Ok::<_, PackSquasherError>((pack_meta.layers, fixed_pack_meta))
 				})
 			})
 			.transpose()?
 			.unwrap_or_else(|| {
 				// Default to no overlays (a single base layer) for matching asset types below
-				HashMap::from_iter([(arcstr::literal!(""), HashSet::default())])
+				(
+					HashMap::from_iter([(arcstr::literal!(""), HashSet::default())]),
+					None
+				)
 			});
 
 		detail!(
@@ -639,6 +676,7 @@ impl PackSquasher {
 				let squash_zip = Arc::clone(&squash_zip);
 				let vfs = Arc::clone(&vfs);
 				let mcchanges = mcchanges.clone();
+				let fixed_pack_meta = fixed_pack_meta.clone();
 				#[cfg(feature = "optifine")]
 				let sky_image_optimizer = sky_image_optimizer.clone();
 				#[cfg(feature = "optifine")]
@@ -773,6 +811,16 @@ impl PackSquasher {
 								file_data_override = Some(data.into());
 							}
 						}
+					}
+
+					// The pack metadata file is replaced by its repaired version, if it was repaired
+					if let Some(fixed_pack_meta) = &fixed_pack_meta
+						&& file_data_override.is_none()
+						&& pack_file_data.relative_path.as_str() == "pack.mcmeta"
+					{
+						detail!("pack.mcmeta: the repaired file replaces the original");
+
+						file_data_override = Some(Arc::clone(fixed_pack_meta));
 					}
 
 					#[cfg(feature = "optifine")]
