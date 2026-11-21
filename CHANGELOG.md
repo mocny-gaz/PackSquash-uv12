@@ -12,6 +12,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `packsquash --gui` opens a black options window in the browser (Edge as an app window on Windows) with Run, Stop and a live log. It reads and writes `.toml` options files and remembers the last settings. It only works from the same computer, with a secret address.
 
+### Fixed
+
+- A `.lang` file with a line that has no `=` no longer fails the whole pack. It is copied as it is, like the other files that can not be optimized. Before, the error came after part of the file was written.
+
 ## [0.5.0-fork.2] - 2026-11-14
 
 ### Added

@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use futures::{StreamExt, future};
+use futures::{StreamExt, future, stream};
 use patricia_tree::PatriciaSet;
 use regex::Regex;
 use thiserror::Error;
@@ -87,7 +87,7 @@ impl<T: AsyncRead + Send + Unpin + 'static> PackFile for LegacyLanguageFile<T> {
 		let minify = self.optimization_settings.minify;
 		let strip_bom = self.optimization_settings.strip_bom;
 
-		MarkLastDecorator::new(FramedRead::new(
+		let processed = MarkLastDecorator::new(FramedRead::new(
 			self.read,
 			// Limit line length to 16 KiB to bound memory consumption and be nice to Minecraft.
 			// Longer lines are probably an error, and will negatively affect Minecraft performance
@@ -111,7 +111,19 @@ impl<T: AsyncRead + Send + Unpin + 'static> PackFile for LegacyLanguageFile<T> {
 			line_number.increment();
 
 			future::ready(processed_line_result)
-		})
+		});
+
+		// An error in the middle of the file has to be the first thing that the caller sees, because what was
+		// written already can not be taken back
+		stream::once(Box::pin(async move {
+			let chunks: Vec<_> = processed.collect().await;
+
+			match chunks.iter().position(|chunk| chunk.is_err()) {
+				Some(position) => chunks.into_iter().nth(position).into_iter().collect(),
+				None => chunks
+			}
+		}))
+		.flat_map(stream::iter)
 	}
 
 	fn is_compressed(&self) -> bool {

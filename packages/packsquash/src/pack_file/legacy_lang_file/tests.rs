@@ -199,3 +199,21 @@ async fn invalid_format_string_is_handled() {
 	)
 	.await
 }
+
+#[tokio::test]
+async fn an_error_in_a_late_line_is_the_first_item_of_the_stream() {
+	let input = "a=1\nb=2\nthis line has no separator\nc=3\n";
+	let mut data_stream = Box::pin(
+		LegacyLanguageFile {
+			read: Builder::new().read(input.as_bytes()).build(),
+			optimization_settings: Default::default()
+		}
+		.process()
+	);
+
+	assert!(matches!(
+		data_stream.next().await,
+		Some(Err(OptimizationError::MissingSeparator(_)))
+	));
+	assert!(data_stream.next().await.is_none());
+}
