@@ -46,14 +46,20 @@ other option, the fork squashes a pack like the original PackSquash does.
 
 ## The window
 
-`packsquash --gui` opens a window in your browser (Edge on Windows, as a small app window) with the same black options builder as the
-online one, and adds Run, Stop and a live log. Set what you want and press Run. The options go to the same program, so it does the
-same as `packsquash options.toml`. On Windows, double clicking `packsquash.exe` opens the same window. Starting `packsquash` in a terminal with no arguments still reads the options from the keyboard. The Use CLI button closes the window and gives you that terminal behavior. You press it once after each start, it is not a setting.
+`packsquash --gui` opens the PackSquash window. On Windows it is a normal program window, black for OLED screens, with pages for the
+options, a Settings file page that shows the options file and its warnings, and a Log page. It is part of `packsquash.exe`: it needs
+nothing else installed, and it does not use a browser. Set what you want and press Run. The options go to the same program, so it
+does the same as `packsquash options.toml`.
 
-- Save .toml writes the options to a file you can use later. Open .toml reads one. Your last settings are remembered.
-- The window only works from this computer, with a secret address that PackSquash prints. It ends when you close the window, or press
-  Ctrl+C.
+- Double clicking `packsquash.exe` opens the window. `packsquash --gui options.toml` opens it with that file loaded.
+- Starting `packsquash` in a terminal with no arguments still reads the options from the keyboard. The Use CLI button closes the
+  window and gives you that terminal behavior. You press it once after each start, it is not a setting.
+- While the window is open, the terminal behind it shows the output of each run.
+- Save writes the options to a `.toml` file you can use later. Open reads one. Copy puts the options file on the clipboard. The
+  window does not remember settings by itself, so save the ones you want to keep.
 - Relative paths are relative to the folder where you started `packsquash --gui`.
+- On Linux and macOS there is no program window yet. `--gui` opens a page in your browser, with a secret address that PackSquash
+  prints, and it ends when you close the page or press Ctrl+C.
 
 ## How options work
 

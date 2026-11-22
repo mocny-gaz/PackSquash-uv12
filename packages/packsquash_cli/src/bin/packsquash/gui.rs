@@ -10,6 +10,15 @@ use std::{
 	time::{Duration, Instant}
 };
 
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod model;
+#[cfg(windows)]
+mod native;
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod options;
+
 const PAGE: &str = include_str!("gui.html");
 const PORT: u16 = 47821;
 const MAX_BODY: usize = 1024 * 1024;
@@ -347,7 +356,21 @@ pub fn opened_by_double_click() -> bool {
 	false
 }
 
-pub fn run() -> Option<i32> {
+/// Opens the window of PackSquash. On Windows it is a normal program window. Where there is none,
+/// and for the automatic tests of the release script, which set `PACKSQUASH_NO_BROWSER`, the
+/// window is a page that a small local server gives to a browser.
+pub fn run(options_file: Option<&str>) -> Option<i32> {
+	#[cfg(windows)]
+	if env::var_os("PACKSQUASH_NO_BROWSER").is_none() {
+		return native::run(options_file);
+	}
+
+	let _ = options_file;
+
+	run_in_browser()
+}
+
+fn run_in_browser() -> Option<i32> {
 	let listener = match TcpListener::bind(("127.0.0.1", PORT))
 		.or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
 	{

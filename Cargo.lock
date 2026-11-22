@@ -376,6 +376,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmk"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fd5de2a10e31b3ec3e8d75e7ccf8281ab3ee55de68f7ab6ffa9e21be8d82f22"
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -507,6 +513,15 @@ checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
  "itertools 0.10.5",
+]
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -951,6 +966,30 @@ dependencies = [
  "libz-sys",
  "miniz_oxide",
  "zlib-rs",
+]
+
+[[package]]
+name = "fltk"
+version = "1.5.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78e4a0494d4c6c020514ae1d0b6cc44beddd5f37f0b81bc8e84334652ee15291"
+dependencies = [
+ "bitflags 2.13.2",
+ "crossbeam-channel",
+ "fltk-sys",
+ "minipaste",
+ "once_cell",
+ "ttf-parser",
+]
+
+[[package]]
+name = "fltk-sys"
+version = "1.5.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9c99e29458923abe3f07b7f8a3bc5b5de3a2c04ad82273fd96402b3666ed06"
+dependencies = [
+ "cmake",
+ "cmk",
 ]
 
 [[package]]
@@ -1583,6 +1622,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "minipaste"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bbcafc6544efab7decec8e8e63d6e7cbaac0a699a4adead308a80f9c302d6ae"
+dependencies = [
+ "proc-macro2",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1893,6 +1941,7 @@ version = "0.5.0-fork.2"
 dependencies = [
  "anstyle",
  "env_logger",
+ "fltk",
  "getopts",
  "log",
  "mimalloc",
@@ -3030,6 +3079,12 @@ dependencies = [
  "num-integer",
  "strength_reduce",
 ]
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "typed-path"

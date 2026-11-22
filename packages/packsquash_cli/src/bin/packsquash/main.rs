@@ -112,7 +112,7 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 				0
 			} else if let Some(exit_code) = (option_matches.opt_present("gui")
 				|| (option_matches.free.is_empty() && gui::opened_by_double_click()))
-			.then(gui::run)
+			.then(|| gui::run(option_matches.free.first().map(String::as_str)))
 			.flatten()
 			{
 				exit_code
