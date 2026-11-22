@@ -969,7 +969,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		flat(0, 0, 78, 30, "Save", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Copy", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Reset", FIELD, TEXT),
-		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT)
+		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT),
 	];
 	let mut status = label(0, 0, 200, 20, "", 12, MUTED);
 

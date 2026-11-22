@@ -134,7 +134,7 @@ fn resolve(entry_path: &str, root: &str, value: &str, extension: &str) -> Option
 	} else if !value.contains('/') {
 		vec![
 			format!("{directory}{value}"),
-			format!("assets/minecraft/{value}")
+			format!("assets/minecraft/{value}"),
 		]
 	} else {
 		vec![format!("assets/minecraft/{value}")]

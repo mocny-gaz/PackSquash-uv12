@@ -366,4 +366,3 @@ async fn png_obfuscation_works() {
 	)
 	.await
 }
-

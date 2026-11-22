@@ -1209,7 +1209,7 @@ impl ArchiveWriter {
 				let mut writer = sevenz_rust2::ArchiveWriter::new(file).map_err(io::Error::other)?;
 
 				writer.set_content_methods(vec![
-					sevenz_rust2::encoder_options::Lzma2Options::from_level(9).into()
+					sevenz_rust2::encoder_options::Lzma2Options::from_level(9).into(),
 				]);
 				Self::SevenZ(Box::new(writer))
 			}

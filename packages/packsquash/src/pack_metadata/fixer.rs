@@ -226,7 +226,7 @@ fn long_version_lists(value: &mut Value) -> Vec<MetadataFix> {
 			let old = child.to_string();
 			let range = Value::Array(vec![
 				child[0].clone(),
-				child[child.as_array().map_or(0, |items| items.len() - 1)].clone()
+				child[child.as_array().map_or(0, |items| items.len() - 1)].clone(),
 			]);
 			let new = range.to_string();
 

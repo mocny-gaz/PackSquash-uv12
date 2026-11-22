@@ -34,9 +34,7 @@ pub enum ImageProcessingError {
 /// Performs a first fast optimization to an input PNG image: remove non-critical chunks
 /// that will not be parsed by the expected downstream decoders. This can never increase
 /// the input PNG image size, only decrease or maintain it.
-pub fn strip_unnecessary_chunks(
-	input_png: BytesMut
-) -> Result<Vec<u8>, ImageProcessingError> {
+pub fn strip_unnecessary_chunks(input_png: BytesMut) -> Result<Vec<u8>, ImageProcessingError> {
 	let mut stripped_png = Vec::with_capacity(input_png.len());
 
 	// Helper macro to avoid non-panicking bounds checking verbosity
