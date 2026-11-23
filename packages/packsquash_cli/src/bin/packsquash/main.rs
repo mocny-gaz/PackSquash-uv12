@@ -237,7 +237,8 @@ fn read_options_file_and_squash(
 			options_file_path,
 			&options_string,
 			&fork_options,
-			&squash_options.pack_directory
+			&squash_options.pack_directory,
+			&squash_options.global_options.output_file_path
 		);
 	}
 
@@ -347,7 +348,8 @@ fn start_debug_log(
 	options_file_path: Option<&String>,
 	options_string: &str,
 	fork_options: &ForkOptions,
-	pack_directory: &std::path::Path
+	pack_directory: &std::path::Path,
+	output_file_path: &std::path::Path
 ) {
 	let path = log_options.file.clone().unwrap_or_else(|| {
 		// The name of the log has the name of the input, so that the logs of different inputs are not mixed up
@@ -357,14 +359,18 @@ fn start_debug_log(
 			.map_or(pack_directory, |bulk| bulk.input_directory.as_path());
 		let file_name = fork_options::default_log_file_name(&absolute_path(input));
 
-		options_file_path
-			.and_then(|options_file_path| {
-				std::path::Path::new(options_file_path)
-					.parent()
-					.map(|directory| directory.join(&file_name))
-			})
-			.unwrap_or_else(|| file_name.clone().into())
+		// The log goes where the output is, so it is easy to find with the results
+		fork_options::default_log_directory(fork_options.bulk.as_ref(), output_file_path)
+			.join(file_name)
 	});
+
+	if let Some(directory) = path
+		.parent()
+		.filter(|directory| !directory.as_os_str().is_empty())
+	{
+		// The output directory may not exist yet. PackSquash makes it later
+		let _ = std::fs::create_dir_all(directory);
+	}
 
 	if let Err(error) = debug_log::start(&path) {
 		warn!(

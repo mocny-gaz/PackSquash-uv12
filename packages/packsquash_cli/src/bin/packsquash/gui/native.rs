@@ -18,7 +18,7 @@ use fltk::{
 	input::{FloatInput, Input, IntInput},
 	menu::Choice,
 	prelude::*,
-	text::{TextBuffer, TextDisplay, WrapMode},
+	text::{TextBuffer, TextEditor, WrapMode},
 	window::Window
 };
 
@@ -48,7 +48,6 @@ const HEAD: i32 = 70;
 const PAD: i32 = 28;
 const CONTROL: i32 = 300;
 const SETTINGS_FILE: usize = TABS.len();
-const LOG: usize = TABS.len() + 1;
 
 struct Ui {
 	model: RefCell<Model>,
@@ -64,13 +63,14 @@ struct Ui {
 	all: ToggleButton,
 	all_label: Frame,
 	warnings: Frame,
-	toml: TextDisplay,
-	log: TextDisplay,
+	toml: TextEditor,
+	filling: Cell<bool>,
+	edited: Cell<bool>,
+	note: RefCell<(String, bool)>,
 	run: Button,
 	stop: Button,
 	buttons: Vec<Button>,
 	state: Shared,
-	log_len: Cell<usize>,
 	was_running: Cell<bool>,
 	use_cli: Cell<bool>,
 	test: Cell<Option<i32>>
@@ -197,7 +197,7 @@ fn style_input(input: &mut impl InputExt) {
 	input.set_frame(FrameType::FlatBox);
 }
 
-fn style_display(display: &mut TextDisplay, font: Font) {
+fn style_display(display: &mut impl DisplayExt, font: Font) {
 	display.set_color(PANEL);
 	display.set_text_color(TEXT);
 	display.set_text_font(font);
@@ -216,9 +216,16 @@ fn style_scrollbar(scroll: &mut Scroll) {
 		bar.set_slider_frame(FrameType::RFlatBox);
 		bar.set_frame(FrameType::FlatBox);
 	}
+
+	// The mouse wheel moves the content by the line size of the scroll bar, so doubling it makes
+	// scrolling twice as fast
+	let mut bar = scroll.scrollbar();
+	let line = bar.linesize();
+
+	bar.set_linesize(line * 2);
 }
 
-fn message(ui: &Rc<Ui>, text: &str, color: Color) {
+fn set_status(ui: &Rc<Ui>, text: &str, color: Color, clear_later: bool) {
 	let id = ui.status_id.get() + 1;
 	let mut status = ui.status.clone();
 
@@ -227,16 +234,22 @@ fn message(ui: &Rc<Ui>, text: &str, color: Color) {
 	status.set_label(text);
 	status.redraw();
 
-	let ui = ui.clone();
+	if clear_later {
+		let ui = ui.clone();
 
-	app::add_timeout3(5.0, move |_| {
-		if ui.status_id.get() == id {
-			let mut status = ui.status.clone();
+		app::add_timeout3(5.0, move |_| {
+			if ui.status_id.get() == id {
+				let mut status = ui.status.clone();
 
-			status.set_label("");
-			status.redraw();
-		}
-	});
+				status.set_label("");
+				status.redraw();
+			}
+		});
+	}
+}
+
+fn message(ui: &Rc<Ui>, text: &str, color: Color) {
+	set_status(ui, text, color, true);
 }
 
 fn browse(kind: FileDialogType, title: &str) -> Option<String> {
@@ -278,35 +291,100 @@ fn changed(ui: &Rc<Ui>) {
 	badge.redraw();
 
 	if ui.page.get() == SETTINGS_FILE {
-		fill_settings_file(ui);
+		show_warnings(ui);
 	}
 }
 
-fn fill_settings_file(ui: &Rc<Ui>) {
-	let (text, warnings) = {
-		let model = ui.model.borrow();
-
-		(model.to_toml(ui.all.value()), model.warnings())
-	};
-	let mut warning_frame = ui.warnings.clone();
-	let (shown, lines) = if warnings.is_empty() {
-		("No warnings.".to_string(), 1)
+/// The text of the Settings file page, which is what the program runs when it was edited by hand.
+fn current_text(ui: &Rc<Ui>) -> String {
+	if ui.page.get() == SETTINGS_FILE {
+		ui.toml
+			.buffer()
+			.map_or_else(String::new, |buffer| buffer.text())
 	} else {
-		let (text, lines) = wrap(&warnings.join("\n\n"), ui.window.w() - SIDE - 2 * PAD, 12);
+		ui.model.borrow().to_toml(ui.all.value())
+	}
+}
 
-		(text, lines + warnings.len() as i32)
+/// Shows the warnings, and what is wrong with the text if it was edited.
+fn show_warnings(ui: &Rc<Ui>) {
+	let mut lines_of_text = Vec::new();
+	let (note, is_error) = ui.note.borrow().clone();
+
+	if !note.is_empty() {
+		lines_of_text.push(note);
+	}
+
+	lines_of_text.extend(ui.model.borrow().warnings());
+
+	let mut warning_frame = ui.warnings.clone();
+	let (shown, lines) = if lines_of_text.is_empty() {
+		(
+			"No warnings. Edit this text by hand, or paste a settings file here.".to_string(),
+			1
+		)
+	} else {
+		let (text, lines) = wrap(
+			&lines_of_text.join("\n\n"),
+			ui.window.w() - SIDE - 2 * PAD,
+			12
+		);
+
+		(text, lines + lines_of_text.len() as i32)
 	};
 
-	warning_frame.set_label_color(if warnings.is_empty() { MUTED } else { WARNING });
+	warning_frame.set_label_color(if is_error {
+		BAD
+	} else if lines_of_text.is_empty() {
+		MUTED
+	} else {
+		WARNING
+	});
 	warning_frame.set_label(&shown);
+	place(ui, lines);
+}
 
+/// Writes the settings as text in the editor of the Settings file page.
+fn fill_text(ui: &Rc<Ui>) {
+	let text = ui.model.borrow().to_toml(ui.all.value());
 	let toml = ui.toml.clone();
+
+	ui.filling.set(true);
 
 	if let Some(mut buffer) = toml.buffer() {
 		buffer.set_text(&text);
 	}
 
-	place(ui, lines);
+	ui.filling.set(false);
+	ui.edited.set(false);
+	*ui.note.borrow_mut() = (String::new(), false);
+	show_warnings(ui);
+}
+
+/// The text of the editor changed by hand or by a paste: it becomes the settings if it is valid.
+fn apply_text(ui: &Rc<Ui>, text: &str) {
+	ui.edited.set(true);
+
+	let result = ui.model.borrow_mut().import(text);
+
+	*ui.note.borrow_mut() = match result {
+		Ok(unknown) if unknown.is_empty() => (String::new(), false),
+		Ok(unknown) => (
+			format!(
+				"These are not options of this window. They are still run while you stay on this page: {}",
+				unknown.join(", ")
+			),
+			false
+		),
+		Err(error) => (
+			format!(
+				"This text is not valid, so the settings are not changed: {}",
+				error.lines().next().unwrap_or_default()
+			),
+			true
+		)
+	};
+	changed(ui);
 }
 
 fn place(ui: &Rc<Ui>, warning_lines: i32) {
@@ -332,19 +410,12 @@ fn layout(ui: &Rc<Ui>) {
 	let mut badge = ui.badge.clone();
 	let mut status = ui.status.clone();
 	let mut scroll = ui.scroll.clone();
-	let mut log = ui.log.clone();
 	let mut all = ui.all.clone();
 	let mut all_label = ui.all_label.clone();
 
 	title.resize(SIDE + PAD, 20, 400, 32);
 	badge.resize(w - PAD - 360, 28, 360, 20);
 	scroll.resize(SIDE, HEAD, w - SIDE, h - HEAD - BAR);
-	log.resize(
-		SIDE + PAD,
-		HEAD + 4,
-		w - SIDE - 2 * PAD,
-		h - BAR - HEAD - 16
-	);
 	all.resize(SIDE + PAD, HEAD + 4, 42, 22);
 	all_label.resize(SIDE + PAD + 54, HEAD + 6, 400, 18);
 
@@ -374,7 +445,7 @@ fn layout(ui: &Rc<Ui>) {
 	status.resize(x + 8, y + 6, (w - PAD - 100 - x - 24).max(40), 20);
 
 	if ui.page.get() == SETTINGS_FILE {
-		fill_settings_file(ui);
+		show_warnings(ui);
 	}
 }
 
@@ -396,11 +467,9 @@ fn go(ui: &Rc<Ui>, page: usize) {
 	let mut all_label = ui.all_label.clone();
 	let mut warnings = ui.warnings.clone();
 	let mut toml = ui.toml.clone();
-	let mut log = ui.log.clone();
 
 	title.set_label(match page {
 		SETTINGS_FILE => "Settings file",
-		LOG => "Log",
 		page => TABS[page]
 	});
 
@@ -409,8 +478,7 @@ fn go(ui: &Rc<Ui>, page: usize) {
 		&mut all,
 		&mut all_label,
 		&mut warnings,
-		&mut toml,
-		&mut log
+		&mut toml
 	] {
 		widget.hide();
 	}
@@ -423,9 +491,7 @@ fn go(ui: &Rc<Ui>, page: usize) {
 		all_label.show();
 		warnings.show();
 		toml.show();
-		fill_settings_file(ui);
-	} else {
-		log.show();
+		fill_text(ui);
 	}
 
 	ui.window.clone().redraw();
@@ -717,45 +783,7 @@ fn build_row(
 }
 
 fn tick(ui: &Rc<Ui>) {
-	let (new_text, running, len) = {
-		let guard = lock(&ui.state);
-		let old = ui.log_len.get();
-
-		if guard.log.len() < old {
-			(
-				Some((true, guard.log.clone())),
-				guard.running,
-				guard.log.len()
-			)
-		} else if guard.log.len() > old {
-			(
-				Some((false, guard.log.get(old..).unwrap_or("").to_string())),
-				guard.running,
-				guard.log.len()
-			)
-		} else {
-			(None, guard.running, old)
-		}
-	};
-
-	if let Some((reset, text)) = new_text {
-		let mut log = ui.log.clone();
-
-		if let Some(mut buffer) = log.buffer() {
-			if reset {
-				buffer.set_text("");
-			}
-
-			buffer.append(&text);
-
-			let end = buffer.length();
-
-			log.set_insert_position(end);
-			log.show_insert_position();
-		}
-
-		ui.log_len.set(len);
-	}
+	let running = lock(&ui.state).running;
 
 	if running != ui.was_running.get() {
 		ui.was_running.set(running);
@@ -777,7 +805,11 @@ fn tick(ui: &Rc<Ui>) {
 
 			match code {
 				Some(0) => message(ui, "Done", GOOD),
-				Some(code) => message(ui, &format!("PackSquash ended with the code {code}"), BAD),
+				Some(code) => message(
+					ui,
+					&format!("PackSquash ended with the code {code}. See the terminal"),
+					BAD
+				),
 				None => ()
 			}
 
@@ -794,7 +826,11 @@ fn tick(ui: &Rc<Ui>) {
 }
 
 fn run_now(ui: &Rc<Ui>) {
-	let text = ui.model.borrow().to_toml(false);
+	let text = if ui.page.get() == SETTINGS_FILE && ui.edited.get() {
+		current_text(ui)
+	} else {
+		ui.model.borrow().to_toml(false)
+	};
 
 	if text.starts_with("# pack_directory is required") {
 		go(ui, 0);
@@ -803,10 +839,7 @@ fn run_now(ui: &Rc<Ui>) {
 	}
 
 	match start(&ui.state, &text) {
-		Ok(()) => {
-			go(ui, LOG);
-			message(ui, "Running", MUTED);
-		}
+		Ok(()) => set_status(ui, "Running. The terminal shows the output", MUTED, false),
 		Err(error) => message(ui, &error, BAD)
 	}
 }
@@ -840,14 +873,7 @@ fn load(ui: &Rc<Ui>, path: &str) {
 		Err(error) => message(ui, &format!("Could not open it: {error}"), BAD)
 	}
 
-	go(
-		ui,
-		if ui.page.get() < TABS.len() {
-			ui.page.get()
-		} else {
-			0
-		}
-	);
+	go(ui, ui.page.get());
 	changed(ui);
 }
 
@@ -864,7 +890,7 @@ fn save_file(ui: &Rc<Ui>) {
 		return;
 	}
 
-	let text = ui.model.borrow().to_toml(ui.all.value());
+	let text = current_text(ui);
 
 	match fs::write(&path, text) {
 		Ok(()) => message(ui, "Saved", GOOD),
@@ -893,7 +919,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 
 	let mut window = Window::default()
 		.with_size(1120, 740)
-		.with_label(&format!("PackSquash {}", env!("CARGO_PKG_VERSION")));
+		.with_label(&format!("PackSquash-uv12 {}", env!("CARGO_PKG_VERSION")));
 
 	window.set_color(BLACK);
 	window.size_range(1000, 620, 0, 0);
@@ -903,14 +929,14 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 	side.set_frame(FrameType::FlatBox);
 	side.set_color(PANEL);
 
-	let mut brand = label_bold(22, 22, SIDE - 30, 28, "PackSquash", 20, TEXT);
+	let mut brand = label_bold(22, 22, SIDE - 30, 28, "PackSquash-uv12", 18, TEXT);
 
 	brand.set_label_color(ACCENT);
-	label(22, 52, SIDE - 30, 16, "fork", 12, MUTED);
+	label(22, 52, SIDE - 30, 16, env!("CARGO_PKG_VERSION"), 12, MUTED);
 
 	let mut nav = Vec::new();
 
-	for (index, name) in TABS.iter().chain(&["Settings file", "Log"]).enumerate() {
+	for (index, name) in TABS.iter().chain(&["Settings file"]).enumerate() {
 		let gap = if index >= TABS.len() { 14 } else { 0 };
 		let mut button = Button::new(0, 100 + index as i32 * 42 + gap, SIDE, 38, None);
 
@@ -948,11 +974,11 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		TEXT
 	);
 	let warnings = label(SIDE + PAD, HEAD + 40, 600, 16, "", 12, WARNING);
-	let mut toml = TextDisplay::new(SIDE + PAD, HEAD + 80, 800, 400, None);
-	let mut log = TextDisplay::new(SIDE + PAD, HEAD + 4, 800, 500, None);
+	let mut toml = TextEditor::new(SIDE + PAD, HEAD + 80, 800, 400, None);
 
 	style_display(&mut toml, Font::Courier);
-	style_display(&mut log, Font::Courier);
+	toml.set_cursor_color(TEXT);
+	toml.show_cursor(true);
 
 	let mut bar = Frame::new(SIDE, 740 - BAR, 910, BAR, None);
 
@@ -996,16 +1022,27 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		all_label,
 		warnings,
 		toml,
-		log,
+		filling: Cell::new(false),
+		edited: Cell::new(false),
+		note: RefCell::new((String::new(), false)),
 		run: run_button,
 		stop: stop_button,
 		buttons,
 		state: Shared::default(),
-		log_len: Cell::new(0),
 		was_running: Cell::new(false),
 		use_cli: Cell::new(false),
 		test: Cell::new(None)
 	});
+
+	if let Some(mut buffer) = ui.toml.buffer() {
+		let (edit_ui, edit_buffer) = (ui.clone(), buffer.clone());
+
+		buffer.add_modify_callback(move |_, inserted, deleted, _, _| {
+			if !edit_ui.filling.get() && (inserted > 0 || deleted > 0) {
+				apply_text(&edit_ui, &edit_buffer.text());
+			}
+		});
+	}
 
 	for (index, button) in ui.nav.iter().enumerate() {
 		let mut button = button.clone();
@@ -1036,12 +1073,12 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		open.set_callback(move |_| open_file(&open_ui));
 		save.set_callback(move |_| save_file(&save_ui));
 		copy.set_callback(move |_| {
-			app::copy(&copy_ui.model.borrow().to_toml(copy_ui.all.value()));
+			app::copy(&current_text(&copy_ui));
 			message(&copy_ui, "Copied", GOOD);
 		});
 		reset.set_callback(move |_| {
 			*reset_ui.model.borrow_mut() = Model::default();
-			go(&reset_ui, reset_ui.page.get().min(TABS.len() - 1));
+			go(&reset_ui, reset_ui.page.get());
 			changed(&reset_ui);
 			message(&reset_ui, "Reset", MUTED);
 		});
@@ -1059,7 +1096,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		let mut all = ui.all.clone();
 		let all_ui = ui.clone();
 
-		all.set_callback(move |_| fill_settings_file(&all_ui));
+		all.set_callback(move |_| fill_text(&all_ui));
 	}
 
 	{

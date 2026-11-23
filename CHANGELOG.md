@@ -10,8 +10,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `packsquash --gui` opens a black options window with Run, Stop and a live log. On Windows it is a normal program window made by the program itself, with no browser and nothing to install. It reads and writes `.toml` options files, and `packsquash --gui options.toml` loads one. On Linux and macOS it still opens a page in the browser.
+- `packsquash --gui` opens a black options window with Run, Stop and a live log. On Windows it is a normal program window made by the program itself, with no browser and nothing to install. Its Settings file page can be edited by hand and takes a pasted settings file. It reads and writes `.toml` options files, and `packsquash --gui options.toml` loads one. On Linux and macOS it still opens a page in the browser.
 - On Windows, double clicking `packsquash.exe` opens the window. Starting it from a terminal works as before.
+- The debug log (`log = true`) is written where the output is by default: in the folder of `output_file_path`, or in the bulk mode in `bulk_output_directory` (the input folder if there is none). It was next to the options file.
+- The tests that squash a pack take turns now, so `cargo test` does not fail with "Unexpected number of strong references to the panic hook".
 - New option `fix_pack_metadata`, enabled by default. When `pack.mcmeta` fails the checks because of a small known mistake, it is repaired, the repaired file goes to the result, and each change is shown as a notice (more detail in the debug log with `log = true`). Repaired: JSON that only the game accepts (trailing commas, single quotes, names without quotes), whole decimal numbers like `15.0`, more than two versions in `supported_formats`, and a `supported_formats` or `pack_format` that is wrongly present or missing for `min_format` and `max_format`. A `pack.mcmeta` that passes is not changed. A raw line break inside a string is reported.
 - The window has a Use CLI button. It closes the window, and PackSquash goes on in the terminal, as if it was started with no arguments. While the window is open, the terminal shows the same output as the log of the window.
 

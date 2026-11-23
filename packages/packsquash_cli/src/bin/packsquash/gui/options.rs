@@ -87,7 +87,7 @@ pub const OPTIONS: [Opt; 70] = [
 		tab: 0,
 		kind: Kind::Text,
 		default: "",
-		hint: "Where the debug log goes. Blank: packsquash-debug.log next to the options file",
+		hint: "Where the debug log goes. Blank: in the folder of the output (packsquash-debug-NAME.log)",
 		choices: &[],
 		range: (None, None),
 		table: None

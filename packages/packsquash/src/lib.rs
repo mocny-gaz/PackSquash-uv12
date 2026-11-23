@@ -85,6 +85,9 @@ mod zopfli_iterations_time_model;
 /// on any pack, in an efficient manner.
 pub struct PackSquasher;
 
+#[cfg(test)]
+static TEST_RUN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl PackSquasher {
 	/// Creates a new [`PackSquasher`] struct that will squash packs.
 	#[allow(clippy::new_without_default)] // It does not make much sense to have a default value
@@ -121,6 +124,14 @@ impl PackSquasher {
 	where
 		PackSquasherError: From<<O as TryInto<ProcessedSquashOptions>>::Error>
 	{
+		// The panic hook is global, and the contract above says it must not change while a run
+		// is executing. The tests run in threads of the same process (`cargo test`), and every
+		// one of them that squashes a pack changes the hook, so they take turns here
+		#[cfg(test)]
+		let _test_run_lock = TEST_RUN_LOCK
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner);
+
 		let mut options_holder = squash_options.try_into()?;
 
 		// When reading from a pack directory that is not a directory, no files will be

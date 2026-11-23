@@ -47,14 +47,14 @@ other option, the fork squashes a pack like the original PackSquash does.
 ## The window
 
 `packsquash --gui` opens the PackSquash window. On Windows it is a normal program window, black for OLED screens, with pages for the
-options, a Settings file page that shows the options file and its warnings, and a Log page. It is part of `packsquash.exe`: it needs
+options and a Settings file page. The Settings file page shows the options file and its warnings, and you can edit the text by hand or paste a whole settings file there. It is part of `packsquash.exe`: it needs
 nothing else installed, and it does not use a browser. Set what you want and press Run. The options go to the same program, so it
 does the same as `packsquash options.toml`.
 
 - Double clicking `packsquash.exe` opens the window. `packsquash --gui options.toml` opens it with that file loaded.
 - Starting `packsquash` in a terminal with no arguments still reads the options from the keyboard. The Use CLI button closes the
   window and gives you that terminal behavior. You press it once after each start, it is not a setting.
-- While the window is open, the terminal behind it shows the output of each run.
+- The window has no log page. The terminal behind it shows the output of each run, and the window shows only whether it ended well.
 - Save writes the options to a `.toml` file you can use later. Open reads one. Copy puts the options file on the clipboard. The
   window does not remember settings by itself, so save the ones you want to keep.
 - Relative paths are relative to the folder where you started `packsquash --gui`.
@@ -106,7 +106,7 @@ The options that this fork adds:
 | `bulk_archive_extensions` | `'zip,7z,rar,tar,gz,tgz,xz,txz,zst,tzst,bz2,tbz2'` | Files with these extensions are opened as archives. `jar` is not in the list. |
 | `bulk_scan_depth` | `32` | How many folder levels are searched, also inside archives. It is also how many archives can be inside each other (at most 32). |
 | `log` | `false` | Writes a very detailed debug log file, to send when something goes wrong. |
-| `log_file` | `'packsquash-debug-NAME.log'` next to the options file | Where the debug log is written. NAME is the name of the input. |
+| `log_file` | `'packsquash-debug-NAME.log'` where the output is | Where the debug log is written. NAME is the name of the input. Where the output is means the folder of `output_file_path`, or in the bulk mode the `bulk_output_directory` (the input folder if there is none). |
 
 Things that are always on, with no option:
 

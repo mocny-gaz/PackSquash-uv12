@@ -45,6 +45,29 @@ const DEFAULT_LOG_FILE_NAME: &str = "packsquash-debug.log";
 /// The most characters of the name of the input that are put in the name of the debug log file.
 const LOG_FILE_NAME_INPUT_LENGTH: usize = 60;
 
+/// The directory of the debug log file, if the options file does not give another one. It is where the output
+/// is. In the bulk mode, that is the output directory, or the input directory if there is none, because that is
+/// where the results go then (the parent of the input if the input is an archive). Otherwise, it is the
+/// directory of the output ZIP file. A blank result means the working directory.
+pub fn default_log_directory(bulk: Option<&BulkOptions>, output_file_path: &Path) -> PathBuf {
+	match bulk {
+		Some(bulk) => bulk.output_directory.clone().unwrap_or_else(|| {
+			if bulk.input_directory.is_file() {
+				bulk.input_directory
+					.parent()
+					.map(Path::to_path_buf)
+					.unwrap_or_default()
+			} else {
+				bulk.input_directory.clone()
+			}
+		}),
+		None => output_file_path
+			.parent()
+			.map(Path::to_path_buf)
+			.unwrap_or_default()
+	}
+}
+
 /// The name of the debug log file, if the options file does not give another one: `packsquash-debug-NAME.log`,
 /// where NAME is the name of the input. The input is the pack directory, the archive (without its extension),
 /// or the bulk input directory. Characters that are not allowed in a file name become `_`.
@@ -130,8 +153,8 @@ pub struct BulkOptions {
 /// The options of the debug log, which is a file with every detail of what the program did and decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogOptions {
-	/// Where the log is written, if the options file says it. By default, it is next to the options file, and
-	/// its name has the name of the input (see [`default_log_file_name`]).
+	/// Where the log is written, if the options file says it. By default, it is where the output is (see
+	/// [`default_log_directory`]), and its name has the name of the input (see [`default_log_file_name`]).
 	pub file: Option<PathBuf>
 }
 
@@ -392,6 +415,50 @@ pub fn split_fork_options(table: &mut Table) -> Result<ForkOptions, String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_debug_log_goes_where_the_output_is() {
+		let bulk = |input: &Path, output: Option<&str>| BulkOptions {
+			input_directory: input.to_path_buf(),
+			output_directory: output.map(PathBuf::from),
+			output_prefix: None,
+			output_suffix: String::new(),
+			overwrite: false,
+			backup: true,
+			dry_run: false,
+			report_file: None,
+			archive_extensions: Vec::new(),
+			scan_depth: 1
+		};
+		let folder = tempfile::tempdir().unwrap();
+		let archive = folder.path().join("packs.zip");
+
+		std::fs::write(&archive, b"x").unwrap();
+
+		assert_eq!(
+			default_log_directory(None, Path::new("out/pack.zip")),
+			Path::new("out")
+		);
+		assert_eq!(
+			default_log_directory(None, Path::new("pack.zip")),
+			Path::new("")
+		);
+		assert_eq!(
+			default_log_directory(
+				Some(&bulk(Path::new("in"), Some("results"))),
+				Path::new("pack.zip")
+			),
+			Path::new("results")
+		);
+		assert_eq!(
+			default_log_directory(Some(&bulk(Path::new("in"), None)), Path::new("pack.zip")),
+			Path::new("in")
+		);
+		assert_eq!(
+			default_log_directory(Some(&bulk(&archive, None)), Path::new("pack.zip")),
+			folder.path()
+		);
+	}
 
 	fn table(text: &str) -> Table {
 		text.parse().expect("the test options are valid TOML")
