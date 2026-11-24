@@ -61,7 +61,7 @@ impl TryFrom<SquashOptions> for ProcessedSquashOptions {
 /// The default values for  these options are meant to be the most reasonable that achieve good
 /// compression for  a wide range of use cases without using protection, compression or
 /// compressibility-improving techniques that may pose interoperability problems.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[non_exhaustive]
 pub struct GlobalOptions {
@@ -528,7 +528,7 @@ pub enum PackEdition {
 }
 
 /// A ZIP specification intent conformance level that a squash operation can adhere to.
-#[derive(Default, Clone, Copy, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ZipSpecConformanceLevel {
@@ -596,7 +596,7 @@ pub enum ZipSpecConformanceLevel {
 }
 
 /// A helper struct that contains an integer guaranteed to be in the `[0, 100]` interval.
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(try_from = "u8")]
 #[repr(transparent)]
 pub struct PercentageInteger(u8);
@@ -620,7 +620,7 @@ impl From<PercentageInteger> for u8 {
 
 /// A Minecraft file parsing quirk that negatively affects the perceived correctness of
 /// the generated ZIP files and that can be worked around.
-#[derive(Deserialize, Serialize, EnumSetType)]
+#[derive(Debug, Deserialize, Serialize, EnumSetType)]
 #[serde(rename_all = "snake_case")]
 #[enumset(serialize_deny_unknown, serialize_repr = "list")]
 #[non_exhaustive]
@@ -707,7 +707,7 @@ impl MinecraftQuirk {
 }
 
 /// A Minecraft modification supported by PackSquash that adds file types to packs.
-#[derive(Deserialize, Serialize, EnumSetType)]
+#[derive(Debug, Deserialize, Serialize, EnumSetType)]
 #[enumset(serialize_deny_unknown, serialize_repr = "list")]
 #[non_exhaustive]
 #[cfg(any(feature = "optifine", feature = "mtr3"))]

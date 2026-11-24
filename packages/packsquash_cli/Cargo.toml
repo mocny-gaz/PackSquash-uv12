@@ -87,7 +87,7 @@ mimalloc = {
 [target."cfg(windows)".dependencies]
 fltk = { version = "1.5.23", default-features = false }
 winapi-util = "0.1.11"
-windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tar = { version = "0.4.46", default-features = false }

@@ -1,24 +1,32 @@
 # Task list of the fork
 
-Updated 2026-11-21. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
+Updated 2026-11-24. Edit it freely and upload it. One line per task: `- [ ] ID text (who)`. Put long text, like an error, in a
 block under the task. Fixed things move to Done, in one short line. Tasks are sorted by ID. STATE is what the AI did.
 
 ## Bugs
-- [ ] b12 (absolute priority) the tester build failed with "usage of an `unsafe` block" in `gui.rs` (ai) STATE: patch 0052 (sent). My double click check used `unsafe` without the `allow` that the other files use, and the release build denies it. Cause: the code only builds on Windows and my sandbox is Linux. Tested: the function compiles for the Windows target with the same `-D unsafe-code` flag, in a small test crate, because my sandbox has no MinGW to build the whole program
+
 - [ ] b9 `Temmie.zip`: one `.lang` file with a line without `=` fails the whole pack (ai) STATE: patch 0046 (in your master). The file is copied as it is. Tested on a real pack
 - [ ] b10 12 of 46 Modrinth packs fail because of the checks of `pack.mcmeta` (`supported_formats` with `min_format`, three numbers in a version, a decimal number) (ai) STATE: patch 0047 (in your master). The pack is squashed anyway, with a notice, when `copy_failed_files` is on. Tested with the exact error of the log
+- [ ] b11 when typing in the settings file, if you paste the indicator of where youre typing is duplicated, also instead make it just like in ms notepad app (ai) STATE: patch 0057 (sent). Cause: every key press resized the editor, so FLTK drew the old caret again. It is resized only when its place changes now. The caret is a thin line that blinks like the one of Notepad. Ctrl+Backspace and Ctrl+Delete remove a word, the right button has a menu (Undo, Cut, Copy, Paste, Delete, Select All), and the page shows Ln and Col. Ctrl+Z, Ctrl+Y, Ctrl+A, Ctrl+arrows and Tab worked already. Tested on a virtual screen with a real paste of several lines
+- [ ] b12 the packsquash console in background has a weird name with some chinese letters and path to some winget and other bs (ai) STATE: patch 0057 (sent). Cause: the title was given to Windows without the zero that ends it, so Windows read the memory after it: garbage with Chinese letters and a WinGet path. It ends with a zero now. The title is `PackSquash-uv12 - Optimizing [-] | CPU 37% | pack: NAME`. Not tested on Windows. The Windows code compiles for the Windows target with `-D unsafe-code`
 
 ## This very moment
 
-- [ ] r1 auto pack.mcmeta fixer as an option enabled by default (ai) STATE: patch 0053 (sent). Option `fix_pack_metadata`, default on. Fixes only a `pack.mcmeta` that fails the checks, shows each change as a notice, and writes more detail to the debug log when `log = true`. Tested with the real program on eight packs: whole decimal, syntax, three versions, `supported_formats` removed and added, a pack that needs no fix (not rewritten), a raw line break (reported), and an unknown mistake (left alone). The online builder page has the option too
+/// priority is b12, r17, f11, r18, and the rest by default priority
+- [ ] r16 remake allow_mods to be instead optimise_mods (because anything in /assets that is like /assets/modname is another mod and by default theyre normally optimised, so instead make it so that for example assets/mcpatcher optimises optifine same for assets/optifine, add any other popular mod support(by that i mean that specialised like the sky debloat in optifine) and also make optifine optimisation settings be gray(to show taht unavailable) and skipped if it isnt in optimise_mods) (ai) STATE: design note sent (`DESIGN-F11-R16-F12-FOR-YOUR-OPINION.md`, questions 10 to 12). No code until you answer
+- [ ] r17 add back the colors to console in background (ai) STATE: patch 0057 (sent). The window starts PackSquash with `--color`, the terminal shows its colors, and the Windows console is told to understand them. The browser page stays plain text. Tested: the colors arrive in the output. Not tested on a Windows console
+- [ ] r18 after making f11 add pararel mode (only accesible when schedule) you can set how many schedules in pararel (it will split the cpu threads evenly, and not pack each on each) 0 is off (ai) STATE: waits for f11. The plan is in the design note (question 7)
 
 ## Features (in progress: the AI prepares the patches, the owner builds, then applies)
 
-- [ ] F3 Very simple GUI like Win11Debloat, only dark OLED mode, easy settings, export and import of the settings. Later release, last of all. Open it when double clicking packsquash, also add a mode for cli in that gui (ai) STATE: patches 0042 and 0050 to 0052 are in your master, but the browser window was wrong. Patch 0055 (sent) replaces it on Windows with a real program window, made by FLTK inside `packsquash.exe`: no browser, nothing to install, only Windows system DLLs (checked on the Windows build), black OLED design. It has a page list on the left (the six option pages, Settings file, Log) and the buttons Run, Stop, Open, Save, Copy, Reset and Use CLI. `packsquash --gui options.toml` loads a file. Linux and macOS keep the browser page. Tested on a virtual screen on Linux: every page, Run with the live log, Use CLI, a `pack.mcmeta` fix, and an automatic window test (`PACKSQUASH_GUI_TEST=1`). The Windows build compiles with `-D unsafe-code`. Patch 0056 (sent): the top left says PackSquash-uv12, the wheel scrolls 2x faster (32 px a notch instead of 16), the Log page is gone because the terminal shows the output, and the Settings file page can be edited by hand and takes a pasted settings file (what you see there is what runs, and a wrong text shows its error and changes nothing). Not tested: a real Windows screen and your MinGW build, because Wine crashes in my sandbox. The first build adds about 2 minutes and about 1.4 MB
 - [ ] f6 a fixer which will when fixer = true fix common detected issues in resourcepack *only when a pack/file failed* (ai) STATE: ON HOLD until you say. The fixer, the Bedrock conversion and the version conversion wait. The JSON fixer is built (patches 0043 and 0044, kept ready, not applied)
+- [ ] f11 add squash scheduling, make a button at topbar with add schedule after being clicked in topbar create schedule 1 and a + for another one and so on. each schedule has its own settings and when exporting you can export or one or whole schedule (yes add it as not only gui function but as in .toml too and cli of course) and when run will run one by one, allow editing schedule untill that part of it is running, before running another part of schedule, check if any settings in that part have been changed in past 10 seconds, if not then wait 3 seconds and run it, if yes wait till full 10 seconds pass from last modifications to that part of schedule and then run. in bottombar add functions(which will appear when schedule mode is enabled) such as stop schedule, stop schedule part(of the one currently in), skip schedule part(will go to next one and come back after all are done ), delete schedule part (will remove the part). also add consistent schedule numbering in topbar (ai) STATE: design note sent (questions 1 to 7). No code until you answer
+- [ ] f12 pause button (make it NOT bug/corrupt) (ai) STATE: design note sent (questions 8 and 9). No code until you answer
+- [ ] f13 in background console to the header(the name the one i also reference in b12) cpu % used by PACKSQUASH (as the current window/task) and which bulk/input its squashing (not the file to make it not spam at all) (ai) STATE: patch 0057 (sent). The console title shows the CPU use of PackSquash and the pack, or `bulk: NAME` in the bulk mode, never a file. It refreshes twice a second. Tested on Linux with a terminal: `PackSquash-uv12 - Optimizing [-] | CPU 99% | pack: bigpack`. The Windows CPU code compiles for the Windows target. Not tested on Windows
 
 ## Later
 
+- [ ] L0 make packsquash-uv12 not be some fork in release nor tag but packsquash-uv12 1.0 adding +0.1 each time, make it go 1.10 change the 2.0 only when user requests( also the gui update should make it 2.0 already and +0.1 for each more update but bigger one and not every commit) (ai) STATE: needs your answers (questions 13 to 15 in the design note). No code until you answer
 - [ ] L1 Issue 119: shader minification. Needs study STATE: study note sent. The first priority tasks are done, so it starts now, but I have no shader data here (Mojang is not reachable). Send a pack with large shaders (`assets/minecraft/shaders`), then I measure the real gain first
 - [ ] L2 Issue 362: function inlining. Needs study STATE: study note sent. Needs a data pack with many `.mcfunction` files to test on
 - [ ] L3 Issue 300: Nemo's Transit Expansion. Needs study STATE: study note sent. Already works in the fork: `.obj`, `.mtl` and `.js` under `assets/mtr` are kept (tested, with and without the MTR option). Please test one real NTE pack, I have none here
@@ -30,9 +38,14 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 ## Done
 
+- [x] The debug log (`log = true`) tells now how the run started (terminal, or the program window with its page, size, screen, hand edited text, changed options, warnings and the last actions), where the log is and why, and the options of PackSquash with all defaults filled in (patch 0057)
+- [x] F3* (the window): patch 0042 was a browser page and was wrong. Patch 0055 is a real program window made by FLTK inside `packsquash.exe`, no browser, only Windows system DLLs. Patch 0056: PackSquash-uv12 in the top left, 2x faster wheel, no Log page, the Settings file page can be edited by hand and takes a paste. `packsquash --gui options.toml` loads a file. Linux and macOS keep the browser page. Not tested on a real Windows screen
+- [x] r1*: the option `fix_pack_metadata`, default on, repairs a `pack.mcmeta` that fails the checks and shows each change as a notice (patch 0053)
+- [x] old b12: the tester build failed with "usage of an `unsafe` block" in `gui.rs`. Patch 0052
+
 - [x] The 9 tests that failed in your `tests.txt` (also `a_blank_game_version_compares_with_every_version_and_auto_chooses_one`) all failed with "Unexpected number of strong references to the panic hook". The `cargo test` threads changed the global panic hook at the same time. They take turns now, and the program is unchanged (patch 0056). The debug log (`log = true`) is written where the output is, not next to the options file (patch 0056)
 - [x] A test still expected the old option name `skip_optifine_sky_entries_with_missing_images` and failed, which would have failed the CI of a tag push (patch 0054)
-- [x] b8, b11: not bugs. Patch 0048 is reverted (patch 0049). r6: design file sent. r17, r18, r20: release script (normal release, window test, free tags). f7: results are an archive of the same kind as the input (patch 0035)
+- [x] b8 and the old b11: not bugs. Patch 0048 is reverted (patch 0049). r6: design file sent. r17, r18, r20: release script (normal release, window test, free tags). f7: results are an archive of the same kind as the input (patch 0035)
 - [x] r19: `release.py build --tester` makes a local test build with no tag and no internet. You said it works. r18: the release script tests the window by itself
 - [x] r3: the TOML builder page has the new names and options. r11: shorter option names (patch 0040). r16: release prep (patch 0041) and the Dependabot check. The only change is `soupsieve 4.0` in `scripts/test-packs/requirements.txt`. It resolves with the pinned `beautifulsoup4`, and no Rust file changed. You marked them done
 - [x] r2: `optifine_unused` leaves out OptiFine entries that are not connected to anything (patch 0037). The two files of its module were missing from your master, patch 0039 adds them. r7 and L6: the mcchanges jar is found or downloaded by itself and deleted at the end (patch 0038). r15: archives in archives follow `bulk_scan_depth` (patch 0033). You marked them done
@@ -62,10 +75,12 @@ block under the task. Fixed things move to Done, in one short line. Tasks are so
 
 - Scripts and their READMEs are separate files, never in a patch. A change of this file goes inside another patch.
 - Send each patch or file when it is finished, then go on with this list. Send this file again after progress, cleaned: no pasted logs, fixed things only in Done.
-- Simple English. Windows 11 and cmd commands.
+- Simple English. Windows 10 and cmd commands.
 - Clean up after user and sort and order each time
-- delete comments on resend. if answer is asked just make another comment and delete old one
+- delete comments(//) on resend. if answer is asked just make another comment and delete old one. if /// then delete only after all from there is done
 - give patches as soon as theyre done and continue moving with the task list, if theres sth which needs users info or choice then ask it and go on with the list not wasting resources
 - obey .rules but prioritise user
 - prioritise user sent TASKS.md over this file
 - Do NOT waste usage limit/tokens and manage your resources efficiently
+- when * means that it could be changed/is temporary
+- priority: user custom in chat + /// + //, b, r, f, l   (the + is also in priority order sorted)

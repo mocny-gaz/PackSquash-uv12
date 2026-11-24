@@ -182,7 +182,7 @@ fn run(title_controller: Option<TerminalTitleController>) -> i32 {
 /// read options.
 fn read_options_file_and_squash(
 	options_file_path: Option<&String>,
-	title_controller: Option<TerminalTitleController>
+	mut title_controller: Option<TerminalTitleController>
 ) -> i32 {
 	let user_friendly_options_path =
 		options_file_path.map_or("standard input (keyboard input or pipe)", |path| path);
@@ -237,8 +237,7 @@ fn read_options_file_and_squash(
 			options_file_path,
 			&options_string,
 			&fork_options,
-			&squash_options.pack_directory,
-			&squash_options.global_options.output_file_path
+			&squash_options
 		);
 	}
 
@@ -259,8 +258,18 @@ fn read_options_file_and_squash(
 			..ExtractLimits::default()
 		};
 
-		// A title that goes through phases for a single pack makes no sense for many packs
-		drop(title_controller);
+		// The title shows the bulk folder and the CPU use. It stays until the bulk run ends
+		let _bulk_title = title_controller.map(|mut title_controller| {
+			title_controller.set_input(&format!(
+				"bulk: {}",
+				bulk_options.input_directory.file_name().map_or_else(
+					|| bulk_options.input_directory.display().to_string(),
+					|name| name.to_string_lossy().into_owned()
+				)
+			));
+			title_controller.next_title_phase();
+			title_controller
+		});
 
 		// In the bulk mode, the packs are searched as deep inside the archives as in the directories
 		return bulk::run(
@@ -293,6 +302,16 @@ fn read_options_file_and_squash(
 
 	let output_file_path = squash_options.global_options.output_file_path.clone();
 	let start_instant = Instant::now();
+
+	if let Some(title_controller) = &mut title_controller {
+		title_controller.set_input(&format!(
+			"pack: {}",
+			squash_options.pack_directory.file_name().map_or_else(
+				|| squash_options.pack_directory.display().to_string(),
+				|name| name.to_string_lossy().into_owned()
+			)
+		));
+	}
 
 	squash(squash_options, title_controller).map_or_else(
 		|err| {
@@ -348,9 +367,10 @@ fn start_debug_log(
 	options_file_path: Option<&String>,
 	options_string: &str,
 	fork_options: &ForkOptions,
-	pack_directory: &std::path::Path,
-	output_file_path: &std::path::Path
+	squash_options: &SquashOptions
 ) {
+	let pack_directory = squash_options.pack_directory.as_path();
+	let output_file_path = squash_options.global_options.output_file_path.as_path();
 	let path = log_options.file.clone().unwrap_or_else(|| {
 		// The name of the log has the name of the input, so that the logs of different inputs are not mixed up
 		let input = fork_options
@@ -430,9 +450,45 @@ fn start_debug_log(
 
 	debug_log::write_block("options file", options_string);
 
+	// Who started this run, and what the program window knew, so the log explains the run when
+	// it came from the window
+	match env::var("PACKSQUASH_STARTED_BY") {
+		Ok(who) => {
+			log::debug!(
+				target: target,
+				"Started by: the {who} window of this program, with this program as a child process of it"
+			);
+
+			if let Some(window_state) = env::var_os("PACKSQUASH_WINDOW_STATE") {
+				debug_log::write_block(
+					"program window",
+					&window_state.to_string_lossy().replace(" | ", "\n")
+				);
+			}
+		}
+		Err(_) => log::debug!(target: target, "Started by: the command line")
+	}
+
+	log::debug!(
+		target: target,
+		"Debug log location: {} (chosen by {})",
+		absolute_path(&path).display(),
+		if log_options.file.is_some() {
+			"the log_file option"
+		} else {
+			"the default: the folder of the output, with the name of the input"
+		}
+	);
 	log::debug!(
 		target: target,
 		"Options that only the command-line program reads: {fork_options:#?}"
+	);
+	log::debug!(
+		target: target,
+		"Options of PackSquash with the defaults filled in. Pack directory: {}. Per file option groups: {:?}\n{:#?}",
+		pack_directory.display(),
+		squash_options.file_options.keys().collect::<Vec<_>>(),
+		squash_options.global_options
 	);
 }
 

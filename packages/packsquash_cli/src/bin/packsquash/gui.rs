@@ -123,7 +123,15 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
 	})
 }
 
-fn start(state: &Shared, options: &str) -> Result<(), String> {
+/// Starts PackSquash with the options. `colors` makes it use colors in its output, which the program window
+/// sends to the terminal behind it. The browser page shows plain text.
+fn start(
+	state: &Shared,
+	options: &str,
+	colors: bool,
+	window_kind: &str,
+	window_state: &str
+) -> Result<(), String> {
 	let mut guard = lock(state);
 
 	if guard.running {
@@ -135,8 +143,11 @@ fn start(state: &Shared, options: &str) -> Result<(), String> {
 	fs::write(&path, options).map_err(|error| format!("Couldn't write the options: {error}"))?;
 
 	let mut child = Command::new(env::current_exe().map_err(|error| error.to_string())?)
-		.args(["--no-color", "--no-emoji"])
+		.args([if colors { "--color" } else { "--no-color" }, "--no-emoji"])
 		.arg(&path)
+		// The debug log of the run tells that it came from the window, and what the window knew
+		.env("PACKSQUASH_STARTED_BY", window_kind)
+		.env("PACKSQUASH_WINDOW_STATE", window_state)
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
@@ -230,7 +241,13 @@ fn route(state: &Shared, token: &str, port: u16, request: &Request) -> Response 
 			body: PAGE.as_bytes().to_vec()
 		},
 		("GET", "/ping") => Response::text("200 OK", "ok"),
-		("POST", "/run") => match start(state, &String::from_utf8_lossy(&request.body)) {
+		("POST", "/run") => match start(
+			state,
+			&String::from_utf8_lossy(&request.body),
+			false,
+			"browser page",
+			"window=browser page"
+		) {
 			Ok(()) => Response::text("200 OK", "started"),
 			Err(message) => Response::text("409 Conflict", &message)
 		},

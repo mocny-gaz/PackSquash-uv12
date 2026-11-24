@@ -4,7 +4,8 @@
 use std::{
 	cell::{Cell, RefCell},
 	env, fs,
-	rc::Rc
+	rc::Rc,
+	time::Instant
 };
 
 use fltk::{
@@ -12,19 +13,19 @@ use fltk::{
 	button::{Button, ToggleButton},
 	dialog::{FileDialogType, NativeFileChooser},
 	draw,
-	enums::{Align, CallbackTrigger, Color, Event, Font, FrameType},
+	enums::{Align, CallbackTrigger, Color, Event, Font, FrameType, Key},
 	frame::Frame,
 	group::{Scroll, ScrollType},
 	input::{FloatInput, Input, IntInput},
-	menu::Choice,
+	menu::{Choice, MenuItem},
 	prelude::*,
-	text::{TextBuffer, TextEditor, WrapMode},
+	text::{Cursor, TextBuffer, TextEditor, WrapMode},
 	window::Window
 };
 
 use super::{
 	Shared, lock,
-	model::{Kind, Model},
+	model::{Kind, Model, word_length},
 	options::{OPTIONS, TABLES, TABS},
 	start
 };
@@ -67,6 +68,12 @@ struct Ui {
 	filling: Cell<bool>,
 	edited: Cell<bool>,
 	note: RefCell<(String, bool)>,
+	valid: Cell<Option<bool>>,
+	caret: Cell<(u32, bool)>,
+	position: Frame,
+	last_position: Cell<(i32, i32)>,
+	events: RefCell<Vec<String>>,
+	started: Instant,
 	run: Button,
 	stop: Button,
 	buttons: Vec<Button>,
@@ -282,13 +289,16 @@ fn path_buttons(key: &str) -> &'static [(&'static str, FileDialogType)] {
 fn changed(ui: &Rc<Ui>) {
 	let count = ui.model.borrow().warnings().len();
 	let mut badge = ui.badge.clone();
-
-	badge.set_label(&match count {
+	let text = match count {
 		0 => String::new(),
 		1 => "1 warning, see Settings file".to_string(),
 		count => format!("{count} warnings, see Settings file")
-	});
-	badge.redraw();
+	};
+
+	if badge.label() != text {
+		badge.set_label(&text);
+		badge.redraw();
+	}
 
 	if ui.page.get() == SETTINGS_FILE {
 		show_warnings(ui);
@@ -340,7 +350,11 @@ fn show_warnings(ui: &Rc<Ui>) {
 	} else {
 		WARNING
 	});
-	warning_frame.set_label(&shown);
+	if warning_frame.label() != shown {
+		warning_frame.set_label(&shown);
+		warning_frame.redraw();
+	}
+
 	place(ui, lines);
 }
 
@@ -357,8 +371,72 @@ fn fill_text(ui: &Rc<Ui>) {
 
 	ui.filling.set(false);
 	ui.edited.set(false);
+	ui.valid.set(None);
 	*ui.note.borrow_mut() = (String::new(), false);
 	show_warnings(ui);
+}
+
+fn page_name(page: usize) -> &'static str {
+	if page == SETTINGS_FILE {
+		"Settings file"
+	} else {
+		TABS[page]
+	}
+}
+
+/// Remembers what the person did in the window. The debug log of the next run has it, so a
+/// log that someone sends tells what led to the run.
+fn note(ui: &Rc<Ui>, text: &str) {
+	let mut events = ui.events.borrow_mut();
+
+	events.push(format!("{:.0}s {text}", ui.started.elapsed().as_secs_f32()));
+
+	if events.len() > 60 {
+		events.remove(0);
+	}
+}
+
+/// What the window knows about the settings and itself, in one line for the debug log. The parts
+/// are separated by " | ".
+fn window_state(ui: &Rc<Ui>, verbatim: bool) -> String {
+	let model = ui.model.borrow();
+	let changed = OPTIONS
+		.iter()
+		.enumerate()
+		.filter(|(index, _)| model.changed(*index))
+		.map(|(_, option)| option.key)
+		.collect::<Vec<_>>();
+	let (width, height) = app::screen_size();
+
+	[
+		"window=native, drawn by FLTK".to_string(),
+		format!("window program version={}", env!("CARGO_PKG_VERSION")),
+		format!("window process id={}", std::process::id()),
+		format!("page={}", page_name(ui.page.get())),
+		format!("window size={}x{}", ui.window.w(), ui.window.h()),
+		format!(
+			"screen={width:.0}x{height:.0}, scale={}",
+			app::screen_scale(0)
+		),
+		format!(
+			"options text={}",
+			if verbatim {
+				"the Settings file text, as edited by hand"
+			} else {
+				"made from the settings of the pages"
+			}
+		),
+		format!(
+			"options changed from the defaults ({})={}",
+			changed.len(),
+			changed.join(", ")
+		),
+		format!("warnings={:?}", model.warnings()),
+		format!("note about the text={:?}", ui.note.borrow().0),
+		format!("write every option={}", ui.all.value()),
+		format!("events={}", ui.events.borrow().join("; "))
+	]
+	.join(" | ")
 }
 
 /// The text of the editor changed by hand or by a paste: it becomes the settings if it is valid.
@@ -384,6 +462,21 @@ fn apply_text(ui: &Rc<Ui>, text: &str) {
 			true
 		)
 	};
+
+	let valid = !ui.note.borrow().1;
+
+	if ui.valid.get() != Some(valid) {
+		ui.valid.set(Some(valid));
+		note(
+			ui,
+			&if valid {
+				"Settings file text edited by hand: valid".to_string()
+			} else {
+				format!("Settings file text edited by hand: {}", ui.note.borrow().0)
+			}
+		);
+	}
+
 	changed(ui);
 }
 
@@ -394,14 +487,28 @@ fn place(ui: &Rc<Ui>, warning_lines: i32) {
 	let warning_height = warning_lines.max(1) * 16 + 8;
 	let mut warnings = ui.warnings.clone();
 	let mut toml = ui.toml.clone();
-
-	warnings.resize(x, top, w - SIDE - 2 * PAD, warning_height);
-	toml.resize(
+	let warnings_box = (x, top, w - SIDE - 2 * PAD, warning_height);
+	let toml_box = (
 		x,
 		top + warning_height + 8,
 		w - SIDE - 2 * PAD,
 		(h - BAR - top - warning_height - 8 - 12).max(40)
 	);
+
+	// Resizing the editor while the person types makes FLTK draw the caret twice, so it is only
+	// resized when its place really changed
+	if (warnings.x(), warnings.y(), warnings.w(), warnings.h()) != warnings_box {
+		warnings.resize(
+			warnings_box.0,
+			warnings_box.1,
+			warnings_box.2,
+			warnings_box.3
+		);
+	}
+
+	if (toml.x(), toml.y(), toml.w(), toml.h()) != toml_box {
+		toml.resize(toml_box.0, toml_box.1, toml_box.2, toml_box.3);
+	}
 }
 
 fn layout(ui: &Rc<Ui>) {
@@ -418,6 +525,7 @@ fn layout(ui: &Rc<Ui>) {
 	scroll.resize(SIDE, HEAD, w - SIDE, h - HEAD - BAR);
 	all.resize(SIDE + PAD, HEAD + 4, 42, 22);
 	all_label.resize(SIDE + PAD + 54, HEAD + 6, 400, 18);
+	ui.position.clone().resize(w - PAD - 160, HEAD + 6, 160, 18);
 
 	let y = h - BAR + 22;
 	let mut x = SIDE + PAD;
@@ -450,6 +558,10 @@ fn layout(ui: &Rc<Ui>) {
 }
 
 fn go(ui: &Rc<Ui>, page: usize) {
+	if ui.page.get() != page {
+		note(ui, &format!("page {}", page_name(page)));
+	}
+
 	ui.page.set(page);
 
 	for (index, button) in ui.nav.iter().enumerate() {
@@ -465,6 +577,7 @@ fn go(ui: &Rc<Ui>, page: usize) {
 	let mut scroll = ui.scroll.clone();
 	let mut all = ui.all.clone();
 	let mut all_label = ui.all_label.clone();
+	let mut position = ui.position.clone();
 	let mut warnings = ui.warnings.clone();
 	let mut toml = ui.toml.clone();
 
@@ -477,6 +590,7 @@ fn go(ui: &Rc<Ui>, page: usize) {
 		&mut scroll as &mut dyn WidgetExt,
 		&mut all,
 		&mut all_label,
+		&mut position,
 		&mut warnings,
 		&mut toml
 	] {
@@ -489,6 +603,7 @@ fn go(ui: &Rc<Ui>, page: usize) {
 	} else if page == SETTINGS_FILE {
 		all.show();
 		all_label.show();
+		position.show();
 		warnings.show();
 		toml.show();
 		fill_text(ui);
@@ -782,7 +897,46 @@ fn build_row(
 	y + height + 4
 }
 
+/// Makes the caret of the editor blink like the one of Notepad, and shows where it is.
+fn tick_editor(ui: &Rc<Ui>) {
+	if ui.page.get() != SETTINGS_FILE {
+		return;
+	}
+
+	let mut toml = ui.toml.clone();
+	let (ticks, on) = ui.caret.get();
+	let (ticks, on) = if !toml.has_focus() {
+		(0, true)
+	} else if ticks >= 5 {
+		(0, !on)
+	} else {
+		(ticks + 1, on)
+	};
+
+	if (ticks, on) != ui.caret.get() {
+		ui.caret.set((ticks, on));
+		toml.show_cursor(on);
+	}
+
+	if let Some(buffer) = toml.buffer() {
+		let at = toml.insert_position();
+		let line = buffer.count_lines(0, at) + 1;
+		let column = at - buffer.line_start(at) + 1;
+
+		if ui.last_position.get() != (line, column) {
+			ui.last_position.set((line, column));
+
+			let mut position = ui.position.clone();
+
+			position.set_label(&format!("Ln {line}, Col {column}"));
+			position.redraw();
+		}
+	}
+}
+
 fn tick(ui: &Rc<Ui>) {
+	tick_editor(ui);
+
 	let running = lock(&ui.state).running;
 
 	if running != ui.was_running.get() {
@@ -826,7 +980,8 @@ fn tick(ui: &Rc<Ui>) {
 }
 
 fn run_now(ui: &Rc<Ui>) {
-	let text = if ui.page.get() == SETTINGS_FILE && ui.edited.get() {
+	let verbatim = ui.page.get() == SETTINGS_FILE && ui.edited.get();
+	let text = if verbatim {
 		current_text(ui)
 	} else {
 		ui.model.borrow().to_toml(false)
@@ -835,16 +990,30 @@ fn run_now(ui: &Rc<Ui>) {
 	if text.starts_with("# pack_directory is required") {
 		go(ui, 0);
 		message(ui, "Choose the pack folder first", WARNING);
+		note(ui, "Run pressed, but there is no pack directory");
 		return;
 	}
 
-	match start(&ui.state, &text) {
+	note(ui, "Run pressed");
+
+	match start(
+		&ui.state,
+		&text,
+		true,
+		"native",
+		&window_state(ui, verbatim)
+	) {
 		Ok(()) => set_status(ui, "Running. The terminal shows the output", MUTED, false),
-		Err(error) => message(ui, &error, BAD)
+		Err(error) => {
+			note(ui, &format!("Run failed to start: {error}"));
+			message(ui, &error, BAD);
+		}
 	}
 }
 
 fn stop_now(ui: &Rc<Ui>) {
+	note(ui, "Stop pressed or the window was closed");
+
 	if let Some(child) = lock(&ui.state).child.as_mut() {
 		let _ = child.kill();
 	}
@@ -862,6 +1031,18 @@ fn load(ui: &Rc<Ui>, path: &str) {
 	let result = fs::read_to_string(path)
 		.map_err(|error| error.to_string())
 		.and_then(|text| ui.model.borrow_mut().import(&text));
+
+	note(
+		ui,
+		&format!(
+			"opened {path}: {}",
+			match &result {
+				Ok(unknown) if unknown.is_empty() => "all options known".to_string(),
+				Ok(unknown) => format!("not known here: {}", unknown.join(", ")),
+				Err(error) => format!("failed: {error}")
+			}
+		)
+	);
 
 	match result {
 		Ok(unknown) if unknown.is_empty() => message(ui, "Opened", GOOD),
@@ -892,6 +1073,8 @@ fn save_file(ui: &Rc<Ui>) {
 
 	let text = current_text(ui);
 
+	note(ui, &format!("save to {}", path.display()));
+
 	match fs::write(&path, text) {
 		Ok(()) => message(ui, "Saved", GOOD),
 		Err(error) => message(ui, &format!("Could not save it: {error}"), BAD)
@@ -901,6 +1084,13 @@ fn save_file(ui: &Rc<Ui>) {
 /// Opens the window and waits until it is closed. Returns nothing if the person chose to go on
 /// in the terminal.
 pub fn run(options_file: Option<&str>) -> Option<i32> {
+	// The terminal behind the window shows the output of PackSquash with its colors. The old
+	// Windows console needs to be told to understand them
+	#[cfg(windows)]
+	if let Ok(mut console) = winapi_util::console::Console::stdout() {
+		let _ = console.set_virtual_terminal_processing(true);
+	}
+
 	let app = app::App::default().with_scheme(app::Scheme::Base);
 
 	app::background(0, 0, 0);
@@ -973,11 +1163,17 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		13,
 		TEXT
 	);
+	let mut position = label(SIDE + PAD + 700, HEAD + 6, 120, 18, "", 12, MUTED);
+
+	position.set_align(Align::Inside | Align::Right | Align::Top);
+
 	let warnings = label(SIDE + PAD, HEAD + 40, 600, 16, "", 12, WARNING);
 	let mut toml = TextEditor::new(SIDE + PAD, HEAD + 80, 800, 400, None);
 
 	style_display(&mut toml, Font::Courier);
 	toml.set_cursor_color(TEXT);
+	// A thin line, like the caret of Notepad, and it blinks (see `tick`)
+	toml.set_cursor_style(Cursor::Simple);
 	toml.show_cursor(true);
 
 	let mut bar = Frame::new(SIDE, 740 - BAR, 910, BAR, None);
@@ -1025,6 +1221,12 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		filling: Cell::new(false),
 		edited: Cell::new(false),
 		note: RefCell::new((String::new(), false)),
+		valid: Cell::new(None),
+		caret: Cell::new((0, true)),
+		position,
+		last_position: Cell::new((0, 0)),
+		events: RefCell::new(Vec::new()),
+		started: Instant::now(),
 		run: run_button,
 		stop: stop_button,
 		buttons,
@@ -1039,8 +1241,81 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 
 		buffer.add_modify_callback(move |_, inserted, deleted, _, _| {
 			if !edit_ui.filling.get() && (inserted > 0 || deleted > 0) {
+				edit_ui.caret.set((0, true));
 				apply_text(&edit_ui, &edit_buffer.text());
 			}
+		});
+	}
+
+	{
+		let mut editor = ui.toml.clone();
+
+		// The menu of the right button, with what the one of Notepad has
+		editor.handle(|editor, event| {
+			// Ctrl+Backspace and Ctrl+Delete remove a word, as in Notepad
+			if event == Event::KeyDown && app::is_event_ctrl() {
+				let forward = match app::event_key() {
+					Key::BackSpace => false,
+					Key::Delete => true,
+					_ => return false
+				};
+
+				if let Some(mut buffer) = editor.buffer() {
+					if buffer.selected() {
+						buffer.remove_selection();
+					} else {
+						let at = editor.insert_position();
+						let before = buffer.text_range(0, at).unwrap_or_default();
+						let after = buffer.text_range(at, buffer.length()).unwrap_or_default();
+						let length = word_length(&before, &after, forward) as i32;
+						let (start, end) = if forward {
+							(at, at + length)
+						} else {
+							(at - length, at)
+						};
+
+						buffer.remove(start, end);
+						editor.set_insert_position(start);
+					}
+				}
+
+				return true;
+			}
+
+			if event != Event::Push || app::event_mouse_button() != app::MouseButton::Right {
+				return false;
+			}
+
+			let Some(mut buffer) = editor.buffer() else {
+				return false;
+			};
+			let menu = MenuItem::new(&["Undo", "Cut", "Copy", "Paste", "Delete", "Select All"]);
+			let selection = buffer.selection_text();
+
+			match menu
+				.popup(app::event_x(), app::event_y())
+				.and_then(|item| item.label())
+				.as_deref()
+			{
+				Some("Undo") => {
+					let _ = buffer.undo();
+				}
+				Some("Cut") if !selection.is_empty() => {
+					app::copy(&selection);
+					buffer.remove_selection();
+				}
+				Some("Copy") if !selection.is_empty() => app::copy(&selection),
+				Some("Paste") => app::paste_text(editor),
+				Some("Delete") => buffer.remove_selection(),
+				Some("Select All") => {
+					let end = buffer.length();
+
+					buffer.select(0, end);
+				}
+				_ => ()
+			}
+
+			true
 		});
 	}
 
@@ -1075,17 +1350,20 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		copy.set_callback(move |_| {
 			app::copy(&current_text(&copy_ui));
 			message(&copy_ui, "Copied", GOOD);
+			note(&copy_ui, "Copy pressed");
 		});
 		reset.set_callback(move |_| {
 			*reset_ui.model.borrow_mut() = Model::default();
 			go(&reset_ui, reset_ui.page.get());
 			changed(&reset_ui);
 			message(&reset_ui, "Reset", MUTED);
+			note(&reset_ui, "Reset pressed");
 		});
 		cli.set_callback(move |_| {
 			if cli_ui.was_running.get() {
 				message(&cli_ui, "Stop PackSquash first", WARNING);
 			} else {
+				note(&cli_ui, "Use CLI pressed");
 				cli_ui.use_cli.set(true);
 				cli_ui.window.clone().hide();
 			}
@@ -1123,6 +1401,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		load(&ui, path);
 	}
 
+	note(&ui, "window opened");
 	layout(&ui);
 	go(&ui, 0);
 	changed(&ui);

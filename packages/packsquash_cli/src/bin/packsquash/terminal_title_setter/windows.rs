@@ -144,7 +144,14 @@ impl<'title> TerminalTitleSetterTrait<'title> for WindowsTerminalTitleSetter {
 				unsafe {
 					SetConsoleTitleW(
 						wide_title
-							.get_or_insert_with(|| OsStr::new(title.0).encode_wide().collect())
+							.get_or_insert_with(|| {
+								// The title must end with a zero. Without it Windows reads the memory
+								// that follows, and the console shows garbage as its title
+								OsStr::new(title.0)
+									.encode_wide()
+									.chain(std::iter::once(0))
+									.collect()
+							})
 							.as_ptr()
 					);
 				}

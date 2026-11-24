@@ -381,6 +381,51 @@ impl Model {
 	}
 }
 
+/// How many bytes Ctrl+Backspace (`forward` false) or Ctrl+Delete (`forward` true) remove, like Notepad: a word,
+/// which is a run of letters and digits or a run of other signs, and the spaces next to it. `before` is the text
+/// before the caret and `after` the text after it.
+pub fn word_length(before: &str, after: &str, forward: bool) -> usize {
+	let class = |c: char| {
+		if c.is_whitespace() {
+			0
+		} else if c.is_alphanumeric() || c == '_' {
+			1
+		} else {
+			2
+		}
+	};
+	let mut length = 0;
+
+	if forward {
+		let mut chars = after.chars().peekable();
+		let word = chars.peek().map(|c| class(*c)).filter(|class| *class != 0);
+
+		if let Some(word) = word {
+			while let Some(c) = chars.next_if(|c| class(*c) == word) {
+				length += c.len_utf8();
+			}
+		}
+
+		while let Some(c) = chars.next_if(|c| class(*c) == 0) {
+			length += c.len_utf8();
+		}
+	} else {
+		let mut chars = before.chars().rev().peekable();
+
+		while let Some(c) = chars.next_if(|c| class(*c) == 0) {
+			length += c.len_utf8();
+		}
+
+		if let Some(word) = chars.peek().map(|c| class(*c)) {
+			while let Some(c) = chars.next_if(|c| class(*c) == word) {
+				length += c.len_utf8();
+			}
+		}
+	}
+
+	length
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -489,6 +534,19 @@ mod tests {
 		);
 		assert!(model.flag(index_of("log").unwrap()));
 		assert!(model.import("log = = =").is_err());
+	}
+
+	#[test]
+	fn ctrl_backspace_and_ctrl_delete_remove_a_word_like_notepad() {
+		assert_eq!(word_length("# abc def ghi", "", false), 3);
+		assert_eq!(word_length("# abc def ", "", false), 4);
+		assert_eq!(word_length("a = 'b'", "", false), 1);
+		assert_eq!(word_length("áé x", "", false), 1);
+		assert_eq!(word_length("áé", "", false), 4);
+		assert_eq!(word_length("", "abc def", true), 4);
+		assert_eq!(word_length("", "  abc", true), 2);
+		assert_eq!(word_length("x", "", true), 0);
+		assert_eq!(word_length("", "", false), 0);
 	}
 
 	#[test]
