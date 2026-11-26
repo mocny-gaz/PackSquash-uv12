@@ -220,6 +220,10 @@ fn read_options_file_and_squash(
 		}
 	};
 
+	if env::var_os("PACKSQUASH_SCHEDULE_THREADS").is_some() {
+		schedule::listen();
+	}
+
 	if schedule::is_schedule(&options_string) {
 		return match schedule::parse(&options_string) {
 			Ok(schedule) => schedule::run(&schedule),
@@ -244,6 +248,8 @@ fn read_options_file_and_squash(
 			return 3;
 		}
 	};
+
+	schedule::apply_threads(&mut squash_options);
 
 	if let Some(log_options) = &fork_options.log {
 		start_debug_log(

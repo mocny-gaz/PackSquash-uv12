@@ -1,10 +1,16 @@
 use std::{
 	env, fs,
-	path::Path,
-	process::{self, Command}
+	io::{self, BufRead, BufReader, Read, Write},
+	num::NonZeroUsize,
+	path::{self, PathBuf},
+	process::{self, Child, Command, Stdio},
+	sync::atomic::{AtomicUsize, Ordering},
+	thread,
+	time::Duration
 };
 
 use log::{error, info, warn};
+use packsquash::config::SquashOptions;
 use toml::Table;
 
 use crate::{fork_options::split_fork_options, parse_options};
@@ -14,7 +20,48 @@ const MAX_PARALLEL: usize = 64;
 /// A schedule: options files that run one after another, each one being a part.
 pub struct Schedule {
 	pub parallel: usize,
-	pub parts: Vec<String>
+	pub parts: Vec<String>,
+	pub warnings: Vec<String>
+}
+
+static THREADS: AtomicUsize = AtomicUsize::new(0);
+static SHOWN: AtomicUsize = AtomicUsize::new(0);
+
+fn text(table: &Table, key: &str) -> Option<String> {
+	table.get(key)?.as_str().map(str::to_string)
+}
+
+fn place(path: &str) -> String {
+	let path = path::absolute(path).map_or_else(
+		|_| path.to_string(),
+		|path| path.to_string_lossy().into_owned()
+	);
+
+	if cfg!(windows) {
+		path.to_lowercase()
+	} else {
+		path
+	}
+}
+
+fn places(table: &Table) -> (String, String) {
+	if let Some(input) = text(table, "bulk_input_directory") {
+		let output = text(table, "bulk_output_directory").unwrap_or_else(|| input.clone());
+
+		let output = format!(
+			"{}|{}|{}",
+			place(&output),
+			text(table, "bulk_output_prefix").unwrap_or_default(),
+			text(table, "bulk_output_suffix").unwrap_or_default()
+		);
+
+		(output, place(&input))
+	} else {
+		(
+			place(&text(table, "output_file_path").unwrap_or_else(|| "pack.zip".to_string())),
+			place(&text(table, "pack_directory").unwrap_or_default())
+		)
+	}
 }
 
 fn compact(line: &str) -> String {
@@ -121,6 +168,8 @@ pub fn parse(text: &str) -> Result<Schedule, Vec<String>> {
 		);
 	}
 
+	let mut found = Vec::new();
+
 	for (index, (line, chunk)) in parts.iter().enumerate() {
 		let padded = format!("{}{chunk}", "\n".repeat(*line));
 
@@ -134,64 +183,239 @@ pub fn parse(text: &str) -> Result<Schedule, Vec<String>> {
 					return Err("The pack_directory option is missing.".to_string());
 				}
 
-				parse_options(&padded).map(drop)
+				parse_options(&padded)?;
+
+				Ok(places(&table))
 			});
 
-		if let Err(message) = problem {
-			errors.push(format!("Part {}: {}", index + 1, message.trim_end()));
+		match problem {
+			Ok(place) => found.push((index + 1, place)),
+			Err(message) => errors.push(format!("Part {}: {}", index + 1, message.trim_end()))
+		}
+	}
+
+	let mut warnings = Vec::new();
+
+	if parallel > 1 {
+		for (later, (second, (output, input))) in found.iter().enumerate() {
+			for (first, (other_output, other_input)) in &found[..later] {
+				if output == other_output {
+					errors.push(format!(
+						"Parts {first} and {second} write the same output. Parts that run at the same time can not share an output."
+					));
+				}
+
+				if input == other_input {
+					warnings.push(format!("Parts {first} and {second} read the same input."));
+				}
+			}
 		}
 	}
 
 	if errors.is_empty() {
 		Ok(Schedule {
 			parallel,
-			parts: parts.into_iter().map(|(_, chunk)| chunk).collect()
+			parts: parts.into_iter().map(|(_, chunk)| chunk).collect(),
+			warnings
 		})
 	} else {
 		Err(errors)
 	}
 }
 
-fn run_part(path: &Path, options: &str) -> Result<i32, String> {
-	fs::write(path, options).map_err(|error| format!("Couldn't write the part: {error}"))?;
+pub fn listen() {
+	THREADS.store(
+		env::var("PACKSQUASH_SCHEDULE_THREADS")
+			.ok()
+			.and_then(|count| count.parse().ok())
+			.unwrap_or(0),
+		Ordering::Relaxed
+	);
 
-	let status = Command::new(env::current_exe().map_err(|error| error.to_string())?)
-		.arg(path)
-		.status()
-		.map_err(|error| format!("Couldn't start PackSquash: {error}"))?;
-
-	Ok(status.code().unwrap_or(-1))
+	thread::spawn(|| {
+		for line in io::stdin().lock().lines().map_while(Result::ok) {
+			if let Some(count) = line
+				.strip_prefix("threads ")
+				.and_then(|count| count.trim().parse().ok())
+			{
+				THREADS.store(count, Ordering::Relaxed);
+			}
+		}
+	});
 }
 
-/// Runs the parts one by one, each one as its own PackSquash run. A part that fails does not stop
-/// the schedule. The failed parts are told when they fail and again at the end.
-pub fn run(schedule: &Schedule) -> i32 {
-	let total = schedule.parts.len();
-	let mut failed = Vec::new();
+pub fn apply_threads(options: &mut SquashOptions) {
+	if let Some(count) = NonZeroUsize::new(THREADS.load(Ordering::Relaxed)) {
+		options.global_options.threads = count;
 
-	if schedule.parallel > 0 {
-		warn!("The parallel option does nothing yet. The parts run one by one.");
+		if SHOWN.swap(count.get(), Ordering::Relaxed) != count.get() {
+			info!("The schedule gives this part {count} threads.");
+		}
+	}
+}
+
+fn share(threads: usize, used: usize, free_slots: usize, queued: usize) -> usize {
+	(threads.saturating_sub(used).max(1) / free_slots.min(queued)).max(1)
+}
+
+struct Running {
+	number: usize,
+	child: Child,
+	path: PathBuf,
+	cap: usize,
+	threads: usize,
+	readers: Vec<thread::JoinHandle<()>>
+}
+
+fn pump(pipe: impl Read + Send + 'static, number: usize, to_error: bool) -> thread::JoinHandle<()> {
+	thread::spawn(move || {
+		for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+			let _ = if to_error {
+				writeln!(io::stderr(), "[part {number}] {line}")
+			} else {
+				writeln!(io::stdout(), "[part {number}] {line}")
+			};
+		}
+	})
+}
+
+fn start(number: usize, options: &str, parallel: bool, threads: usize) -> Result<Running, String> {
+	let cap = options
+		.parse::<Table>()
+		.ok()
+		.and_then(|table| table.get("threads")?.as_integer())
+		.and_then(|count| usize::try_from(count).ok())
+		.unwrap_or(usize::MAX);
+	let threads = threads.min(cap);
+	let path = env::temp_dir().join(format!(
+		"packsquash-schedule-{}-{number}.toml",
+		process::id()
+	));
+
+	fs::write(&path, options).map_err(|error| format!("Couldn't write the part: {error}"))?;
+
+	let mut command = Command::new(env::current_exe().map_err(|error| error.to_string())?);
+
+	command.arg(&path);
+
+	if parallel {
+		command
+			.env("PACKSQUASH_SCHEDULE_THREADS", threads.to_string())
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped());
 	}
 
-	for (index, options) in schedule.parts.iter().enumerate() {
-		let number = index + 1;
-		let path = env::temp_dir().join(format!(
-			"packsquash-schedule-{}-{number}.toml",
-			process::id()
-		));
+	let mut child = command
+		.spawn()
+		.map_err(|error| format!("Couldn't start PackSquash: {error}"))?;
 
-		info!("Starting part {number} of {total}.");
+	let readers = [
+		child.stdout.take().map(|pipe| pump(pipe, number, false)),
+		child.stderr.take().map(|pipe| pump(pipe, number, true))
+	]
+	.into_iter()
+	.flatten()
+	.collect();
 
-		let code = run_part(&path, options).unwrap_or_else(|message| {
-			error!("{message}");
-			-1
-		});
+	Ok(Running {
+		number,
+		child,
+		path,
+		cap,
+		threads,
+		readers
+	})
+}
 
-		let _ = fs::remove_file(&path);
+/// Runs the parts, each one as its own PackSquash run. With `parallel` of 2 or more, that many parts
+/// run at the same time and share the threads of the computer. A part that fails does not stop the
+/// schedule. The failed parts are told when they fail and again at the end.
+pub fn run(schedule: &Schedule) -> i32 {
+	for warning in &schedule.warnings {
+		warn!("{warning}");
+	}
 
-		if code != 0 {
-			error!("Part {number} failed with the exit code {code}.");
-			failed.push(format!("part {number} (exit code {code})"));
+	let total = schedule.parts.len();
+	let slots = schedule.parallel.clamp(1, total);
+	let parallel = slots > 1;
+	let threads = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+	let mut next = 0;
+	let mut running: Vec<Running> = Vec::new();
+	let mut failed = Vec::new();
+
+	while next < total || !running.is_empty() {
+		while next < total && running.len() < slots {
+			let used = running.iter().map(|part| part.threads).sum();
+			let free = share(threads, used, slots - running.len(), total - next);
+
+			next += 1;
+
+			match start(next, &schedule.parts[next - 1], parallel, free) {
+				Ok(part) => {
+					if parallel {
+						info!(
+							"Starting part {next} of {total} with {} threads.",
+							part.threads
+						);
+					} else {
+						info!("Starting part {next} of {total}.");
+					}
+
+					running.push(part);
+				}
+				Err(message) => {
+					error!("{message}");
+					failed.push((next, -1));
+				}
+			}
+		}
+
+		thread::sleep(Duration::from_millis(200));
+
+		let mut index = 0;
+		let mut finished = false;
+
+		while index < running.len() {
+			let code = match running[index].child.try_wait() {
+				Ok(None) => {
+					index += 1;
+					continue;
+				}
+				Ok(Some(status)) => status.code().unwrap_or(-1),
+				Err(_) => -1
+			};
+
+			let part = running.remove(index);
+
+			for reader in part.readers {
+				let _ = reader.join();
+			}
+
+			let _ = fs::remove_file(&part.path);
+
+			if code != 0 {
+				error!("Part {} failed with the exit code {code}.", part.number);
+				failed.push((part.number, code));
+			}
+
+			finished = true;
+		}
+
+		if parallel && finished && next == total && !running.is_empty() {
+			let each = threads / running.len();
+
+			for part in &mut running {
+				let wanted = each.min(part.cap);
+
+				if wanted > part.threads {
+					part.threads = wanted;
+
+					if let Some(stdin) = part.child.stdin.as_mut() {
+						let _ = writeln!(stdin, "threads {wanted}");
+					}
+				}
+			}
 		}
 	}
 
@@ -199,9 +423,16 @@ pub fn run(schedule: &Schedule) -> i32 {
 		info!("The schedule is done. Every part worked.");
 		0
 	} else {
+		failed.sort_unstable();
+
+		let list: Vec<_> = failed
+			.iter()
+			.map(|(number, code)| format!("part {number} (exit code {code})"))
+			.collect();
+
 		error!(
 			"The schedule is done. These parts failed: {}.",
-			failed.join(", ")
+			list.join(", ")
 		);
 		1
 	}
@@ -211,7 +442,7 @@ pub fn run(schedule: &Schedule) -> i32 {
 mod tests {
 	use super::*;
 
-	const TWO_PARTS: &str = "[schedule]\nparallel = 2\n\n[[part]]\npack_directory = 'a'\nzip_compression_iterations = 40\n\n['**/*?.png']\nimage_data_compression_iterations = 15\n\n[[part]]\npack_directory = 'b'\n";
+	const TWO_PARTS: &str = "[schedule]\nparallel = 2\n\n[[part]]\npack_directory = 'a'\noutput_file_path = 'a.zip'\nzip_compression_iterations = 40\n\n['**/*?.png']\nimage_data_compression_iterations = 15\n\n[[part]]\npack_directory = 'b'\noutput_file_path = 'b.zip'\n";
 
 	fn errors(text: &str) -> Vec<String> {
 		parse(text).err().expect("The schedule should not be read")
@@ -240,7 +471,7 @@ mod tests {
 	#[test]
 	fn the_schedule_table_can_be_anywhere() {
 		let schedule = parse(
-			"[[part]]\npack_directory = 'a'\n[[part]]\npack_directory = 'b'\n[schedule]\nparallel = 3\n"
+			"[[part]]\npack_directory = 'a'\noutput_file_path = 'a.zip'\n[[part]]\npack_directory = 'b'\noutput_file_path = 'b.zip'\n[schedule]\nparallel = 3\n"
 		)
 		.expect("The schedule should be read");
 
@@ -340,6 +571,86 @@ mod tests {
 		assert!(found[1].starts_with("The parallel option"));
 		assert!(found[2].starts_with("Part 2: The pack_directory option is missing."));
 		assert!(found[3].starts_with("Part 3:"));
+	}
+
+	#[test]
+	fn the_same_output_is_an_error_only_when_parts_run_at_the_same_time() {
+		let part = |extra: &str| format!("[[part]]\npack_directory = 'a'\n{extra}\n");
+		let same = format!(
+			"{}{}",
+			part("output_file_path = 'x.zip'"),
+			part("output_file_path = 'x.zip'")
+		);
+
+		assert_eq!(
+			errors(&format!("[schedule]\nparallel = 2\n{same}")),
+			[
+				"Parts 1 and 2 write the same output. Parts that run at the same time can not share an output."
+			]
+		);
+		assert_eq!(
+			errors(&format!(
+				"[schedule]\nparallel = 2\n{}{}",
+				part(""),
+				part("")
+			))
+			.len(),
+			1
+		);
+		assert!(parse(&format!("[schedule]\nparallel = 1\n{same}")).is_ok());
+		assert!(parse(&format!("[schedule]\n{same}")).is_ok());
+		assert!(
+			errors(&format!(
+				"[schedule]\nparallel = 2\n{}{}",
+				"[[part]]\nbulk_input_directory = 'a'\nbulk_output_directory = 'o'\n",
+				"[[part]]\nbulk_input_directory = 'b'\nbulk_output_directory = 'o'\n"
+			))[0]
+				.starts_with("Parts 1 and 2 write the same output.")
+		);
+		assert!(
+			parse(&format!(
+				"[schedule]\nparallel = 2\n{}{}",
+				"[[part]]\nbulk_input_directory = 'a'\nbulk_output_directory = 'o'\nbulk_output_suffix = '_a'\n",
+				"[[part]]\nbulk_input_directory = 'b'\nbulk_output_directory = 'o'\nbulk_output_suffix = '_b'\n"
+			))
+			.is_ok()
+		);
+	}
+
+	#[test]
+	fn the_same_input_is_only_a_warning() {
+		let part =
+			|output: &str| format!("[[part]]\npack_directory = 'a'\noutput_file_path = '{output}'\n");
+
+		let schedule = parse(&format!(
+			"[schedule]\nparallel = 2\n{}{}",
+			part("x.zip"),
+			part("y.zip")
+		))
+		.expect("The schedule should be read");
+
+		assert_eq!(schedule.warnings, ["Parts 1 and 2 read the same input."]);
+
+		let schedule = parse(&format!(
+			"[schedule]\nparallel = 0\n{}{}",
+			part("x.zip"),
+			part("y.zip")
+		))
+		.expect("The schedule should be read");
+
+		assert!(schedule.warnings.is_empty());
+	}
+
+	#[test]
+	fn the_threads_are_shared_between_the_parts_that_run_together() {
+		assert_eq!(share(16, 0, 2, 4), 8);
+		assert_eq!(share(16, 8, 1, 3), 8);
+		assert_eq!(share(16, 8, 1, 1), 8);
+		assert_eq!(share(16, 0, 1, 1), 16);
+		assert_eq!(share(16, 0, 3, 2), 8);
+		assert_eq!(share(16, 0, 3, 5), 5);
+		assert_eq!(share(4, 4, 1, 1), 1);
+		assert_eq!(share(1, 0, 2, 2), 1);
 	}
 
 	#[test]

@@ -490,6 +490,10 @@ fn options_for(table: &Table, pack_directory: &Path, output: &Path) -> Result<Sq
 
 	Value::Table(table)
 		.try_into::<SquashOptions>()
+		.map(|mut options| {
+			crate::schedule::apply_threads(&mut options);
+			options
+		})
 		.map_err(|error| error.to_string())
 }
 

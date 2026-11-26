@@ -224,7 +224,9 @@ bulk_input_directory = 'C:\packs\bulk'
 ```
 
 - A `[[part]]` line starts a part, and everything under it is a normal options file. To make a part, paste an options file under a `[[part]]` line. Parts have no numbers or names in the file. PackSquash counts them from 1, and `[[part2]]` is an error.
-- The `[schedule]` table can stand anywhere in the file. Its only option is `parallel`, which stays `0` for now.
+- The `[schedule]` table can stand anywhere in the file. Its only option is `parallel`. With `0` or `1` the parts run one by one. With `2` or more, that many parts run at the same time, and a part that ends gives its place to the next one.
+- The threads of the computer are shared. A part that starts gets the free threads divided by the parts that run beside it, and never more than its own `threads`. When only the last parts are left, a bulk part takes the free threads from its next pack on. A single pack keeps the threads it started with.
+- Parts that run at the same time print their lines with `[part N]` in front. Two of them with the same output are an error, so give each part its own `output_file_path`. The same input is a warning.
 - Each part runs as its own PackSquash run, with the same folder as the terminal. A part that fails does not stop the schedule. The terminal tells when a part fails, and the end lists all the failed parts.
 - If something is wrong, PackSquash shows every problem at once and runs nothing. For example `Part 2: The pack_directory option is missing.`
 - A part can have `pack_directory` or the bulk options, like a normal options file.
