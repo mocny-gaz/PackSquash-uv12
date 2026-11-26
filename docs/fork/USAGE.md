@@ -12,15 +12,16 @@ step, and the common problems. Every option is described in full in
 3. [What is on by default and what is not](#what-is-on-by-default-and-what-is-not)
 4. [A pack in an archive](#a-pack-in-an-archive)
 5. [Bulk: every pack in a folder](#bulk-every-pack-in-a-folder)
-6. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
-7. [Language files](#language-files)
-8. [Bedrock Edition packs](#bedrock-edition-packs)
-9. [OptiFine custom skies](#optifine-custom-skies)
-10. [Keep the files of mods](#keep-the-files-of-mods)
-11. [Copy files untouched](#copy-files-untouched)
-12. [Debug log](#debug-log)
-13. [Common problems](#common-problems)
-14. [Not built yet](#not-built-yet)
+6. [Schedule: several runs one after another](#schedule-several-runs-one-after-another)
+7. [mcchanges: leave out what the game already has](#mcchanges-leave-out-what-the-game-already-has)
+8. [Language files](#language-files)
+9. [Bedrock Edition packs](#bedrock-edition-packs)
+10. [OptiFine custom skies](#optifine-custom-skies)
+11. [Keep the files of mods](#keep-the-files-of-mods)
+12. [Copy files untouched](#copy-files-untouched)
+13. [Debug log](#debug-log)
+14. [Common problems](#common-problems)
+15. [Not built yet](#not-built-yet)
 
 ## Quick start
 
@@ -202,6 +203,31 @@ bulk_overwrite = true
 `bulk_backup = false` deletes the originals instead. This can not be undone, so try the dry run
 first. PackSquash never replaces a folder, a file that is not the original pack, or an archive with
 several packs.
+
+## Schedule: several runs one after another
+
+A schedule file holds several options files in one file, and `packsquash schedule.toml` runs them one by one. Each one is a part. A file is a schedule when it has a `[schedule]` table and at least one `[[part]]` line.
+
+```toml
+[schedule]
+parallel = 0
+
+[[part]]
+pack_directory = 'C:\packs\a'
+zip_compression_iterations = 40
+
+['**/*?.png']
+image_data_compression_iterations = 15
+
+[[part]]
+bulk_input_directory = 'C:\packs\bulk'
+```
+
+- A `[[part]]` line starts a part, and everything under it is a normal options file. To make a part, paste an options file under a `[[part]]` line. Parts have no numbers or names in the file. PackSquash counts them from 1, and `[[part2]]` is an error.
+- The `[schedule]` table can stand anywhere in the file. Its only option is `parallel`, which stays `0` for now.
+- Each part runs as its own PackSquash run, with the same folder as the terminal. A part that fails does not stop the schedule. The terminal tells when a part fails, and the end lists all the failed parts.
+- If something is wrong, PackSquash shows every problem at once and runs nothing. For example `Part 2: The pack_directory option is missing.`
+- A part can have `pack_directory` or the bulk options, like a normal options file.
 
 ## mcchanges: leave out what the game already has
 

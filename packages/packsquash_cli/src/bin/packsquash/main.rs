@@ -32,6 +32,7 @@ mod error_hints;
 mod fork_options;
 mod gui;
 mod mcchanges_auto;
+mod schedule;
 mod terminal_style;
 mod terminal_title_controller;
 mod terminal_title_setter;
@@ -218,6 +219,19 @@ fn read_options_file_and_squash(
 			return 2;
 		}
 	};
+
+	if schedule::is_schedule(&options_string) {
+		return match schedule::parse(&options_string) {
+			Ok(schedule) => schedule::run(&schedule),
+			Err(problems) => {
+				for problem in problems {
+					error!("The schedule in {user_friendly_options_path} is not right. {problem}");
+				}
+
+				3
+			}
+		};
+	}
 
 	// Deserialize the options struct contained in the string
 	let (mut squash_options, fork_options, mut options_table) = match parse_options(&options_string) {

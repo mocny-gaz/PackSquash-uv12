@@ -20,6 +20,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The tests that squash a pack take turns now, so `cargo test` does not fail with "Unexpected number of strong references to the panic hook".
 - New option `fix_pack_metadata`, enabled by default. When `pack.mcmeta` fails the checks because of a small known mistake, it is repaired, the repaired file goes to the result, and each change is shown as a notice (more detail in the debug log with `log = true`). Repaired: JSON that only the game accepts (trailing commas, single quotes, names without quotes), whole decimal numbers like `15.0`, more than two versions in `supported_formats`, and a `supported_formats` or `pack_format` that is wrongly present or missing for `min_format` and `max_format`. A `pack.mcmeta` that passes is not changed. A raw line break inside a string is reported.
 - The window has a Use CLI button. It closes the window, and PackSquash goes on in the terminal, as if it was started with no arguments. While the window is open, the terminal shows the same output as the log of the window.
+- Squash scheduling in the terminal. A schedule file has a `[schedule]` table and one `[[part]]` line before the options of each part. `packsquash schedule.toml` runs the parts one by one, each as its own run. A part that fails does not stop the schedule. The failed parts are told when they fail and again at the end. Every problem of the file is shown at once. See the Schedule section of `docs/fork/USAGE.md`.
 
 ### Fixed
 
