@@ -2097,7 +2097,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		flat(0, 0, 78, 30, "Save", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Copy", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Reset", FIELD, TEXT),
-		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT)
+		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT),
 	];
 	let mut pause = flat(0, 0, 76, 30, "Pause", FIELD, TEXT);
 	pause.deactivate();
@@ -2121,7 +2121,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 	let sched_buttons = vec![
 		flat(0, 0, 72, 30, "Stop part", FIELD, TEXT),
 		flat(0, 0, 96, 30, "Stop schedule", FIELD, TEXT),
-		flat(0, 0, 84, 30, "Delete part", FIELD, TEXT)
+		flat(0, 0, 84, 30, "Delete part", FIELD, TEXT),
 	];
 	plus.hide();
 	parallel_label.hide();

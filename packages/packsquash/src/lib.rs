@@ -123,7 +123,7 @@ impl PackSquasher {
 		pack_file_status_sender: Option<Sender<PackSquasherStatus>>
 	) -> Result<(), PackSquasherError>
 	where
-		PackSquasherError: From<<O as TryInto<ProcessedSquashOptions>>::Error>,
+		PackSquasherError: From<<O as TryInto<ProcessedSquashOptions>>::Error>
 	{
 		// The panic hook is global, and the contract above says it must not change while a run
 		// is executing. The tests run in threads of the same process (`cargo test`), and every
