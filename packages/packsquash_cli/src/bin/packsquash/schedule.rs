@@ -72,6 +72,20 @@ fn compact(line: &str) -> String {
 		.collect()
 }
 
+/// Writes a schedule file: the options of each part under a `[[part]]` line.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn export(parts: &[String], parallel: usize) -> String {
+	let mut text = format!("[schedule]\nparallel = {parallel}\n");
+
+	for part in parts {
+		text.push_str("\n[[part]]\n");
+		text.push_str(part.trim());
+		text.push('\n');
+	}
+
+	text
+}
+
 pub fn is_schedule(text: &str) -> bool {
 	text.lines().any(|line| compact(line) == "[schedule]")
 }
@@ -264,7 +278,15 @@ struct Running {
 	path: PathBuf,
 	cap: usize,
 	threads: usize,
+	stopped: bool,
 	readers: Vec<thread::JoinHandle<()>>
+}
+
+pub struct Finished {
+	pub number: usize,
+	pub code: i32,
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub stopped: bool
 }
 
 fn pump(pipe: impl Read + Send + 'static, number: usize, to_error: bool) -> thread::JoinHandle<()> {
@@ -279,105 +301,108 @@ fn pump(pipe: impl Read + Send + 'static, number: usize, to_error: bool) -> thre
 	})
 }
 
-fn start(number: usize, options: &str, parallel: bool, threads: usize) -> Result<Running, String> {
-	let cap = options
-		.parse::<Table>()
-		.ok()
-		.and_then(|table| table.get("threads")?.as_integer())
-		.and_then(|count| usize::try_from(count).ok())
-		.unwrap_or(usize::MAX);
-	let threads = threads.min(cap);
-	let path = env::temp_dir().join(format!(
-		"packsquash-schedule-{}-{number}.toml",
-		process::id()
-	));
-
-	fs::write(&path, options).map_err(|error| format!("Couldn't write the part: {error}"))?;
-
-	let mut command = Command::new(env::current_exe().map_err(|error| error.to_string())?);
-
-	command.arg(&path);
-
-	if parallel {
-		command
-			.env("PACKSQUASH_SCHEDULE_THREADS", threads.to_string())
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped());
-	}
-
-	let mut child = command
-		.spawn()
-		.map_err(|error| format!("Couldn't start PackSquash: {error}"))?;
-
-	let readers = [
-		child.stdout.take().map(|pipe| pump(pipe, number, false)),
-		child.stderr.take().map(|pipe| pump(pipe, number, true))
-	]
-	.into_iter()
-	.flatten()
-	.collect();
-
-	Ok(Running {
-		number,
-		child,
-		path,
-		cap,
-		threads,
-		readers
-	})
+/// The parts that run now, each one as its own PackSquash run. The terminal and the window decide
+/// which part starts when. The runner gives the threads of the computer to the parts that run
+/// together, and reads their output.
+pub struct Runner {
+	slots: usize,
+	threads: usize,
+	window_state: Option<String>,
+	running: Vec<Running>
 }
 
-/// Runs the parts, each one as its own PackSquash run. With `parallel` of 2 or more, that many parts
-/// run at the same time and share the threads of the computer. A part that fails does not stop the
-/// schedule. The failed parts are told when they fail and again at the end.
-pub fn run(schedule: &Schedule) -> i32 {
-	for warning in &schedule.warnings {
-		warn!("{warning}");
+impl Runner {
+	/// Runs `parallel` parts at the same time, or one if it is 0. The window gives what it knows
+	/// about itself for the debug log of the runs.
+	pub fn new(parallel: usize, window_state: Option<String>) -> Self {
+		Self {
+			slots: parallel.max(1),
+			threads: thread::available_parallelism().map_or(1, NonZeroUsize::get),
+			window_state,
+			running: Vec::new()
+		}
 	}
 
-	let total = schedule.parts.len();
-	let slots = schedule.parallel.clamp(1, total);
-	let parallel = slots > 1;
-	let threads = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-	let mut next = 0;
-	let mut running: Vec<Running> = Vec::new();
-	let mut failed = Vec::new();
+	pub fn has_slot(&self) -> bool {
+		self.running.len() < self.slots
+	}
 
-	while next < total || !running.is_empty() {
-		while next < total && running.len() < slots {
-			let used = running.iter().map(|part| part.threads).sum();
-			let free = share(threads, used, slots - running.len(), total - next);
+	pub fn is_idle(&self) -> bool {
+		self.running.is_empty()
+	}
 
-			next += 1;
+	/// Starts a part, with `queued` parts left to start, this one included. Returns the threads
+	/// of the part.
+	pub fn start(&mut self, number: usize, options: &str, queued: usize) -> Result<usize, String> {
+		let used = self.running.iter().map(|part| part.threads).sum();
+		let cap = options
+			.parse::<Table>()
+			.ok()
+			.and_then(|table| table.get("threads")?.as_integer())
+			.and_then(|count| usize::try_from(count).ok())
+			.unwrap_or(usize::MAX);
+		let threads = share(self.threads, used, self.slots - self.running.len(), queued).min(cap);
+		let path = env::temp_dir().join(format!(
+			"packsquash-schedule-{}-{number}.toml",
+			process::id()
+		));
 
-			match start(next, &schedule.parts[next - 1], parallel, free) {
-				Ok(part) => {
-					if parallel {
-						info!(
-							"Starting part {next} of {total} with {} threads.",
-							part.threads
-						);
-					} else {
-						info!("Starting part {next} of {total}.");
-					}
+		fs::write(&path, options).map_err(|error| format!("Couldn't write the part: {error}"))?;
 
-					running.push(part);
-				}
-				Err(message) => {
-					error!("{message}");
-					failed.push((next, -1));
-				}
-			}
+		let mut command = Command::new(env::current_exe().map_err(|error| error.to_string())?);
+
+		command.arg(&path);
+
+		let piped = self.slots > 1 || self.window_state.is_some();
+
+		if piped {
+			command
+				.env("PACKSQUASH_SCHEDULE_THREADS", threads.to_string())
+				.stdin(Stdio::piped())
+				.stdout(Stdio::piped())
+				.stderr(Stdio::piped());
 		}
 
-		thread::sleep(Duration::from_millis(200));
+		if let Some(state) = &self.window_state {
+			command
+				.args(["--color", "--no-emoji"])
+				.env("PACKSQUASH_STARTED_BY", "native")
+				.env("PACKSQUASH_WINDOW_STATE", state);
+		}
 
+		let mut child = command
+			.spawn()
+			.map_err(|error| format!("Couldn't start PackSquash: {error}"))?;
+
+		let readers = [
+			child.stdout.take().map(|pipe| pump(pipe, number, false)),
+			child.stderr.take().map(|pipe| pump(pipe, number, true))
+		]
+		.into_iter()
+		.flatten()
+		.collect();
+
+		self.running.push(Running {
+			number,
+			child,
+			path,
+			cap,
+			threads,
+			stopped: false,
+			readers
+		});
+
+		Ok(threads)
+	}
+
+	/// Collects the parts that ended. With no part left to start, the parts that go on take the free
+	/// threads.
+	pub fn poll(&mut self, queued: usize) -> Vec<Finished> {
+		let mut finished = Vec::new();
 		let mut index = 0;
-		let mut finished = false;
 
-		while index < running.len() {
-			let code = match running[index].child.try_wait() {
+		while index < self.running.len() {
+			let code = match self.running[index].child.try_wait() {
 				Ok(None) => {
 					index += 1;
 					continue;
@@ -386,26 +411,27 @@ pub fn run(schedule: &Schedule) -> i32 {
 				Err(_) => -1
 			};
 
-			let part = running.remove(index);
+			let part = self.running.remove(index);
 
-			for reader in part.readers {
-				let _ = reader.join();
+			if !part.stopped {
+				for reader in part.readers {
+					let _ = reader.join();
+				}
 			}
 
 			let _ = fs::remove_file(&part.path);
 
-			if code != 0 {
-				error!("Part {} failed with the exit code {code}.", part.number);
-				failed.push((part.number, code));
-			}
-
-			finished = true;
+			finished.push(Finished {
+				number: part.number,
+				code,
+				stopped: part.stopped
+			});
 		}
 
-		if parallel && finished && next == total && !running.is_empty() {
-			let each = threads / running.len();
+		if self.slots > 1 && queued == 0 && !finished.is_empty() && !self.running.is_empty() {
+			let each = self.threads / self.running.len();
 
-			for part in &mut running {
+			for part in &mut self.running {
 				let wanted = each.min(part.cap);
 
 				if wanted > part.threads {
@@ -415,6 +441,67 @@ pub fn run(schedule: &Schedule) -> i32 {
 						let _ = writeln!(stdin, "threads {wanted}");
 					}
 				}
+			}
+		}
+
+		finished
+	}
+
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub fn stop(&mut self, number: usize) {
+		for part in self.running.iter_mut().filter(|part| part.number == number) {
+			part.stopped = true;
+			let _ = part.child.kill();
+		}
+	}
+
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub fn stop_all(&mut self) {
+		for part in &mut self.running {
+			part.stopped = true;
+			let _ = part.child.kill();
+		}
+	}
+}
+
+/// Runs the schedule in the terminal. A part that fails does not stop the schedule. The failed parts
+/// are told when they fail and again at the end.
+pub fn run(schedule: &Schedule) -> i32 {
+	for warning in &schedule.warnings {
+		warn!("{warning}");
+	}
+
+	let total = schedule.parts.len();
+	let parallel = schedule.parallel.clamp(1, total);
+	let mut runner = Runner::new(parallel, None);
+	let mut next = 0;
+	let mut failed = Vec::new();
+
+	while next < total || !runner.is_idle() {
+		while next < total && runner.has_slot() {
+			next += 1;
+
+			match runner.start(next, &schedule.parts[next - 1], total - next + 1) {
+				Ok(threads) if parallel > 1 => {
+					info!("Starting part {next} of {total} with {threads} threads.");
+				}
+				Ok(_) => info!("Starting part {next} of {total}."),
+				Err(message) => {
+					error!("{message}");
+					failed.push((next, -1));
+				}
+			}
+		}
+
+		thread::sleep(Duration::from_millis(200));
+
+		for part in runner.poll(total - next) {
+			if part.code != 0 {
+				error!(
+					"Part {} failed with the exit code {}.",
+					part.number, part.code
+				);
+				failed.push((part.number, part.code));
 			}
 		}
 	}
@@ -484,6 +571,20 @@ mod tests {
 
 		assert_eq!(schedule.parallel, 0);
 		assert_eq!(schedule.parts.len(), 2);
+	}
+
+	#[test]
+	fn an_exported_schedule_is_read_back() {
+		let parts = vec![
+			"pack_directory = 'a'\noutput_file_path = 'a.zip'\n\n['**/*?.png']\nimage_data_compression_iterations = 15\n\n".to_string(),
+			"# comment\npack_directory = 'b'\noutput_file_path = 'b.zip'".to_string()
+		];
+		let schedule = parse(&export(&parts, 2)).expect("The schedule should be read");
+
+		assert_eq!(schedule.parallel, 2);
+		assert_eq!(schedule.parts.len(), 2);
+		assert!(schedule.parts[0].contains("['**/*?.png']"));
+		assert_eq!(schedule.parts[1].trim(), parts[1]);
 	}
 
 	#[test]

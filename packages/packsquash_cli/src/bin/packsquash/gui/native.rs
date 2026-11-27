@@ -3,15 +3,16 @@
 
 use std::{
 	cell::{Cell, RefCell},
+	collections::VecDeque,
 	env, fs,
 	rc::Rc,
-	time::Instant
+	time::{Duration, Instant}
 };
 
 use fltk::{
 	app,
 	button::{Button, ToggleButton},
-	dialog::{FileDialogType, NativeFileChooser},
+	dialog::{self, FileDialogType, NativeFileChooser},
 	draw,
 	enums::{Align, CallbackTrigger, Color, Event, Font, FrameType, Key},
 	frame::Frame,
@@ -29,6 +30,7 @@ use super::{
 	options::{OPTIONS, TABLES, TABS},
 	start
 };
+use crate::schedule::{self, Runner};
 
 // Not `from_hex(0)`: that is the index 0 of FLTK, the foreground color
 const BLACK: Color = Color::Black;
@@ -49,6 +51,42 @@ const HEAD: i32 = 70;
 const PAD: i32 = 28;
 const CONTROL: i32 = 300;
 const SETTINGS_FILE: usize = TABS.len();
+const MAX_PARTS: usize = 16;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartState {
+	Idle,
+	Waiting,
+	Running,
+	Done,
+	Failed,
+	Stopped
+}
+
+struct Tab {
+	id: usize,
+	model: Model,
+	changed: Instant,
+	state: PartState
+}
+
+struct Run {
+	runner: Runner,
+	queue: VecDeque<usize>,
+	armed: Option<Instant>,
+	failed: Vec<usize>
+}
+
+/// The parts of a schedule, one tab each. The settings of the open tab live in `Ui::model`. A tab
+/// keeps its number when another one is deleted.
+#[derive(Default)]
+struct Plan {
+	tabs: Vec<Tab>,
+	active: usize,
+	next_id: usize,
+	parallel: usize,
+	run: Option<Run>
+}
 
 struct Ui {
 	model: RefCell<Model>,
@@ -80,7 +118,16 @@ struct Ui {
 	state: Shared,
 	was_running: Cell<bool>,
 	use_cli: Cell<bool>,
-	test: Cell<Option<i32>>
+	test: Cell<Option<i32>>,
+	plan: RefCell<Plan>,
+	schedule_button: Button,
+	tab_buttons: Vec<Button>,
+	plus: Button,
+	parallel_label: Frame,
+	parallel_minus: Button,
+	parallel_value: Frame,
+	parallel_plus: Button,
+	sched_buttons: Vec<Button>
 }
 
 fn anchor(x: i32, y: i32) {
@@ -287,6 +334,18 @@ fn path_buttons(key: &str) -> &'static [(&'static str, FileDialogType)] {
 
 /// Called after a setting changed.
 fn changed(ui: &Rc<Ui>) {
+	let mut plan = ui.plan.borrow_mut();
+	let active = plan.active;
+
+	if let Some(tab) = plan.tabs.get_mut(active) {
+		tab.changed = Instant::now();
+	}
+
+	drop(plan);
+	show_badge(ui);
+}
+
+fn show_badge(ui: &Rc<Ui>) {
 	let count = ui.model.borrow().warnings().len();
 	let mut badge = ui.badge.clone();
 	let text = match count {
@@ -302,6 +361,533 @@ fn changed(ui: &Rc<Ui>) {
 
 	if ui.page.get() == SETTINGS_FILE {
 		show_warnings(ui);
+	}
+}
+
+/// The time of a part that was not edited in this window.
+fn long_ago() -> Instant {
+	Instant::now()
+		.checked_sub(Duration::from_secs(3600))
+		.unwrap_or_else(Instant::now)
+}
+
+impl Plan {
+	fn on(&self) -> bool {
+		!self.tabs.is_empty()
+	}
+}
+
+/// The text that a part runs: the open tab is read from the window, the others from their settings.
+fn part_text(ui: &Rc<Ui>, tabs: &[Tab], active: usize, index: usize) -> String {
+	if index != active {
+		tabs[index].model.to_toml(false)
+	} else if ui.page.get() == SETTINGS_FILE && ui.edited.get() {
+		current_text(ui)
+	} else {
+		ui.model.borrow().to_toml(false)
+	}
+}
+
+/// Puts the numbers of the tabs in a message of the schedule file reader, which counts the parts.
+fn by_id(message: &str, ids: &[usize]) -> String {
+	let name = |number: &str| {
+		number
+			.parse::<usize>()
+			.ok()
+			.and_then(|number| ids.get(number.wrapping_sub(1)))
+			.map_or_else(|| number.to_string(), |id| format!("Schedule {id}"))
+	};
+
+	let renamed = if let Some(rest) = message.strip_prefix("Parts ") {
+		rest.split_once(" and ").and_then(|(first, rest)| {
+			let (second, rest) = rest.split_once(' ')?;
+
+			Some(format!("{} and {} {rest}", name(first), name(second)))
+		})
+	} else {
+		message.strip_prefix("Part ").and_then(|rest| {
+			let (number, rest) = rest.split_once(':')?;
+
+			Some(format!("{}:{rest}", name(number)))
+		})
+	};
+
+	renamed.unwrap_or_else(|| message.to_string())
+}
+
+fn show_if(widget: &mut dyn WidgetExt, on: bool) {
+	if on {
+		widget.show();
+	} else {
+		widget.hide();
+	}
+}
+
+/// Shows the tabs, the buttons of the schedule mode and what the state of the parts allows.
+fn refresh(ui: &Rc<Ui>) {
+	{
+		let plan = ui.plan.borrow();
+		let on = plan.on();
+		let (w, count) = (ui.window.w(), plan.tabs.len() as i32);
+		let left = SIDE + PAD;
+		let region = w - PAD - 150 - left;
+		let tab_width = ((region - 30) / count.max(1)).clamp(34, 92) - 4;
+		let mut x = left;
+
+		for (index, button) in ui.tab_buttons.iter().enumerate() {
+			let mut button = button.clone();
+
+			if let Some(tab) = plan.tabs.get(index) {
+				button.resize(x, 2, tab_width, 22);
+				button.set_label(&if tab_width >= 76 {
+					format!("Schedule {}", tab.id)
+				} else {
+					tab.id.to_string()
+				});
+				button.set_color(if index == plan.active { FIELD } else { BLACK });
+				button.set_label_color(match tab.state {
+					PartState::Running => ACCENT,
+					PartState::Done => GOOD,
+					PartState::Failed => BAD,
+					PartState::Stopped => MUTED,
+					PartState::Idle | PartState::Waiting => TEXT
+				});
+				button.show();
+				button.redraw();
+				x += tab_width + 4;
+			} else {
+				button.hide();
+			}
+		}
+
+		let mut plus = ui.plus.clone();
+
+		plus.resize(x, 2, 26, 22);
+		show_if(&mut plus, on && plan.tabs.len() < MAX_PARTS);
+
+		let mut schedule_button = ui.schedule_button.clone();
+
+		schedule_button.resize(left, 2, 90, 22);
+		show_if(&mut schedule_button, !on);
+
+		let right = w - PAD;
+
+		ui.parallel_plus.clone().resize(right - 22, 2, 22, 22);
+		ui.parallel_value.clone().resize(right - 52, 4, 26, 18);
+		ui.parallel_minus.clone().resize(right - 80, 2, 22, 22);
+		ui.parallel_label.clone().resize(right - 150, 4, 66, 18);
+
+		let mut value = ui.parallel_value.clone();
+
+		value.set_label(&plan.parallel.to_string());
+
+		for widget in [
+			&mut ui.parallel_plus.clone() as &mut dyn WidgetExt,
+			&mut ui.parallel_minus.clone(),
+			&mut value,
+			&mut ui.parallel_label.clone()
+		] {
+			show_if(widget, on);
+		}
+
+		let scheduled = plan.run.is_some();
+		let busy = scheduled || lock(&ui.state).running;
+		let (mut run, mut stop) = (ui.run.clone(), ui.stop.clone());
+
+		show_if(&mut stop, !on);
+
+		for button in &ui.sched_buttons {
+			show_if(&mut button.clone(), on);
+		}
+
+		if busy {
+			run.deactivate();
+		} else {
+			run.activate();
+		}
+
+		for button in &ui.sched_buttons[..2] {
+			let mut button = button.clone();
+
+			if scheduled {
+				button.activate();
+			} else {
+				button.deactivate();
+			}
+		}
+
+		let locked = plan
+			.tabs
+			.get(plan.active)
+			.is_some_and(|tab| tab.state == PartState::Running);
+		let (mut scroll, mut toml) = (ui.scroll.clone(), ui.toml.clone());
+
+		if locked {
+			scroll.deactivate();
+			toml.deactivate();
+		} else {
+			scroll.activate();
+			toml.activate();
+		}
+	}
+
+	layout(ui);
+	ui.window.clone().redraw();
+}
+
+fn open_tab(ui: &Rc<Ui>) {
+	ui.edited.set(false);
+	go(ui, ui.page.get());
+	show_badge(ui);
+	refresh(ui);
+}
+
+fn switch(ui: &Rc<Ui>, index: usize) {
+	{
+		let mut plan = ui.plan.borrow_mut();
+
+		if index >= plan.tabs.len() || index == plan.active {
+			return;
+		}
+
+		let active = plan.active;
+
+		plan.tabs[active].model = ui
+			.model
+			.replace(std::mem::take(&mut plan.tabs[index].model));
+		plan.active = index;
+		note(ui, &format!("opened Schedule {}", plan.tabs[index].id));
+	}
+
+	open_tab(ui);
+}
+
+fn add_part(ui: &Rc<Ui>) {
+	{
+		let mut plan = ui.plan.borrow_mut();
+
+		if plan.tabs.len() >= MAX_PARTS {
+			drop(plan);
+			message(
+				ui,
+				&format!("A schedule has at most {MAX_PARTS} parts"),
+				WARNING
+			);
+			return;
+		}
+
+		let id = plan.next_id.max(1);
+		let scheduled = plan.run.is_some();
+		let state = if scheduled {
+			PartState::Waiting
+		} else {
+			PartState::Idle
+		};
+
+		if plan.tabs.is_empty() {
+			plan.next_id = 2;
+			plan.tabs.push(Tab {
+				id,
+				model: Model::default(),
+				changed: Instant::now(),
+				state
+			});
+			plan.active = 0;
+		} else {
+			let active = plan.active;
+
+			plan.tabs[active].model = ui.model.replace(Model::default());
+			plan.next_id = id + 1;
+			plan.tabs.push(Tab {
+				id,
+				model: Model::default(),
+				changed: Instant::now(),
+				state
+			});
+			plan.active = plan.tabs.len() - 1;
+
+			if let Some(run) = plan.run.as_mut() {
+				run.queue.push_back(id);
+			}
+		}
+
+		note(ui, &format!("added Schedule {id}"));
+	}
+
+	open_tab(ui);
+}
+
+fn delete_part(ui: &Rc<Ui>) {
+	{
+		let mut plan = ui.plan.borrow_mut();
+		let active = plan.active;
+
+		if plan.tabs[active].state == PartState::Running {
+			drop(plan);
+			message(ui, "Stop this part first", WARNING);
+			return;
+		}
+
+		let id = plan.tabs.remove(active).id;
+
+		if let Some(run) = plan.run.as_mut() {
+			run.queue.retain(|queued| *queued != id);
+		}
+
+		if plan.tabs.is_empty() {
+			plan.run = None;
+		} else {
+			let now = active.min(plan.tabs.len() - 1);
+
+			plan.active = now;
+
+			let next = std::mem::take(&mut plan.tabs[now].model);
+
+			ui.model.replace(next);
+		}
+
+		note(ui, &format!("deleted Schedule {id}"));
+	}
+
+	open_tab(ui);
+}
+
+fn stop_part(ui: &Rc<Ui>) {
+	let mut plan = ui.plan.borrow_mut();
+	let active = plan.tabs[plan.active].id;
+	let running: Vec<usize> = plan
+		.tabs
+		.iter()
+		.filter(|tab| tab.state == PartState::Running)
+		.map(|tab| tab.id)
+		.collect();
+	let target = if running.contains(&active) {
+		Some(active)
+	} else if running.len() == 1 {
+		running.first().copied()
+	} else {
+		None
+	};
+
+	match (target, plan.run.as_mut()) {
+		(Some(id), Some(run)) => run.runner.stop(id),
+		_ => {
+			drop(plan);
+			message(ui, "Open the part that runs, then stop it", WARNING);
+		}
+	}
+}
+
+fn stop_schedule(ui: &Rc<Ui>) {
+	let mut plan = ui.plan.borrow_mut();
+
+	if let Some(run) = plan.run.as_mut() {
+		run.queue.clear();
+		run.runner.stop_all();
+	}
+
+	for tab in &mut plan.tabs {
+		if tab.state == PartState::Waiting {
+			tab.state = PartState::Idle;
+		}
+	}
+}
+
+fn set_parallel(ui: &Rc<Ui>, more: bool) {
+	let mut plan = ui.plan.borrow_mut();
+
+	plan.parallel = if more {
+		(plan.parallel + 1).min(MAX_PARTS)
+	} else {
+		plan.parallel.saturating_sub(1)
+	};
+	drop(plan);
+	refresh(ui);
+}
+
+/// The text of the whole schedule, as a file that the terminal runs too.
+fn schedule_text(ui: &Rc<Ui>) -> String {
+	let plan = ui.plan.borrow();
+	let parts: Vec<String> = (0..plan.tabs.len())
+		.map(|index| part_text(ui, &plan.tabs, plan.active, index))
+		.collect();
+
+	schedule::export(&parts, plan.parallel)
+}
+
+fn schedule_run(ui: &Rc<Ui>) {
+	if ui.plan.borrow().run.is_some() {
+		message(ui, "The schedule is running", WARNING);
+		return;
+	}
+
+	let ids: Vec<usize> = ui.plan.borrow().tabs.iter().map(|tab| tab.id).collect();
+	let parsed = match schedule::parse(&schedule_text(ui)) {
+		Ok(parsed) => parsed,
+		Err(errors) => {
+			let errors: Vec<String> = errors
+				.iter()
+				.map(|error| by_id(error.lines().next().unwrap_or_default(), &ids))
+				.collect();
+
+			note(
+				ui,
+				&format!(
+					"Run pressed, but the schedule is not right: {}",
+					errors.join("; ")
+				)
+			);
+			message(ui, &errors[0], BAD);
+			return;
+		}
+	};
+
+	for warning in &parsed.warnings {
+		println!("{}", by_id(warning, &ids));
+	}
+
+	note(ui, "Run pressed, the schedule starts");
+
+	{
+		let mut plan = ui.plan.borrow_mut();
+		let runner = Runner::new(plan.parallel, Some(window_state(ui, false)));
+
+		for tab in &mut plan.tabs {
+			tab.state = PartState::Waiting;
+		}
+
+		plan.run = Some(Run {
+			runner,
+			queue: ids.into(),
+			armed: None,
+			failed: Vec::new()
+		});
+	}
+
+	refresh(ui);
+}
+
+fn tick_schedule(ui: &Rc<Ui>) {
+	let mut lines: Vec<(String, Color)> = Vec::new();
+	let mut countdown = None;
+	let mut dirty = false;
+	let mut finished = None;
+
+	{
+		let mut plan = ui.plan.borrow_mut();
+		let Plan {
+			tabs, run, active, ..
+		} = &mut *plan;
+		let Some(run) = run.as_mut() else {
+			return;
+		};
+
+		for done in run.runner.poll(run.queue.len()) {
+			let failed = !done.stopped && done.code != 0;
+
+			dirty = true;
+
+			if let Some(tab) = tabs.iter_mut().find(|tab| tab.id == done.number) {
+				tab.state = if done.stopped {
+					PartState::Stopped
+				} else if failed {
+					PartState::Failed
+				} else {
+					PartState::Done
+				};
+			}
+
+			if failed {
+				run.failed.push(done.number);
+				println!(
+					"Schedule {} failed with the exit code {}.",
+					done.number, done.code
+				);
+				lines.push((
+					format!(
+						"Schedule {} failed with the exit code {}",
+						done.number, done.code
+					),
+					BAD
+				));
+			}
+		}
+
+		while run.runner.has_slot() {
+			let Some(&id) = run.queue.front() else {
+				break;
+			};
+			let Some(position) = tabs.iter().position(|tab| tab.id == id) else {
+				run.queue.pop_front();
+				continue;
+			};
+			let now = Instant::now();
+			let armed = *run.armed.get_or_insert(now);
+			let ready = (armed + Duration::from_secs(3))
+				.max(tabs[position].changed + Duration::from_secs(10));
+
+			if now < ready {
+				countdown = Some(format!(
+					"Schedule {id} starts in {} s",
+					(ready - now).as_secs() + 1
+				));
+				break;
+			}
+
+			let text = part_text(ui, tabs, *active, position);
+
+			run.queue.pop_front();
+			run.armed = None;
+			dirty = true;
+
+			match run.runner.start(id, &text, run.queue.len() + 1) {
+				Ok(_) => {
+					tabs[position].state = PartState::Running;
+					lines.push((format!("Schedule {id} started"), MUTED));
+				}
+				Err(error) => {
+					tabs[position].state = PartState::Failed;
+					run.failed.push(id);
+					lines.push((error, BAD));
+				}
+			}
+		}
+
+		if run.queue.is_empty() && run.runner.is_idle() {
+			finished = Some(std::mem::take(&mut run.failed));
+		}
+	}
+
+	if let Some(failed) = finished {
+		ui.plan.borrow_mut().run = None;
+		dirty = true;
+
+		if failed.is_empty() {
+			lines.push(("The schedule is done".to_string(), GOOD));
+		} else {
+			let list: Vec<String> = failed.iter().map(|id| format!("Schedule {id}")).collect();
+
+			println!(
+				"The schedule is done. These parts failed: {}.",
+				list.join(", ")
+			);
+			lines.push((
+				format!("The schedule is done. Failed: {}", list.join(", ")),
+				BAD
+			));
+		}
+	}
+
+	if let Some(text) = countdown.filter(|text| ui.status.label() != *text) {
+		set_status(ui, &text, MUTED, false);
+	}
+
+	if let Some((text, color)) = lines.last() {
+		message(ui, text, *color);
+	}
+
+	if dirty {
+		refresh(ui);
 	}
 }
 
@@ -527,7 +1113,8 @@ fn layout(ui: &Rc<Ui>) {
 	all_label.resize(SIDE + PAD + 54, HEAD + 6, 400, 18);
 	ui.position.clone().resize(w - PAD - 160, HEAD + 6, 160, 18);
 
-	let y = h - BAR + 22;
+	let on = ui.plan.borrow().on();
+	let y = h - BAR + if on { 26 } else { 22 };
 	let mut x = SIDE + PAD;
 
 	let mut run = ui.run.clone();
@@ -535,8 +1122,20 @@ fn layout(ui: &Rc<Ui>) {
 
 	run.resize(x, y, 90, 30);
 	x += 98;
-	stop.resize(x, y, 76, 30);
-	x += 76 + 22;
+
+	if on {
+		for (button, width) in ui.sched_buttons.iter().zip([72, 96, 84]) {
+			button.clone().resize(x, y, width, 30);
+			x += width + 6;
+		}
+
+		x += 16;
+	} else {
+		stop.resize(x, y, 76, 30);
+		x += 76 + 22;
+	}
+
+	let (width, step) = if on { (62, 66) } else { (78, 86) };
 
 	for (index, button) in ui.buttons.iter().enumerate() {
 		let mut button = button.clone();
@@ -545,12 +1144,16 @@ fn layout(ui: &Rc<Ui>) {
 		if last {
 			button.resize(w - PAD - 100, y, 100, 30);
 		} else {
-			button.resize(x, y, 78, 30);
-			x += 86;
+			button.resize(x, y, width, 30);
+			x += step;
 		}
 	}
 
-	status.resize(x + 8, y + 6, (w - PAD - 100 - x - 24).max(40), 20);
+	if on {
+		status.resize(SIDE + PAD, h - BAR + 4, w - SIDE - 2 * PAD, 18);
+	} else {
+		status.resize(x + 8, y + 6, (w - PAD - 100 - x - 24).max(40), 20);
+	}
 
 	if ui.page.get() == SETTINGS_FILE {
 		show_warnings(ui);
@@ -936,6 +1539,7 @@ fn tick_editor(ui: &Rc<Ui>) {
 
 fn tick(ui: &Rc<Ui>) {
 	tick_editor(ui);
+	tick_schedule(ui);
 
 	let running = lock(&ui.state).running;
 
@@ -980,6 +1584,11 @@ fn tick(ui: &Rc<Ui>) {
 }
 
 fn run_now(ui: &Rc<Ui>) {
+	if ui.plan.borrow().on() {
+		schedule_run(ui);
+		return;
+	}
+
 	let verbatim = ui.page.get() == SETTINGS_FILE && ui.edited.get();
 	let text = if verbatim {
 		current_text(ui)
@@ -1017,6 +1626,11 @@ fn stop_now(ui: &Rc<Ui>) {
 	if let Some(child) = lock(&ui.state).child.as_mut() {
 		let _ = child.kill();
 	}
+
+	if let Some(run) = ui.plan.borrow_mut().run.as_mut() {
+		run.queue.clear();
+		run.runner.stop_all();
+	}
 }
 
 fn open_file(ui: &Rc<Ui>) {
@@ -1027,10 +1641,101 @@ fn open_file(ui: &Rc<Ui>) {
 	load(ui, &path);
 }
 
+fn load_schedule(ui: &Rc<Ui>, text: &str) {
+	if ui.plan.borrow().run.is_some() {
+		message(ui, "Stop the schedule first", WARNING);
+		return;
+	}
+
+	let parsed = match schedule::parse(text) {
+		Ok(parsed) => parsed,
+		Err(errors) => {
+			let error = errors[0].lines().next().unwrap_or_default();
+
+			note(
+				ui,
+				&format!("opened a schedule, but it is not right: {error}")
+			);
+			message(ui, &format!("Could not open it: {error}"), BAD);
+			return;
+		}
+	};
+	let mut models = Vec::new();
+	let mut unknown = Vec::new();
+
+	for part in &parsed.parts {
+		let mut model = Model::default();
+
+		match model.import(part) {
+			Ok(names) => unknown.extend(names),
+			Err(error) => {
+				message(ui, &format!("Could not open it: {error}"), BAD);
+				return;
+			}
+		}
+
+		models.push(model);
+	}
+
+	{
+		let mut plan = ui.plan.borrow_mut();
+		let mut models = models.into_iter();
+
+		ui.model.replace(models.next().unwrap_or_default());
+
+		plan.tabs = (1..=parsed.parts.len())
+			.map(|id| Tab {
+				id,
+				model: Model::default(),
+				changed: long_ago(),
+				state: PartState::Idle
+			})
+			.collect();
+
+		for (tab, model) in plan.tabs.iter_mut().skip(1).zip(models) {
+			tab.model = model;
+		}
+
+		plan.active = 0;
+		plan.next_id = parsed.parts.len() + 1;
+		plan.parallel = parsed.parallel;
+	}
+
+	note(
+		ui,
+		&format!("opened a schedule of {} parts", parsed.parts.len())
+	);
+
+	if unknown.is_empty() {
+		message(
+			ui,
+			&format!("Opened a schedule of {} parts", parsed.parts.len()),
+			GOOD
+		);
+	} else {
+		message(
+			ui,
+			&format!("Opened. Not known here: {}", unknown.join(", ")),
+			WARNING
+		);
+	}
+
+	open_tab(ui);
+}
+
 fn load(ui: &Rc<Ui>, path: &str) {
-	let result = fs::read_to_string(path)
-		.map_err(|error| error.to_string())
-		.and_then(|text| ui.model.borrow_mut().import(&text));
+	let text = fs::read_to_string(path).map_err(|error| error.to_string());
+
+	if let Some(text) = text
+		.as_ref()
+		.ok()
+		.filter(|text| schedule::is_schedule(text))
+	{
+		load_schedule(ui, text);
+		return;
+	}
+
+	let result = text.and_then(|text| ui.model.borrow_mut().import(&text));
 
 	note(
 		ui,
@@ -1059,10 +1764,33 @@ fn load(ui: &Rc<Ui>, path: &str) {
 }
 
 fn save_file(ui: &Rc<Ui>) {
+	let whole = if ui.plan.borrow().on() {
+		match dialog::choice2_default(
+			"Save the whole schedule, or only this part?",
+			"Cancel",
+			"This part",
+			"Schedule"
+		) {
+			Some(1) => false,
+			Some(2) => true,
+			_ => return
+		}
+	} else {
+		false
+	};
+
 	let mut chooser = NativeFileChooser::new(FileDialogType::BrowseSaveFile);
 
-	chooser.set_title("Save the options file");
-	chooser.set_preset_file("packsquash.toml");
+	chooser.set_title(if whole {
+		"Save the schedule"
+	} else {
+		"Save the options file"
+	});
+	chooser.set_preset_file(if whole {
+		"schedule.toml"
+	} else {
+		"packsquash.toml"
+	});
 	chooser.show();
 
 	let path = chooser.filename();
@@ -1071,7 +1799,11 @@ fn save_file(ui: &Rc<Ui>) {
 		return;
 	}
 
-	let text = current_text(ui);
+	let text = if whole {
+		schedule_text(ui)
+	} else {
+		current_text(ui)
+	};
 
 	note(ui, &format!("save to {}", path.display()));
 
@@ -1112,7 +1844,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		.with_label(&format!("PackSquash-uv12 {}", env!("CARGO_PKG_VERSION")));
 
 	window.set_color(BLACK);
-	window.size_range(1000, 620, 0, 0);
+	window.size_range(1040, 620, 0, 0);
 
 	let mut side = Frame::new(0, 0, SIDE, 740, None);
 
@@ -1191,8 +1923,38 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		flat(0, 0, 78, 30, "Save", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Copy", FIELD, TEXT),
 		flat(0, 0, 78, 30, "Reset", FIELD, TEXT),
-		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT),
+		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT)
 	];
+	let schedule_button = flat(0, 0, 90, 22, "Schedule", FIELD, TEXT);
+	let tab_buttons: Vec<Button> = (0..MAX_PARTS)
+		.map(|_| {
+			let mut button = Button::new(0, 0, 88, 22, None);
+			button.set_frame(FrameType::FlatBox);
+			button.set_down_frame(FrameType::FlatBox);
+			button.set_label_size(12);
+			button.clear_visible_focus();
+			button.hide();
+			button
+		})
+		.collect();
+	let mut plus = flat(0, 0, 26, 22, "+", FIELD, TEXT);
+	let mut parallel_label = label(0, 0, 66, 18, "Parallel", 12, MUTED);
+	let mut parallel_minus = flat(0, 0, 22, 22, "-", FIELD, TEXT);
+	let mut parallel_value = label(0, 0, 26, 18, "0", 13, TEXT);
+	let mut parallel_plus = flat(0, 0, 22, 22, "+", FIELD, TEXT);
+	let sched_buttons = vec![
+		flat(0, 0, 72, 30, "Stop part", FIELD, TEXT),
+		flat(0, 0, 96, 30, "Stop schedule", FIELD, TEXT),
+		flat(0, 0, 84, 30, "Delete part", FIELD, TEXT)
+	];
+	plus.hide();
+	parallel_label.hide();
+	parallel_minus.hide();
+	parallel_value.hide();
+	parallel_plus.hide();
+	for button in &sched_buttons {
+		button.clone().hide();
+	}
 	let mut status = label(0, 0, 200, 20, "", 12, MUTED);
 
 	status.set_align(Align::Inside | Align::Left | Align::Top);
@@ -1233,7 +1995,16 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		state: Shared::default(),
 		was_running: Cell::new(false),
 		use_cli: Cell::new(false),
-		test: Cell::new(None)
+		test: Cell::new(None),
+		plan: RefCell::new(Plan::default()),
+		schedule_button,
+		tab_buttons,
+		plus,
+		parallel_label,
+		parallel_minus,
+		parallel_value,
+		parallel_plus,
+		sched_buttons
 	});
 
 	if let Some(mut buffer) = ui.toml.buffer() {
@@ -1360,7 +2131,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 			note(&reset_ui, "Reset pressed");
 		});
 		cli.set_callback(move |_| {
-			if cli_ui.was_running.get() {
+			if cli_ui.was_running.get() || cli_ui.plan.borrow().run.is_some() {
 				message(&cli_ui, "Stop PackSquash first", WARNING);
 			} else {
 				note(&cli_ui, "Use CLI pressed");
@@ -1370,6 +2141,32 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		});
 	}
 
+	{
+		let mut buttons = vec![ui.schedule_button.clone(), ui.plus.clone()];
+		for button in &mut buttons {
+			let add_ui = ui.clone();
+			button.set_callback(move |_| {
+				if lock(&add_ui.state).running {
+					message(&add_ui, "Stop PackSquash first", WARNING);
+				} else {
+					add_part(&add_ui);
+				}
+			});
+		}
+		for (index, button) in ui.tab_buttons.iter().enumerate() {
+			let (mut button, tab_ui) = (button.clone(), ui.clone());
+			button.set_callback(move |_| switch(&tab_ui, index));
+		}
+		let actions: [fn(&Rc<Ui>); 3] = [stop_part, stop_schedule, delete_part];
+		for (button, action) in ui.sched_buttons.iter().zip(actions) {
+			let (mut button, action_ui) = (button.clone(), ui.clone());
+			button.set_callback(move |_| action(&action_ui));
+		}
+		let (mut minus, mut more) = (ui.parallel_minus.clone(), ui.parallel_plus.clone());
+		let (minus_ui, more_ui) = (ui.clone(), ui.clone());
+		minus.set_callback(move |_| set_parallel(&minus_ui, false));
+		more.set_callback(move |_| set_parallel(&more_ui, true));
+	}
 	{
 		let mut all = ui.all.clone();
 		let all_ui = ui.clone();
@@ -1389,7 +2186,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 			}
 		});
 		window.resize_callback(move |_, _, _, w, _| {
-			layout(&resize_ui);
+			refresh(&resize_ui);
 
 			if resize_ui.page.get() < TABS.len() && (w - resize_ui.width.get()).abs() > 8 {
 				build_rows(&resize_ui);
@@ -1404,7 +2201,8 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 	note(&ui, "window opened");
 	layout(&ui);
 	go(&ui, 0);
-	changed(&ui);
+	show_badge(&ui);
+	refresh(&ui);
 
 	let mut window = window;
 

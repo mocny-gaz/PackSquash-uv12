@@ -231,6 +231,14 @@ bulk_input_directory = 'C:\packs\bulk'
 - If something is wrong, PackSquash shows every problem at once and runs nothing. For example `Part 2: The pack_directory option is missing.`
 - A part can have `pack_directory` or the bulk options, like a normal options file.
 
+In the window:
+- The Schedule button at the top turns the settings of the window into `Schedule 1`. The `+` adds a part with default settings. Every tab has its own full set of options. A tab keeps its number when another one is deleted.
+- Run starts the schedule. Before a part starts, the window checks its settings. If you changed them in the last 10 seconds, it waits until 10 seconds passed since your last change. If not, it waits 3 seconds. You can edit a part until it starts. A running part is locked. The bottom line shows `Schedule 2 starts in 7 s`.
+- Stop part stops the part that runs. Stop schedule stops everything. Delete part deletes the open tab, and deleting the last one leaves the schedule mode.
+- A failed part turns red at once. The schedule goes on, and the console lists the failed parts when it is done.
+- Parallel at the top right sets how many parts run at the same time. 0 is off.
+- Save asks if you want this part or the whole schedule. Open reads a schedule file into tabs.
+
 ## mcchanges: leave out what the game already has
 
 Many packs are built from a full copy of the vanilla assets and change only a
