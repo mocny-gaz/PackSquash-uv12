@@ -237,6 +237,7 @@ In the window:
 - Stop part stops the part that runs. Stop schedule stops everything. Delete part deletes the open tab, and deleting the last one leaves the schedule mode.
 - A failed part turns red at once. The schedule goes on, and the console lists the failed parts when it is done.
 - Parallel at the top right sets how many parts run at the same time. 0 is off.
+- Pause works in the window for a single run, for a bulk run and for a schedule. PackSquash stops taking new files, finishes the files in progress, and then the window shows `Paused`. Resume goes on. The ZIP is the same as without a pause. Passes that are more than twice their default (`zip_compression_iterations`, `image_data_compression_iterations`, `nbt_compression_iterations`) can make the pause wait long, and the window names them. In a schedule, the countdown of the next part waits too.
 - Save asks if you want this part or the whole schedule. Open reads a schedule file into tabs.
 
 ## mcchanges: leave out what the game already has

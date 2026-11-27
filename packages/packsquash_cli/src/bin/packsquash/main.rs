@@ -220,7 +220,9 @@ fn read_options_file_and_squash(
 		}
 	};
 
-	if env::var_os("PACKSQUASH_SCHEDULE_THREADS").is_some() {
+	if env::var_os("PACKSQUASH_SCHEDULE_THREADS").is_some()
+		|| env::var_os("PACKSQUASH_CONTROL").is_some()
+	{
 		schedule::listen();
 	}
 

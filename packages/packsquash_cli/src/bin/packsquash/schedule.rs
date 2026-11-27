@@ -4,7 +4,10 @@ use std::{
 	num::NonZeroUsize,
 	path::{self, PathBuf},
 	process::{self, Child, Command, Stdio},
-	sync::atomic::{AtomicUsize, Ordering},
+	sync::{
+		Arc,
+		atomic::{AtomicBool, AtomicUsize, Ordering}
+	},
 	thread,
 	time::Duration
 };
@@ -237,6 +240,19 @@ pub fn parse(text: &str) -> Result<Schedule, Vec<String>> {
 	}
 }
 
+/// Tells if a line of a run says that it paused (`Some(true)`) or went on (`Some(false)`).
+pub fn paused_by(line: &str) -> Option<bool> {
+	if line.contains("PackSquash is paused") {
+		Some(true)
+	} else if line.contains("PackSquash goes on") {
+		Some(false)
+	} else {
+		None
+	}
+}
+
+/// Reads the commands of the window from the standard input of a run: `pause`, `resume` and
+/// `threads N`. It tells when the run is paused, and when it goes on again.
 pub fn listen() {
 	THREADS.store(
 		env::var("PACKSQUASH_SCHEDULE_THREADS")
@@ -248,12 +264,38 @@ pub fn listen() {
 
 	thread::spawn(|| {
 		for line in io::stdin().lock().lines().map_while(Result::ok) {
-			if let Some(count) = line
-				.strip_prefix("threads ")
-				.and_then(|count| count.trim().parse().ok())
-			{
-				THREADS.store(count, Ordering::Relaxed);
+			match line.trim() {
+				"pause" => packsquash::pause::request(true),
+				"resume" => packsquash::pause::request(false),
+				other => {
+					if let Some(count) = other
+						.strip_prefix("threads ")
+						.and_then(|count| count.parse().ok())
+					{
+						THREADS.store(count, Ordering::Relaxed);
+					}
+				}
 			}
+		}
+	});
+
+	thread::spawn(|| {
+		let mut shown = false;
+
+		loop {
+			thread::sleep(Duration::from_millis(100));
+
+			let idle = packsquash::pause::is_idle();
+
+			if idle && !shown {
+				info!(
+					"PackSquash is paused. The files in progress finished, and no new file starts."
+				);
+			} else if !idle && shown {
+				info!("PackSquash goes on.");
+			}
+
+			shown = idle;
 		}
 	});
 }
@@ -279,6 +321,7 @@ struct Running {
 	cap: usize,
 	threads: usize,
 	stopped: bool,
+	paused: Arc<AtomicBool>,
 	readers: Vec<thread::JoinHandle<()>>
 }
 
@@ -289,9 +332,18 @@ pub struct Finished {
 	pub stopped: bool
 }
 
-fn pump(pipe: impl Read + Send + 'static, number: usize, to_error: bool) -> thread::JoinHandle<()> {
+fn pump(
+	pipe: impl Read + Send + 'static,
+	number: usize,
+	to_error: bool,
+	paused: Arc<AtomicBool>
+) -> thread::JoinHandle<()> {
 	thread::spawn(move || {
 		for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+			if let Some(state) = paused_by(&line) {
+				paused.store(state, Ordering::Relaxed);
+			}
+
 			let _ = if to_error {
 				writeln!(io::stderr(), "[part {number}] {line}")
 			} else {
@@ -358,6 +410,7 @@ impl Runner {
 		if piped {
 			command
 				.env("PACKSQUASH_SCHEDULE_THREADS", threads.to_string())
+				.env("PACKSQUASH_CONTROL", "1")
 				.stdin(Stdio::piped())
 				.stdout(Stdio::piped())
 				.stderr(Stdio::piped());
@@ -374,9 +427,16 @@ impl Runner {
 			.spawn()
 			.map_err(|error| format!("Couldn't start PackSquash: {error}"))?;
 
+		let paused = Arc::new(AtomicBool::new(false));
 		let readers = [
-			child.stdout.take().map(|pipe| pump(pipe, number, false)),
-			child.stderr.take().map(|pipe| pump(pipe, number, true))
+			child
+				.stdout
+				.take()
+				.map(|pipe| pump(pipe, number, false, Arc::clone(&paused))),
+			child
+				.stderr
+				.take()
+				.map(|pipe| pump(pipe, number, true, Arc::clone(&paused)))
 		]
 		.into_iter()
 		.flatten()
@@ -389,6 +449,7 @@ impl Runner {
 			cap,
 			threads,
 			stopped: false,
+			paused,
 			readers
 		});
 
@@ -445,6 +506,22 @@ impl Runner {
 		}
 
 		finished
+	}
+
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub fn pause(&mut self, paused: bool) {
+		for part in &mut self.running {
+			if let Some(stdin) = part.child.stdin.as_mut() {
+				let _ = writeln!(stdin, "{}", if paused { "pause" } else { "resume" });
+			}
+		}
+	}
+
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub fn all_paused(&self) -> bool {
+		self.running
+			.iter()
+			.all(|part| part.paused.load(Ordering::Relaxed))
 	}
 
 	#[cfg_attr(not(windows), allow(dead_code))]

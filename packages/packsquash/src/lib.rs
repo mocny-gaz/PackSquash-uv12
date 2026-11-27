@@ -60,6 +60,7 @@ pub use debug_log::error_chain as describe_error_chain;
 
 pub mod config;
 pub mod pack_archive;
+pub mod pause;
 pub mod vfs;
 
 mod bedrock_pack;
@@ -122,7 +123,7 @@ impl PackSquasher {
 		pack_file_status_sender: Option<Sender<PackSquasherStatus>>
 	) -> Result<(), PackSquasherError>
 	where
-		PackSquasherError: From<<O as TryInto<ProcessedSquashOptions>>::Error>
+		PackSquasherError: From<<O as TryInto<ProcessedSquashOptions>>::Error>,
 	{
 		// The panic hook is global, and the contract above says it must not change while a run
 		// is executing. The tests run in threads of the same process (`cargo test`), and every
@@ -652,6 +653,8 @@ impl PackSquasher {
 				}
 			}
 
+			let idle_permits = in_flight_tasks_semaphore.available_permits();
+
 			let pack_file_optimization_failed = Arc::new(AtomicBool::new(false));
 
 			// To shield ourselves against pack file tasks that may panic, even if they shouldn't
@@ -675,6 +678,15 @@ impl PackSquasher {
 			// In the current thread, dispatch a task for each pack file, that may execute
 			// in any thread of the Tokio runtime
 			for pack_file_data in pack_file_iter {
+				// Wait here while a pause is requested. The files in progress finish first, so the
+				// output stays valid, and the pause lasts as long as the request does
+				while pause::requested() && !pack_file_optimization_failed.load(Ordering::Acquire) {
+					pause::set_idle(in_flight_tasks_semaphore.available_permits() == idle_permits);
+					std::thread::sleep(std::time::Duration::from_millis(50));
+				}
+
+				pause::set_idle(false);
+
 				// Stop iterating over pack files if something went wrong processing one of them.
 				// Use an acquire ordering to force happens-before relationships which ensure that
 				// any value stored by other threads is read promptly by this thread

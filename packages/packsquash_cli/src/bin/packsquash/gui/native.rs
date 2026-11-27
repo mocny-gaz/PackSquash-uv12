@@ -5,6 +5,7 @@ use std::{
 	cell::{Cell, RefCell},
 	collections::VecDeque,
 	env, fs,
+	io::Write,
 	rc::Rc,
 	time::{Duration, Instant}
 };
@@ -74,6 +75,7 @@ struct Run {
 	runner: Runner,
 	queue: VecDeque<usize>,
 	armed: Option<Instant>,
+	frozen: Option<Instant>,
 	failed: Vec<usize>
 }
 
@@ -120,6 +122,9 @@ struct Ui {
 	use_cli: Cell<bool>,
 	test: Cell<Option<i32>>,
 	plan: RefCell<Plan>,
+	pause: Button,
+	pausing: Cell<bool>,
+	paused_shown: Cell<bool>,
 	schedule_button: Button,
 	tab_buttons: Vec<Button>,
 	plus: Button,
@@ -413,6 +418,174 @@ fn by_id(message: &str, ids: &[usize]) -> String {
 	};
 
 	renamed.unwrap_or_else(|| message.to_string())
+}
+
+/// The passes options that are high enough to make a pause wait long, for the parts that run.
+fn slow_passes(ui: &Rc<Ui>) -> Vec<&'static str> {
+	let plan = ui.plan.borrow();
+	let live = ui.model.borrow();
+	let mut keys: Vec<&'static str> = Vec::new();
+
+	for (index, tab) in plan.tabs.iter().enumerate() {
+		if tab.state == PartState::Running {
+			let model = if index == plan.active {
+				&*live
+			} else {
+				&tab.model
+			};
+
+			keys.extend(slow_keys(model));
+		}
+	}
+
+	if !plan.on() {
+		keys.extend(slow_keys(&live));
+	}
+
+	keys.sort_unstable();
+	keys.dedup();
+	keys
+}
+
+fn slow_keys(model: &Model) -> Vec<&'static str> {
+	[
+		"zip_compression_iterations",
+		"image_data_compression_iterations",
+		"nbt_compression_iterations"
+	]
+	.into_iter()
+	.filter(|key| {
+		OPTIONS
+			.iter()
+			.position(|option| option.key == *key)
+			.is_some_and(|index| {
+				let default: u32 = OPTIONS[index].default.parse().unwrap_or(0);
+
+				model
+					.text(index)
+					.parse::<u32>()
+					.is_ok_and(|value| value > default * 2)
+			})
+	})
+	.collect()
+}
+
+fn toggle_pause(ui: &Rc<Ui>) {
+	let scheduled = ui.plan.borrow().run.is_some();
+
+	if !scheduled && !lock(&ui.state).running {
+		return;
+	}
+
+	let pausing = !ui.pausing.get();
+	let slow = if pausing { slow_passes(ui) } else { Vec::new() };
+
+	ui.pausing.set(pausing);
+	ui.paused_shown.set(false);
+	note(
+		ui,
+		if pausing {
+			"Pause pressed"
+		} else {
+			"Resume pressed"
+		}
+	);
+
+	if scheduled {
+		let mut plan = ui.plan.borrow_mut();
+		let Plan { tabs, run, .. } = &mut *plan;
+
+		if let Some(run) = run.as_mut() {
+			let now = Instant::now();
+
+			run.runner.pause(pausing);
+
+			if pausing {
+				run.frozen = Some(now);
+			} else if let Some(frozen) = run.frozen.take() {
+				let gap = now - frozen;
+
+				run.armed = run.armed.map(|armed| armed + gap);
+
+				for tab in tabs
+					.iter_mut()
+					.filter(|tab| tab.state == PartState::Waiting)
+				{
+					tab.changed += gap;
+				}
+			}
+		}
+	} else if let Some(stdin) = lock(&ui.state)
+		.child
+		.as_mut()
+		.and_then(|child| child.stdin.as_mut())
+	{
+		let _ = writeln!(stdin, "{}", if pausing { "pause" } else { "resume" });
+	}
+
+	if !pausing {
+		set_status(ui, "Going on", MUTED, true);
+	} else if slow.is_empty() {
+		set_status(ui, "Pausing, finishing the current files", MUTED, false);
+	} else {
+		let list = slow.join(", ");
+
+		set_status(
+			ui,
+			&format!(
+				"Pausing, finishing the current files. This could take longer because of unfinished {list} passes. Lower {list} to make it faster"
+			),
+			WARNING,
+			false
+		);
+	}
+}
+
+fn tick_pause(ui: &Rc<Ui>) {
+	let (running, paused) = {
+		let state = lock(&ui.state);
+
+		(state.running, state.paused)
+	};
+	let (scheduled, all_paused) = {
+		let plan = ui.plan.borrow();
+
+		(
+			plan.run.is_some(),
+			plan.run
+				.as_ref()
+				.is_some_and(|run| run.runner.all_paused() || run.runner.is_idle())
+		)
+	};
+	let active = running || scheduled;
+	let mut button = ui.pause.clone();
+	let label = if ui.pausing.get() { "Resume" } else { "Pause" };
+
+	if button.label() != label {
+		button.set_label(label);
+	}
+
+	if active != button.active() {
+		if active {
+			button.activate();
+		} else {
+			button.deactivate();
+		}
+	}
+
+	if !active {
+		if ui.pausing.get() {
+			ui.pausing.set(false);
+			ui.paused_shown.set(false);
+		}
+
+		return;
+	}
+
+	if ui.pausing.get() && !ui.paused_shown.get() && (if scheduled { all_paused } else { paused }) {
+		ui.paused_shown.set(true);
+		set_status(ui, "Paused", ACCENT, false);
+	}
 }
 
 fn show_if(widget: &mut dyn WidgetExt, on: bool) {
@@ -760,6 +933,7 @@ fn schedule_run(ui: &Rc<Ui>) {
 			runner,
 			queue: ids.into(),
 			armed: None,
+			frozen: None,
 			failed: Vec::new()
 		});
 	}
@@ -813,7 +987,7 @@ fn tick_schedule(ui: &Rc<Ui>) {
 			}
 		}
 
-		while run.runner.has_slot() {
+		while run.frozen.is_none() && run.runner.has_slot() {
 			let Some(&id) = run.queue.front() else {
 				break;
 			};
@@ -1114,7 +1288,7 @@ fn layout(ui: &Rc<Ui>) {
 	ui.position.clone().resize(w - PAD - 160, HEAD + 6, 160, 18);
 
 	let on = ui.plan.borrow().on();
-	let y = h - BAR + if on { 26 } else { 22 };
+	let y = h - BAR + 26;
 	let mut x = SIDE + PAD;
 
 	let mut run = ui.run.clone();
@@ -1129,9 +1303,12 @@ fn layout(ui: &Rc<Ui>) {
 			x += width + 6;
 		}
 
-		x += 16;
+		ui.pause.clone().resize(x, y, 70, 30);
+		x += 70 + 22;
 	} else {
 		stop.resize(x, y, 76, 30);
+		x += 76 + 8;
+		ui.pause.clone().resize(x, y, 76, 30);
 		x += 76 + 22;
 	}
 
@@ -1149,11 +1326,7 @@ fn layout(ui: &Rc<Ui>) {
 		}
 	}
 
-	if on {
-		status.resize(SIDE + PAD, h - BAR + 4, w - SIDE - 2 * PAD, 18);
-	} else {
-		status.resize(x + 8, y + 6, (w - PAD - 100 - x - 24).max(40), 20);
-	}
+	status.resize(SIDE + PAD, h - BAR + 4, w - SIDE - 2 * PAD, 18);
 
 	if ui.page.get() == SETTINGS_FILE {
 		show_warnings(ui);
@@ -1540,6 +1713,7 @@ fn tick_editor(ui: &Rc<Ui>) {
 fn tick(ui: &Rc<Ui>) {
 	tick_editor(ui);
 	tick_schedule(ui);
+	tick_pause(ui);
 
 	let running = lock(&ui.state).running;
 
@@ -1844,7 +2018,7 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		.with_label(&format!("PackSquash-uv12 {}", env!("CARGO_PKG_VERSION")));
 
 	window.set_color(BLACK);
-	window.size_range(1040, 620, 0, 0);
+	window.size_range(1100, 620, 0, 0);
 
 	let mut side = Frame::new(0, 0, SIDE, 740, None);
 
@@ -1925,6 +2099,8 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		flat(0, 0, 78, 30, "Reset", FIELD, TEXT),
 		flat(0, 0, 100, 30, "Use CLI", FIELD, TEXT)
 	];
+	let mut pause = flat(0, 0, 76, 30, "Pause", FIELD, TEXT);
+	pause.deactivate();
 	let schedule_button = flat(0, 0, 90, 22, "Schedule", FIELD, TEXT);
 	let tab_buttons: Vec<Button> = (0..MAX_PARTS)
 		.map(|_| {
@@ -1997,6 +2173,9 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		use_cli: Cell::new(false),
 		test: Cell::new(None),
 		plan: RefCell::new(Plan::default()),
+		pause,
+		pausing: Cell::new(false),
+		paused_shown: Cell::new(false),
 		schedule_button,
 		tab_buttons,
 		plus,
@@ -2157,6 +2336,8 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 			let (mut button, tab_ui) = (button.clone(), ui.clone());
 			button.set_callback(move |_| switch(&tab_ui, index));
 		}
+		let (mut pause, pause_ui) = (ui.pause.clone(), ui.clone());
+		pause.set_callback(move |_| toggle_pause(&pause_ui));
 		let actions: [fn(&Rc<Ui>); 3] = [stop_part, stop_schedule, delete_part];
 		for (button, action) in ui.sched_buttons.iter().zip(actions) {
 			let (mut button, action_ui) = (button.clone(), ui.clone());

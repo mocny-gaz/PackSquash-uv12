@@ -27,6 +27,7 @@ const IDLE_SECONDS: u64 = 40;
 #[derive(Default)]
 struct State {
 	log: String,
+	paused: bool,
 	child: Option<Child>,
 	running: bool,
 	cli: bool,
@@ -148,7 +149,8 @@ fn start(
 		// The debug log of the run tells that it came from the window, and what the window knew
 		.env("PACKSQUASH_STARTED_BY", window_kind)
 		.env("PACKSQUASH_WINDOW_STATE", window_state)
-		.stdin(Stdio::null())
+		.env("PACKSQUASH_CONTROL", "1")
+		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
 		.spawn()
@@ -165,6 +167,7 @@ fn start(
 	}
 
 	guard.log.clear();
+	guard.paused = false;
 	guard.running = true;
 	guard.child = Some(child);
 	drop(guard);
@@ -194,6 +197,7 @@ fn start(
 			.log
 			.push_str(&format!("\n[PackSquash ended with the code {code}]\n"));
 		guard.child = None;
+		guard.paused = false;
 		guard.running = false;
 	});
 
@@ -206,6 +210,10 @@ fn pump(pipe: impl Read + Send + 'static, state: Shared) -> thread::JoinHandle<(
 			let mut guard = lock(&state);
 
 			let _ = writeln!(std::io::stdout(), "{line}");
+			if let Some(paused) = crate::schedule::paused_by(&line) {
+				guard.paused = paused;
+			}
+
 			guard.log.push_str(&line);
 			guard.log.push('\n');
 		}
