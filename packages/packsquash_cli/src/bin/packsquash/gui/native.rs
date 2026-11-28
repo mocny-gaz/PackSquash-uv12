@@ -48,7 +48,7 @@ const GOOD: Color = Color::from_hex(0x4cc26a);
 
 const SIDE: i32 = 210;
 const BAR: i32 = 68;
-const HEAD: i32 = 70;
+const HEAD: i32 = 108;
 const PAD: i32 = 28;
 const CONTROL: i32 = 300;
 const SETTINGS_FILE: usize = TABS.len();
@@ -603,16 +603,16 @@ fn refresh(ui: &Rc<Ui>) {
 		let on = plan.on();
 		let (w, count) = (ui.window.w(), plan.tabs.len() as i32);
 		let left = SIDE + PAD;
-		let region = w - PAD - 150 - left;
-		let tab_width = ((region - 30) / count.max(1)).clamp(34, 92) - 4;
+		let region = w - PAD - 190 - left;
+		let tab_width = ((region - 44) / count.max(1)).clamp(40, 112) - 4;
 		let mut x = left;
 
 		for (index, button) in ui.tab_buttons.iter().enumerate() {
 			let mut button = button.clone();
 
 			if let Some(tab) = plan.tabs.get(index) {
-				button.resize(x, 2, tab_width, 22);
-				button.set_label(&if tab_width >= 76 {
+				button.resize(x, 14, tab_width, 32);
+				button.set_label(&if tab_width >= 84 {
 					format!("Schedule {}", tab.id)
 				} else {
 					tab.id.to_string()
@@ -635,20 +635,20 @@ fn refresh(ui: &Rc<Ui>) {
 
 		let mut plus = ui.plus.clone();
 
-		plus.resize(x, 2, 26, 22);
+		plus.resize(x, 14, 36, 32);
 		show_if(&mut plus, on && plan.tabs.len() < MAX_PARTS);
 
 		let mut schedule_button = ui.schedule_button.clone();
 
-		schedule_button.resize(left, 2, 90, 22);
+		schedule_button.resize(left, 14, 150, 32);
 		show_if(&mut schedule_button, !on);
 
 		let right = w - PAD;
 
-		ui.parallel_plus.clone().resize(right - 22, 2, 22, 22);
-		ui.parallel_value.clone().resize(right - 52, 4, 26, 18);
-		ui.parallel_minus.clone().resize(right - 80, 2, 22, 22);
-		ui.parallel_label.clone().resize(right - 150, 4, 66, 18);
+		ui.parallel_plus.clone().resize(right - 30, 17, 30, 26);
+		ui.parallel_value.clone().resize(right - 62, 21, 32, 18);
+		ui.parallel_minus.clone().resize(right - 94, 17, 30, 26);
+		ui.parallel_label.clone().resize(right - 168, 21, 70, 18);
 
 		let mut value = ui.parallel_value.clone();
 
@@ -1280,8 +1280,8 @@ fn layout(ui: &Rc<Ui>) {
 	let mut all = ui.all.clone();
 	let mut all_label = ui.all_label.clone();
 
-	title.resize(SIDE + PAD, 20, 400, 32);
-	badge.resize(w - PAD - 360, 28, 360, 20);
+	title.resize(SIDE + PAD, 58, 400, 32);
+	badge.resize(w - PAD - 360, 66, 360, 20);
 	scroll.resize(SIDE, HEAD, w - SIDE, h - HEAD - BAR);
 	all.resize(SIDE + PAD, HEAD + 4, 42, 22);
 	all_label.resize(SIDE + PAD + 54, HEAD + 6, 400, 18);
@@ -2045,8 +2045,8 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 		nav.push(button);
 	}
 
-	let mut title = label_bold(SIDE + PAD, 20, 400, 32, "", 22, TEXT);
-	let mut badge = label(0, 28, 360, 20, "", 12, WARNING);
+	let mut title = label_bold(SIDE + PAD, 58, 400, 32, "", 22, TEXT);
+	let mut badge = label(0, 66, 360, 20, "", 12, WARNING);
 
 	badge.set_align(Align::Inside | Align::Right | Align::Top);
 	title.set_label_font(Font::HelveticaBold);
@@ -2101,19 +2101,21 @@ pub fn run(options_file: Option<&str>) -> Option<i32> {
 	];
 	let mut pause = flat(0, 0, 76, 30, "Pause", FIELD, TEXT);
 	pause.deactivate();
-	let schedule_button = flat(0, 0, 90, 22, "Schedule", FIELD, TEXT);
+	let mut schedule_button = flat(0, 0, 150, 32, "Schedule", ACCENT, BLACK);
+	schedule_button.set_label_size(14);
 	let tab_buttons: Vec<Button> = (0..MAX_PARTS)
 		.map(|_| {
-			let mut button = Button::new(0, 0, 88, 22, None);
+			let mut button = Button::new(0, 0, 104, 32, None);
 			button.set_frame(FrameType::FlatBox);
 			button.set_down_frame(FrameType::FlatBox);
-			button.set_label_size(12);
+			button.set_label_size(13);
 			button.clear_visible_focus();
 			button.hide();
 			button
 		})
 		.collect();
-	let mut plus = flat(0, 0, 26, 22, "+", FIELD, TEXT);
+	let mut plus = flat(0, 0, 36, 32, "+", FIELD, TEXT);
+	plus.set_label_size(16);
 	let mut parallel_label = label(0, 0, 66, 18, "Parallel", 12, MUTED);
 	let mut parallel_minus = flat(0, 0, 22, 22, "-", FIELD, TEXT);
 	let mut parallel_value = label(0, 0, 26, 18, "0", 13, TEXT);
